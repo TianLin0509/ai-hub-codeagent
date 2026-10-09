@@ -63,6 +63,7 @@ if (typeof document !== 'undefined') (function () {
   const DeliveryControls = require('./delivery-workflow-controls.js');
   const Conversation = require('../core/conversation-workflow.js');
   const ConversationControls = require('./conversation-workflow-controls.js');
+  const ConversationRelay = require('./conversation-relay.js');
   const OrchUI = require('./orchestration-ui.js');
   OrchUI.init(meetingId => {
     const m = meetingData[meetingId];
@@ -610,7 +611,7 @@ if (typeof document !== 'undefined') (function () {
       window.wrapPathLinksInElement(rootEl, { cwd, skipCodeBlocks:true });
       return;
     }
-    const SKIP_TAGS = new Set(['PRE', 'A', 'SCRIPT', 'STYLE']);
+    const SKIP_TAGS = new Set(['PRE', 'A', 'SCRIPT', 'STYLE', 'BUTTON', 'TEXTAREA', 'INPUT', 'SELECT']);
     const walker = document.createTreeWalker(rootEl, NodeFilter.SHOW_TEXT, {
       acceptNode(node) {
         let p = node.parentNode;
@@ -2354,14 +2355,16 @@ if (typeof document !== 'undefined') (function () {
     const prompt = message.sourcePrompt ? `<button type="button" class="mr-gc-prompt-btn" data-gc-view-prompt="${escapeHtml(message.id || '')}" title="查看本轮发给该 AI 的 prompt">查看本轮输入</button>` : '';
     const time = _formatGroupChatTime(answer?.at || message.createdAt);
     const kindCls = slot && slot.kind ? ` ai-name-${slot.kind}` : '';
-    // Resend this turn's question to this member only: visible while nothing is handed in, in 更多 otherwise.
-    const resend = message.sid ? `<button type="button" class="mr-gc-retry-btn${text.trim() ? '' : ' is-failure'}" data-gc-resend-member="${escapeHtml(message.sid)}" data-gc-retry-turn="${escapeHtml(message.turnNum || '')}" title="把本轮问题重新发给这位成员；它写好回答文件后卡片自动更新">重新发送</button>` : '';
+    // Missing output is not proof of failed submission. Default to inspection;
+    // the existing explicit resend for completed answers stays in 更多.
+    const resend = message.sid ? `<button type="button" class="mr-gc-retry-btn" data-gc-resend-member="${escapeHtml(message.sid)}" data-gc-retry-turn="${escapeHtml(message.turnNum || '')}" title="把本轮问题重新发给这位成员；它写好回答文件后卡片自动更新">重新发送</button>` : '';
+    const inspect = message.sid ? `${message.sourcePrompt ? `<button type="button" data-gc-copy-prompt="${escapeHtml(message.id || '')}">复制本轮 Prompt</button>` : ''}<button type="button" data-gc-open-cli="${escapeHtml(message.sid)}">打开 ${escapeHtml(slot?.displayLabel || slot?.kind || message.speaker || '成员')} CLI</button>` : '';
     const unread = !!text.trim() && answer?.state !== 'draft';
     return `
       <article ${journal.attributes(meeting, message, escapeHtml, { defaultMinimized: OrchUI.defaultMinimized(meeting, message) })} class="mr-gc-msg ai${slot ? ` slot-${(slot.slotIndex || 0) + 1}` : ''}${text.trim() ? '' : ' answer-missing'}" data-gc-msg-id="${escapeHtml(message.id || '')}" data-user-question="false" data-source-sid="${escapeHtml(message.sid || '')}" data-read-turn="${escapeHtml(message.turnNum || '')}" data-unread-answer="${unread}" data-phase="message" data-answer-state="${escapeHtml(answer ? answer.state : 'none')}">
         ${_renderGroupAvatar(slot, false)}
         <div class="mr-gc-msg-body">
-          <div class="mr-gc-meta"><span class="mr-gc-name${kindCls}">${escapeHtml(message.speaker || (slot && slot.displayLabel) || 'AI')}</span>${OrchUI.roleBadge(meeting, message, escapeHtml)}${badge ? `<span class="mr-gc-to-badge">${escapeHtml(badge)}</span>` : ''}${time ? `<span>${escapeHtml(time)}</span>` : ''}${OrchUI.peek(meeting, message, escapeHtml)}${journal.actions({ copy, prompt, retry: text.trim() ? resend : '', submit: text.trim() ? '' : resend, minimize: true })}</div>
+          <div class="mr-gc-meta"><span class="mr-gc-name${kindCls}">${escapeHtml(message.speaker || (slot && slot.displayLabel) || 'AI')}</span>${OrchUI.roleBadge(meeting, message, escapeHtml)}${badge ? `<span class="mr-gc-to-badge">${escapeHtml(badge)}</span>` : ''}${time ? `<span>${escapeHtml(time)}</span>` : ''}${OrchUI.peek(meeting, message, escapeHtml)}${journal.actions({ copy, prompt, retry: text.trim() ? resend : '', submit: text.trim() ? '' : inspect, minimize: true })}</div>
           <div class="mr-gc-bubble-row"><div class="mr-gc-bubble"><div class="gc-journal-reading">${journal.disclosure()}<div class="gc-journal-text">${body}</div></div></div></div>
         </div>
       </article>`;
@@ -3386,6 +3389,39 @@ if (typeof document !== 'undefined') (function () {
     _showGcPromptModal(prompt, msg);
   }
 
+  async function _copyConversationPrompt(meeting, target) {
+    // Read fresh evidence, but never regenerate or submit the archived input.
+    const state = await ipcRenderer.invoke('groupchat:get-state', { meetingId: meeting.id });
+    const current = meetingData[meeting.id];
+    const run = current?.serialWorkflow?.serialRunState;
+    if (activeMeetingId !== meeting.id || run?.runId !== target.runId
+      || Number(run.currentStepIndex ?? run.nextStepIndex ?? 0) !== target.stepIndex) {
+      throw new Error('本轮已变化，请重新查看接力状态');
+    }
+    const latest = ConversationRelay.targets(current, run, state).find(m => m.sid === target.sid);
+    if (!latest?.prompt || latest.attemptId !== target.attemptId) throw new Error('本轮完整 Prompt 暂无可用存档，请先查看 CLI');
+    await _copyArchivedGroupPrompt(latest.prompt, latest.label, meeting.id);
+  }
+
+  async function _copyArchivedGroupPrompt(prompt, label, meetingId) {
+    if (!prompt?.trim()) throw new Error('本轮完整 Prompt 暂无可用存档，请先查看 CLI');
+    let result;
+    try { result = await clipboardController.copyText(prompt, { source: 'group-relay-prompt', silent: true }); }
+    catch (error) { result = { ok: false, reason: error.message }; }
+    if (activeMeetingId !== meetingId) return;
+    if (result?.ok) _showGcEscapeNotice('已复制本轮完整 Prompt；请先核对 CLI，避免重复发送。', 'info');
+    else _showGcPromptModal(prompt, { speaker: label }, {
+      title: '复制失败 · 可选中下方原文复制', raw: true,
+      footer: '这是本轮存档全文，不代表 CLI 已接收；先核对 CLI，手动发送前暂停接力。',
+    });
+  }
+
+  async function _openConversationCli(meeting, target) {
+    if (activeMeetingId !== meeting.id || !meetingData[meeting.id]?.subSessions?.includes(target.sid)) return;
+    const result = await window.openMeetingMemberCli?.(target.sid);
+    if (!result?.ok) throw new Error(result?.reason || '暂时无法打开该成员 CLI');
+  }
+
   async function _handleGcAttemptDetails(btn, meeting) {
     const attemptId = btn.getAttribute('data-gc-attempt-details');
     await _syncGroupChatCacheFromServer(meeting);
@@ -3432,19 +3468,19 @@ if (typeof document !== 'undefined') (function () {
       ? `<span class="mr-gc-prompt-modal-act">${escapeHtml(msg.committeeAct)}${msg.committeeRound ? ' 第' + escapeHtml(String(msg.committeeRound)) + '轮' : ''}</span>`
       : '';
     const bodyHtml = prompt
-      ? `<div class="mr-gc-md">${_renderMarkdown(prompt)}</div>`
+      ? options.raw ? `<textarea class="mr-gc-prompt-raw" readonly aria-label="本轮存档 Prompt 原文">${escapeHtml(prompt)}</textarea>` : `<div class="mr-gc-md">${_renderMarkdown(prompt)}</div>`
       : '<div class="mr-gc-prompt-empty">这条消息没有存档 prompt——通常是「查看 prompt」功能上线前产生的旧消息，重新发起一轮即可记录。</div>';
     overlay.innerHTML = `
       <div class="mr-gc-prompt-modal" role="dialog" aria-modal="true">
         <div class="mr-gc-prompt-modal-head">
-          <span class="mr-gc-prompt-modal-title">${options.title ? escapeHtml(options.title) : `📥 ${who} 本轮收到的 prompt`}</span>
+          <span class="mr-gc-prompt-modal-title">${options.title ? escapeHtml(options.title) : `📥 ${who} 本轮存档的 prompt`}</span>
           ${actLbl}
           <span class="mr-gc-prompt-modal-spacer"></span>
           <button type="button" class="mr-gc-prompt-modal-copy" title="复制 prompt 原文">复制</button>
           <button type="button" class="mr-gc-prompt-modal-close" title="关闭 (Esc)" aria-label="关闭">✕</button>
         </div>
         <div class="mr-gc-prompt-modal-body">${bodyHtml}</div>
-        <div class="mr-gc-prompt-modal-foot">${options.footer ? escapeHtml(options.footer) : (prompt ? prompt.length + ' 字 · 该 AI 实际收到的完整输入（首轮含角色设定，之后仅增量）' : '')}</div>
+        <div class="mr-gc-prompt-modal-foot">${options.footer ? escapeHtml(options.footer) : (prompt ? prompt.length + ' 字 · 本轮准备发送的完整输入，接收状态以 CLI 为准' : '')}</div>
       </div>`;
     document.body.appendChild(overlay);
     const onKey = (e) => { if (e.key === 'Escape') close(); };
@@ -3453,8 +3489,11 @@ if (typeof document !== 'undefined') (function () {
     const closeBtn = overlay.querySelector('.mr-gc-prompt-modal-close');
     if (closeBtn) closeBtn.addEventListener('click', close);
     const copyBtn = overlay.querySelector('.mr-gc-prompt-modal-copy');
+    if (copyBtn) copyBtn.disabled = !prompt;
     if (copyBtn) copyBtn.addEventListener('click', async () => {
-      const result = await clipboardController.copyText(prompt || '', { source: 'group-prompt', silent: true });
+      let result;
+      try { result = await clipboardController.copyText(prompt, { source: 'group-prompt', silent: true }); }
+      catch (error) { result = { ok: false, reason: error.message }; }
       copyBtn.textContent = result?.ok ? '已复制 ✓' : '复制失败';
       setTimeout(() => { try { copyBtn.textContent = '复制'; } catch {} }, 1200);
     });
@@ -3881,6 +3920,24 @@ if (typeof document !== 'undefined') (function () {
       return;
     }
 
+    const cliBtn = _closestInPanel(ev.target, '[data-gc-open-cli]', panel);
+    if (cliBtn) {
+      ev.preventDefault(); ev.stopPropagation();
+      try { await _openConversationCli(meeting, { sid: cliBtn.getAttribute('data-gc-open-cli') }); }
+      catch (error) { _showGcEscapeNotice(error.message, 'error'); }
+      return;
+    }
+    const promptCopyBtn = _closestInPanel(ev.target, '[data-gc-copy-prompt]', panel);
+    if (promptCopyBtn) {
+      ev.preventDefault(); ev.stopPropagation();
+      try {
+        const state = await ipcRenderer.invoke('groupchat:get-state', { meetingId: meeting.id });
+        if (activeMeetingId !== meeting.id) return;
+        const message = state.messages?.find(m => m.id === promptCopyBtn.getAttribute('data-gc-copy-prompt') && m.role === 'assistant');
+        await _copyArchivedGroupPrompt(message?.sourcePrompt, message?.speaker, meeting.id);
+      } catch (error) { _showGcEscapeNotice(error.message, 'error'); }
+      return;
+    }
     const resendMemberBtn = _closestInPanel(ev.target, '[data-gc-resend-member]', panel);
     if (resendMemberBtn) {
       ev.preventDefault();
@@ -4784,19 +4841,16 @@ if (typeof document !== 'undefined') (function () {
     if (cached) {
       if (!cached._partialBy) cached._partialBy = {};
       const existing = cached._partialBy[sid] || {};
-      cached._partialBy[sid] = { text: existing.text || '', status: 'soft_alert' };
+      cached._partialBy[sid] = { ...existing, status: 'soft_alert' };
     }
     // === Phase 2: banner DOM 与 panel 重渲（仅 active）===
     if (meetingId !== activeMeetingId) return;
+    _updateInputPreflight(meeting);
     const banner = document.getElementById('mr-gc-soft-alert-banner');
     if (banner) {
       const levelLabel = level === 't2' ? '3 分钟' : '90 秒';
-      const urgency = level === 't2' ? 'urgent' : '';
-      // FIX-B（2026-05-01）：T2（3min）文案明确指引"用卡片按钮绕过"，不再让用户傻等
-      const hint = level === 't2'
-        ? '⚠ 已等待 3 分钟仍无响应，大概率卡死。请用卡片上的「一键提取 / 跳过 / 重新拉起」按钮处理这家。'
-        : '可能是慢响应 / 限流 / 卡死。可用卡片上的"一键提取 / 跳过"绕过，或继续等待自然完成。';
-      banner.className = `mr-gc-soft-alert-banner ${urgency}`;
+      const hint = '尚未收到本轮结束确认，状态可能过期；请先查看对应 CLI，避免重复发送。';
+      banner.className = 'mr-gc-soft-alert-banner';
       banner.innerHTML = `
         <div class="mr-gc-soft-alert-msg">
           <strong>${escapeHtml(label || sid.slice(0, 8))}</strong> 已等待 <strong>${levelLabel}</strong>。
@@ -5317,6 +5371,16 @@ if (typeof document !== 'undefined') (function () {
     _updateInputPreflight(meeting);
     if (payload.status === 'done') _showGcEscapeNotice(Conversation.enabled(meeting) ? '本次发言已完成；下一条输入仍按同一顺序回答' : '串行工作流已完成全部步骤', 'info');
     else if (payload.status === 'paused') {
+      if (Conversation.enabled(meeting)) {
+        // A late/missing receipt cannot put an already-dispatched question
+        // back into the composer or advertise a blind resend as continuation.
+        if (activeMeetingId === meeting.id) {
+          const view = ConversationRelay.presentation({ ...payload, running: false },
+            ConversationRelay.targets(meeting, payload, _gcPanelState[meeting.id]), []);
+          _showGcEscapeNotice(view.resume ? '接力已暂停；可继续发言。' : '接力状态待核对；请先查看对应 CLI。', 'info');
+        }
+        return;
+      }
       if (!payload.currentTurnNum && !payload.completedStepCount && payload.goal) {
         _discardPendingUserMessage(payload.meetingId);
         _restoreQuestionAndPreserveDraft(payload.meetingId, payload.goal);
@@ -5439,7 +5503,11 @@ if (typeof document !== 'undefined') (function () {
       return;
     }
     if (Conversation.enabled(current) && current.serialWorkflow.enabled) {
-      ConversationControls.render(row,current,id=>{if(activeMeetingId===id)_updateInputPreflight(meetingData[id]);},message=>_showGcEscapeNotice(message,'error'));
+      ConversationControls.render(row,current,id=>{if(activeMeetingId===id)_updateInputPreflight(meetingData[id]);},message=>_showGcEscapeNotice(message,'error'),{
+        groupState:_gcPanelState[current.id],
+        onCopy:target=>_copyConversationPrompt(current,target),
+        onOpen:target=>_openConversationCli(current,target),
+      });
       _updateInputHistoryButton(current);
       return;
     }

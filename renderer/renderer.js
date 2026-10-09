@@ -169,8 +169,12 @@ const {
   classifyLocalPathHref,
   _cleanPathCandidate,
   _normalizeLocalPathForOpen,
-  _isDirectoryPath,
+  _isDirectoryPathAsync,
+  onNetworkPathResolved,
 } = require('./path-candidates.js');
+// Elements that mentioned a share path not known yet. Re-wrapping only adds
+// links to text that is still plain; existing links are skipped.
+const _networkPendingWraps = new Map();
 const { isCodexConversationModelId, modelOptionsFor } = require('../core/model-options.js');
 const {
   isStableSessionTitle,
@@ -1383,7 +1387,10 @@ function _loadCanvasRenderer(cached) {
 function loadGpuRenderer(cached) {
   if (cached._backstageReadable) return;
   if (cached._gpuLoaded) return;
-  const pref = localStorage.getItem('hub.renderer') || 'canvas';
+  // 关闭了显卡加速时默认用 DOM：公司真机（2026-10-09）上 Canvas 在软件渲染下会让整个页面停止重绘，
+  // 点「后台」后界面卡死、切回卡片也不恢复；DOM 渲染不依赖显卡。手动设置的 hub.renderer 仍然优先。
+  const gpuDisabled = Array.isArray(process.argv) && process.argv.includes('--ai-hub-gpu-disabled');
+  const pref = localStorage.getItem('hub.renderer') || (gpuDisabled ? 'dom' : 'canvas');
   if (pref === 'dom') {
     cached._rendererAddon = null;
     cached._rendererMode = 'dom';
@@ -3402,6 +3409,7 @@ function wrapPathLinksInElement(rootEl, opts = {}) {
   // [报告](C:\path\report.md) 只剩“报告”文字，且点击绕过 Hub。本地 href
   // 先升级成统一 rt-file-link；网页 URL 仍保持标准 Markdown 链接语义。
   for (const a of rootEl.querySelectorAll('a[href]:not(.rt-file-link)')) {
+    if (a.closest('button, textarea, input, select')) continue;
     const local = classifyLocalPathHref(a.getAttribute('href') || '', cwd);
     if (!local) continue;
     a.classList.add('rt-file-link');
@@ -3415,7 +3423,7 @@ function wrapPathLinksInElement(rootEl, opts = {}) {
     // 真正的路径信息。显示原始 destination，data-path 则使用纠错后的路径。
     a.textContent = local.displayPath;
   }
-  const SKIP_TAGS = new Set(['A', 'SCRIPT', 'STYLE']);
+  const SKIP_TAGS = new Set(['A', 'SCRIPT', 'STYLE', 'BUTTON', 'TEXTAREA', 'INPUT', 'SELECT']);
   if (opts.skipCodeBlocks) SKIP_TAGS.add('PRE');
   const walker = document.createTreeWalker(rootEl, NodeFilter.SHOW_TEXT, {
     acceptNode(node) {
@@ -3429,9 +3437,12 @@ function wrapPathLinksInElement(rootEl, opts = {}) {
   });
   const targets = [];
   let node;
+  // Share paths are resolved in the background (see path-candidates.js); this
+  // element is wrapped again once one of them turns out to exist.
+  const pathOpts = { onNetworkPending: () => _networkPendingWraps.set(rootEl, opts) };
   while ((node = walker.nextNode())) {
     const text = normalizeMarkdownPathBreaks(node.nodeValue);
-    const candidates = collectPathCandidates(text, cwd);
+    const candidates = collectPathCandidates(text, cwd, pathOpts);
     if (candidates.length > 0) targets.push({ textNode: node, text, candidates });
   }
   for (const { textNode, text, candidates } of targets) {
@@ -3454,6 +3465,13 @@ function wrapPathLinksInElement(rootEl, opts = {}) {
   }
 }
 window.wrapPathLinksInElement = wrapPathLinksInElement;
+onNetworkPathResolved(() => {
+  const pending = [..._networkPendingWraps];
+  _networkPendingWraps.clear();
+  for (const [element, wrapOpts] of pending) {
+    if (element.isConnected) wrapPathLinksInElement(element, wrapOpts);
+  }
+});
 
 // rt-file-link click → openPreviewPanel (only for cards inside .msg-overlay,
 // don't conflict with meeting-room.js handler which targets its own scope)
@@ -5676,7 +5694,7 @@ async function selectSession(id, opts = {}) {
     || !!(isCodexKind(session.kind) && (!cachedBeforeSelect || !cachedBeforeSelect.opened));
   // 视图按会话记忆：先算出这个会话该用哪个视图，再决定要不要把焦点给终端
   // （卡片视图下抢终端焦点是错的）。
-  const targetView = selectionViewModeForSession(id, session);
+  const targetView = opts.inspectOnly ? 'pty' : selectionViewModeForSession(id, session);
   const shouldFocusTerminal = switching || targetView === 'pty';
   activeSessionId = id;
   // showTerminal owns the history request (and the cached-view fast path).
@@ -5691,6 +5709,7 @@ async function selectSession(id, opts = {}) {
   // Still switch selection and paint a pending surface immediately so a real
   // CLI restart never looks like a dropped click.
   if (session.status === 'dormant') {
+    if (opts.inspectOnly) return;
     // Paint navigation before the main process checks ownership. No CLI or
     // transcript is opened until that check succeeds; an occupied session
     // stays on the placeholder, and a newer selection cancels this intent.
@@ -5752,7 +5771,7 @@ async function selectSession(id, opts = {}) {
   // 2026-08-28 补齐：只清 connectionIssue 不够 —— 断连同时把 runtimeTruth 打成了
   // RUNTIME_FAILED（终态），且 TUI 重绘会把同一段报错文本再喂一遍。要一起降级
   // 终态 + 记住已确认签名，提醒才真的只提醒一次。
-  acknowledgeSessionFailureState(session);
+  if (!opts.inspectOnly) acknowledgeSessionFailureState(session);
   ipcRenderer.send('focus-session', { sessionId: id });
   showTerminal(id, { focus: shouldFocusTerminal, forceScrollBottom, reuseCardHistory });
   for (const meeting of Object.values(meetings)) {
@@ -6130,7 +6149,9 @@ async function openPathInHub(filePath, opts = {}) {
   }
   const fullPath = _normalizeLocalPathForOpen(raw, cwd, opts.requireExistsForRel !== false);
   if (!fullPath) return fail('路径不存在或无法解析', raw);
-  if (_isDirectoryPath(fullPath)) {
+  // A share path is checked off the main thread: an unreachable server would
+  // otherwise freeze the window until the SMB timeout on a single click.
+  if (await _isDirectoryPathAsync(fullPath)) {
     const manager = fileManagerPanel || window.FileManagerPanel;
     if (!manager || typeof manager.openDirectory !== 'function') {
       return fail('文件管理尚未就绪', fullPath);
@@ -6894,6 +6915,17 @@ window.openMeetingMemberSession = function openMeetingMemberSession(sessionId) {
   if (!sessionId || !sessions.has(sessionId)) return false;
   void selectSession(sessionId, { forceScrollBottom: true });
   return true;
+};
+
+// This explicit shortcut inspects a live terminal without waking a dormant
+// writer, dismissing its runtime failure or sending any input.
+window.openMeetingMemberCli = async function openMeetingMemberCli(sessionId) {
+  const session = sessions.get(sessionId);
+  if (!session) return { ok: false, reason: '该成员会话暂不可用' };
+  if (session.status === 'dormant') return { ok: false, reason: '该成员 CLI 已关闭；请从会话列表自行恢复后查看' };
+  await selectSession(sessionId, { forceScrollBottom: true, inspectOnly: true, splitBypass: true });
+  if (activeSessionId !== sessionId) return { ok: false, reason: '当前已切换到其他会话' };
+  return { ok: true };
 };
 
 const XTERM_REPLAY_CHUNK_CHARS = 64 * 1024;

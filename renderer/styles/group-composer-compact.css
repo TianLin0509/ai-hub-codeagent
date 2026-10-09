@@ -50,3 +50,19 @@
   :root body .mr-composer-head .mr-free-avatar-chk { width: 20px; height: 20px; }
   :root body .mr-composer-head .mr-delivery-flow > .mr-file-actions button { padding: 4px; }
 }
+
+/* Relay shortcuts use the existing composer strip, with room to wrap on phones. */
+:root body .mr-composer-head:has(.mr-conversation-flow) { flex-wrap: wrap; }
+:root body .mr-composer-head:has(.mr-conversation-flow) .mr-input-preflight { flex: 1 1 260px; }
+:root body .mr-composer-head .mr-conversation-flow { flex-wrap: wrap; gap: 6px 10px; }
+:root body .mr-conversation-flow .mr-relay-detail { flex: 1 1 200px; min-width: 0; }
+:root body .mr-conversation-flow .mr-relay-detail strong { display: block; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+:root body .mr-conversation-flow .mr-relay-detail p { margin: 3px 0 0; font-size: 12px; color: var(--fg-muted); overflow-wrap: anywhere; }
+:root body .mr-conversation-flow .mr-relay-detail small { display: block; margin-top: 3px; font-size: 11px; color: var(--fg-muted); }
+:root body .mr-composer-head .mr-conversation-flow .mr-file-actions { flex: 0 1 auto; flex-wrap: wrap; min-width: 0; max-width: 100%; }
+:root body .mr-conversation-flow .mr-file-actions button { min-height: 32px; }
+.mr-gc-prompt-raw { box-sizing: border-box; width: 100%; min-height: 40vh; resize: vertical; padding: 12px; border: 1px solid var(--border-subtle); border-radius: 6px; background: var(--surface-card); color: var(--fg); font: 13px/1.6 Consolas, 'Microsoft YaHei', monospace; }
+:root body .gc-journal-actions > :is([data-gc-open-cli], [data-gc-copy-prompt]) { width: auto; padding-inline: 8px; white-space: nowrap; }
+@media (max-width: 700px) {
+  :root body .mr-conversation-flow .mr-file-actions button { min-height: 44px; max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
+}

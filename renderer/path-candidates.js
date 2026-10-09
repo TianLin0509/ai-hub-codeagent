@@ -77,8 +77,101 @@ function _isAbsLocalPath(filePath) {
     || /^~[\\/]/.test(filePath);
 }
 
-function _statPathQuiet(filePath) {
+// Network (UNC) paths are never stat'ed synchronously here: this module runs on
+// the renderer's main thread while cards render, and an unreachable share made
+// fs.statSync wait for the SMB timeout. 2026-10-09 live Hub: one card mentioning
+// \\100.100.97.83\cellDT\... froze the whole window for 24 s. They are resolved
+// on libuv's thread pool instead, cached, and listeners re-run link wrapping
+// when a path turns out to exist. One probe per share at a time, and a share
+// that timed out is skipped for a minute instead of being re-probed per path.
+const NETWORK_TTL_MS = 60000;
+const NETWORK_CACHE_MAX = 500;
+const networkStats = new Map();   // lower-cased path -> { st, at }
+const networkShares = new Map();  // \\host\share -> { down, at }
+const networkPending = new Map(); // lower-cased path -> Promise
+const networkShareGate = new Map(); // \\host\share -> Promise (first probe)
+const networkListeners = new Set();
+
+function _isNetworkPath(filePath) {
+  const s = String(filePath || '');
+  return /^\\\\[^\\/]/.test(s) || /^\/\/[^/]/.test(s);
+}
+
+function _networkShareKey(filePath) {
+  const m = String(filePath || '').replace(/\//g, '\\').match(/^\\\\([^\\]+)(?:\\([^\\]*))?/);
+  return m ? ('\\\\' + m[1] + '\\' + (m[2] || '')).toLowerCase() : '';
+}
+
+function _rememberNetworkStat(key, st) {
+  networkStats.delete(key);
+  networkStats.set(key, { st, at: Date.now() });
+  while (networkStats.size > NETWORK_CACHE_MAX) networkStats.delete(networkStats.keys().next().value);
+}
+
+function _statNetworkAsync(filePath) {
+  const key = String(filePath).toLowerCase();
+  const cached = networkStats.get(key);
+  if (cached && Date.now() - cached.at < NETWORK_TTL_MS) return Promise.resolve(cached.st);
+  if (networkPending.has(key)) return networkPending.get(key);
+  const share = _networkShareKey(filePath);
+  const state = networkShares.get(share);
+  if (state && state.down && Date.now() - state.at < NETWORK_TTL_MS) return Promise.resolve(null);
+  const gate = networkShareGate.get(share);
+  const run = () => fs.promises.stat(filePath).then(
+    st => { networkShares.set(share, { down: false, at: Date.now() }); return st; },
+    error => {
+      // A missing entry on a reachable share is not an outage.
+      if (!['ENOENT', 'ENOTDIR'].includes(error && error.code)) networkShares.set(share, { down: true, at: Date.now() });
+      else networkShares.set(share, { down: false, at: Date.now() });
+      return null;
+    });
+  // While the share's first probe is in flight, wait for its verdict rather
+  // than queueing more SMB timeouts on the thread pool.
+  const promise = (gate ? gate.then(() => {
+    const verdict = networkShares.get(share);
+    return verdict && verdict.down ? null : run();
+  }) : run()).then(st => {
+    networkPending.delete(key);
+    _rememberNetworkStat(key, st);
+    if (st) for (const listener of networkListeners) { try { listener(filePath); } catch {} }
+    return st;
+  });
+  if (!gate) {
+    networkShareGate.set(share, promise);
+    promise.finally(() => { if (networkShareGate.get(share) === promise) networkShareGate.delete(share); });
+  }
+  networkPending.set(key, promise);
+  return promise;
+}
+
+// Called when a network path that was unknown at render time turns out to exist.
+function onNetworkPathResolved(listener) {
+  networkListeners.add(listener);
+  return () => networkListeners.delete(listener);
+}
+
+function _statPathQuiet(filePath, opts = {}) {
+  if (_isNetworkPath(filePath)) {
+    const cached = networkStats.get(String(filePath).toLowerCase());
+    if (cached && Date.now() - cached.at < NETWORK_TTL_MS) return cached.st;
+    _statNetworkAsync(filePath);
+    if (typeof opts.onNetworkPending === 'function') opts.onNetworkPending(filePath);
+    return null;
+  }
   try { return fs.statSync(filePath); } catch { return null; }
+}
+
+function _existsQuiet(filePath, opts = {}) {
+  if (_isNetworkPath(filePath)) return !!_statPathQuiet(filePath, opts);
+  return fs.existsSync(filePath);
+}
+
+async function _isDirectoryPathAsync(filePath) {
+  if (_isNetworkPath(filePath)) {
+    const st = await _statNetworkAsync(filePath);
+    return !!(st && st.isDirectory());
+  }
+  return _isDirectoryPath(filePath);
 }
 
 function _normalizeLocalPathForOpen(openPath, cwd, requireExistsForRel = true) {
@@ -89,7 +182,7 @@ function _normalizeLocalPathForOpen(openPath, cwd, requireExistsForRel = true) {
   if (!cwd) return null;
   let abs = null;
   try { abs = path.resolve(cwd, p); } catch { return null; }
-  if (requireExistsForRel && !fs.existsSync(abs)) return null;
+  if (requireExistsForRel && !_existsQuiet(abs)) return null;
   return abs;
 }
 
@@ -124,12 +217,17 @@ function classifyLocalPathHref(href, cwd = null) {
   return openPath ? { displayPath, openPath } : null;
 }
 
-function _isDirectoryPath(filePath) {
-  const st = _statPathQuiet(filePath);
+function _isDirectoryPath(filePath, opts = {}) {
+  const st = _statPathQuiet(filePath, opts);
   return !!(st && st.isDirectory());
 }
 
-function _resolveRelPathIfExists(cwd, relPath) {
+function _resolveRelPathIfExists(cwd, relPath, opts = {}) {
+  // A share path keeps its own cache: a not-yet-known answer must not be
+  // remembered here as missing, or the re-wrap after it resolves finds nothing.
+  let resolved = null;
+  try { resolved = path.resolve(cwd, relPath); } catch { return null; }
+  if (_isNetworkPath(resolved)) return _existsQuiet(resolved, opts) ? resolved : null;
   const key = `${cwd}|${relPath}`;
   const now = Date.now();
   const hit = REL_PATH_CACHE.get(key);
@@ -199,7 +297,7 @@ function collectPathCandidates(text, cwd = null, opts = {}) {
     while ((m = WINDOWS_PATH_TOKEN_RE.exec(text))) {
       const raw = _cleanPathCandidate(m[0]);
       const fullPath = _repairLocalPathCandidate(raw);
-      if (fullPath && _isDirectoryPath(fullPath)) {
+      if (fullPath && _isDirectoryPath(fullPath, opts)) {
         _addCandidate(candidates, m.index, m.index + m[0].length - 1, fullPath);
       }
     }
@@ -208,7 +306,7 @@ function collectPathCandidates(text, cwd = null, opts = {}) {
     while ((m = ABS_DIR_RE.exec(text))) {
       const raw = _cleanPathCandidate(m[0]);
       const fullPath = _normalizeLocalPathForOpen(raw, cwd, false);
-      if (fullPath && _isDirectoryPath(fullPath)) {
+      if (fullPath && _isDirectoryPath(fullPath, opts)) {
         _addCandidate(candidates, m.index, m.index + m[0].length - 1, fullPath);
       }
     }
@@ -218,7 +316,7 @@ function collectPathCandidates(text, cwd = null, opts = {}) {
     REL_PATH_RE.lastIndex = 0;
     while ((m = REL_PATH_RE.exec(text))) {
       const raw = _cleanPathCandidate(m[0]);
-      const absPath = _resolveRelPathIfExists(cwd, raw);
+      const absPath = _resolveRelPathIfExists(cwd, raw, opts);
       if (absPath) _addCandidate(candidates, m.index, m.index + m[0].length - 1, absPath);
     }
 
@@ -227,8 +325,8 @@ function collectPathCandidates(text, cwd = null, opts = {}) {
       while ((m = REL_DIR_RE.exec(text))) {
         const raw = _cleanPathCandidate(m[0]);
         if (PREVIEW_PATH_RE.test(raw)) continue;
-        const absPath = _resolveRelPathIfExists(cwd, raw);
-        if (absPath && _isDirectoryPath(absPath)) {
+        const absPath = _resolveRelPathIfExists(cwd, raw, opts);
+        if (absPath && _isDirectoryPath(absPath, opts)) {
           _addCandidate(candidates, m.index, m.index + m[0].length - 1, absPath);
         }
       }
@@ -237,9 +335,9 @@ function collectPathCandidates(text, cwd = null, opts = {}) {
     REL_BARE_RE.lastIndex = 0;
     while ((m = REL_BARE_RE.exec(text))) {
       const raw = _cleanPathCandidate(m[0]);
-      const absPath = _resolveRelPathIfExists(cwd, raw);
+      const absPath = _resolveRelPathIfExists(cwd, raw, opts);
       if (!absPath) continue;
-      const st = _statPathQuiet(absPath);
+      const st = _statPathQuiet(absPath, opts);
       if (!st) continue;
       if (st.isDirectory() || PREVIEW_PATH_RE.test(absPath)) {
         _addCandidate(candidates, m.index, m.index + m[0].length - 1, absPath);
@@ -271,5 +369,8 @@ module.exports = {
   _normalizeLocalPathForOpen,
   classifyLocalPathHref,
   _isDirectoryPath,
+  _isDirectoryPathAsync,
+  _isNetworkPath,
   _resolveRelPathIfExists,
+  onNetworkPathResolved,
 };

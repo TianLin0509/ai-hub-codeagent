@@ -1,6 +1,6 @@
 # AI Hub 公司版（CodeAgent）
 
-把公司内网的 **Code Agent CLI** 放进一个 Windows 桌面工作台：单独会话、多 AI 群聊、卡片视图、休眠恢复、历史检索、自动命名。这是 AI Hub 的公司版，当前 **v0.5.1**，同步自上游 **1.6.397**（具体提交见 `community-edition.json`）。
+把公司内网的 **Code Agent CLI** 放进一个 Windows 桌面工作台：单独会话、多 AI 群聊、卡片视图、休眠恢复、历史检索、自动命名。这是 AI Hub 的公司版，当前 **v0.5.2**，同步自上游 **1.6.400**（具体提交见 `community-edition.json`）。
 
 与公开社区版是同一套代码，区别只在默认行为面向公司内网：
 
@@ -12,14 +12,14 @@
 
 ## 安装（离线包，推荐）
 
-从发布页下载这三个文件（或由同事转来的离线包里取）：`install-release.ps1`、`AIHubCommunity-0.5.1-win-x64.zip`、`SHA256SUMS.txt`，放在同一个文件夹里，在 PowerShell 中执行：
+从发布页下载这三个文件（或由同事转来的离线包里取）：`install-release.ps1`、`AIHubCommunity-0.5.2-win-x64.zip`、`SHA256SUMS.txt`，放在同一个文件夹里，在 PowerShell 中执行：
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\install-release.ps1 -Version v0.5.1 `
-  -PackagePath .\AIHubCommunity-0.5.1-win-x64.zip -ChecksumPath .\SHA256SUMS.txt -DisableGpu
+powershell -NoProfile -ExecutionPolicy Bypass -File .\install-release.ps1 -Version v0.5.2 `
+  -PackagePath .\AIHubCommunity-0.5.2-win-x64.zip -ChecksumPath .\SHA256SUMS.txt -DisableGpu
 ```
 
-- 安装到 `%LOCALAPPDATA%\Programs\AIHubCommunity\v0.5.1`，**不需要管理员权限**，旧版本和用户数据都保留。
+- 安装到 `%LOCALAPPDATA%\Programs\AIHubCommunity\v0.5.2`，**不需要管理员权限**，旧版本和用户数据都保留。
 - `-DisableGpu` 是兼容渲染：部分电脑用显卡渲染时窗口会全黑。加上它之后，桌面快捷方式自带兼容参数，并在 `%USERPROFILE%\.ai-hub-community\gpu-disabled.json` 留一个标记（删掉这个文件即恢复显卡渲染）。
 - 装好后从桌面快捷方式「AI Hub Community」打开。窗口标题会显示版本号，报告问题时请带上这一行。
 
@@ -29,7 +29,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\install-release.ps1 -Versi
 
 把这段话发给你的 Code Agent：
 
-> 请按 AI Hub 公司版 v0.5.1 的 README 用离线包安装（带 -DisableGpu），然后读 docs/COMPANY-CODE-AGENT.md 的「现场验收」，逐项验证 CodeAgent 会话：新建、卡片显示回答、休眠后恢复、Hub 关闭重开后恢复、两名 CodeAgent 成员的群聊。只发极短的测试消息，不修改项目文件，报告每项通过或不通过并附原始证据。
+> 请按 AI Hub 公司版 v0.5.2 的 README 用离线包安装（带 -DisableGpu），然后读 docs/COMPANY-CODE-AGENT.md 的「现场验收」，逐项验证 CodeAgent 会话：新建、卡片显示回答、休眠后恢复、Hub 关闭重开后恢复、两名 CodeAgent 成员的群聊。只发极短的测试消息，不修改项目文件，报告每项通过或不通过并附原始证据。
 
 源码包里另有自动验收脚本 `tests/acceptance-codeagent-real.js`（14 项，用真实 Code Agent 跑），用法见脚本开头注释。
 

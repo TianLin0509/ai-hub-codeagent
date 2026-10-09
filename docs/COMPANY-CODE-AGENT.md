@@ -1,6 +1,6 @@
 # 公司内网：用内部 Code Agent 跑 AI Hub
 
-适用：公司内网不能使用 Claude Code、Codex 等外部 CLI，只有公司自研的编码 CLI（下文称 **Code Agent**，命令 `codeagent`，后端可选 GLM、MiniMax 等模型）。固定基线：**v0.5.1**（上游 1.6.397）。
+适用：公司内网不能使用 Claude Code、Codex 等外部 CLI，只有公司自研的编码 CLI（下文称 **Code Agent**，命令 `codeagent`，后端可选 GLM、MiniMax 等模型）。固定基线：**v0.5.2**（上游 1.6.400）。
 
 ## 结论
 
@@ -35,7 +35,7 @@ Hub 已经内置「CodeAgent」会话种类，装好 Hub、电脑上能运行 `c
 
 ## 可以直接交给 Code Agent 的验收任务
 
-> 请按 docs/COMPANY-CODE-AGENT.md 的「现场验收」逐项验证 AI Hub v0.5.1 的 CodeAgent 会话。只发清单里写明的极短测试消息，不修改项目文件。每一项写「通过 / 不通过 / 未测」并附原始证据（报错原文、截图里的文字、文件名）。不出现 token、内部地址、姓名工号。
+> 请按 docs/COMPANY-CODE-AGENT.md 的「现场验收」逐项验证 AI Hub v0.5.2 的 CodeAgent 会话。只发清单里写明的极短测试消息，不修改项目文件。每一项写「通过 / 不通过 / 未测」并附原始证据（报错原文、截图里的文字、文件名）。不出现 token、内部地址、姓名工号。
 
 ## 现场验收
 

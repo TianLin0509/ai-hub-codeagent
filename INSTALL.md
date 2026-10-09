@@ -4,7 +4,7 @@
 
 普通用户和代装 Agent 优先使用 [AGENT-QUICKSTART.md](docs/AGENT-QUICKSTART.md) 的固定版本命令。`scripts/install-release.ps1` 自动下载 Windows x64 ZIP、SHA256 校验、按版本安装并启动，支持重复执行、JSON 回执及离线包。不要为了运行发布版先装整套开发环境。
 
-安装目录默认 `%LOCALAPPDATA%\Programs\AIHubCommunity\v0.5.1`。程序包含 `resources/scripts/install-provider.ps1` 和 `resources/guides`，可离线阅读安装/定制文档。可以手动运行其中的 `AI Hub Community.exe`。卸载便携版仅在关闭对应程序后移除该版本目录；用户数据不自动删除。
+安装目录默认 `%LOCALAPPDATA%\Programs\AIHubCommunity\v0.5.2`。程序包含 `resources/scripts/install-provider.ps1` 和 `resources/guides`，可离线阅读安装/定制文档。可以手动运行其中的 `AI Hub Community.exe`。卸载便携版仅在关闭对应程序后移除该版本目录；用户数据不自动删除。
 
 ## 路线 A：源码安装（人和 agent 均可执行）
 

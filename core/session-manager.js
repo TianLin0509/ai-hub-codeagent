@@ -1404,6 +1404,10 @@ class SessionManager extends EventEmitter {
       if (this.hookPort) sessionEnv.CLAUDE_HUB_PORT = String(this.hookPort);
       if (this.hookToken) sessionEnv.CLAUDE_HUB_TOKEN = this.hookToken;
       if (process.env.CLAUDE_HUB_DATA_DIR) sessionEnv.CLAUDE_HUB_DATA_DIR = process.env.CLAUDE_HUB_DATA_DIR;
+      // 它的界面框架（opentui）只看 WT_SESSION 是否非空来判断「推荐终端」，空就一直挂一条
+      // 「当前终端非推荐终端」黄条（2026-10-09 公司真机）。Hub 的终端是完整的 ConPTY + 真彩色，补一个占位值；
+      // 只给 Code Agent，其他 CLI 可能据此假设 Windows Terminal 的专有能力。
+      if (process.platform === 'win32' && !sessionEnv.WT_SESSION) sessionEnv.WT_SESSION = 'ai-hub';
     } else if (isDeepSeekLegacy) {
       const cv = getConfigValues();
       clearProxyEnv(sessionEnv);

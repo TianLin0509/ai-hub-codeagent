@@ -24,7 +24,8 @@ try {
 
 // 兼容渲染：必须在 app ready 之前决定（见 core/gpu-mode.js）。
 try {
-  require('./core/gpu-mode.js').applyGpuMode({ app, dataDir: require('./core/data-dir.js').getHubDataDir() });
+  // 返回值（关闭原因或 null）交给 main.js：界面进程据此给终端选不依赖显卡的渲染方式。
+  process.__hubGpuDisabledReason = require('./core/gpu-mode.js').applyGpuMode({ app, dataDir: require('./core/data-dir.js').getHubDataDir() }) || null;
 } catch (error) {
   process.__hubGpuModeError = error && error.message ? error.message : String(error);
 }
