@@ -1,0 +1,14 @@
+/* Community first-run panel: same width and surfaces as the two home cards above it. */
+#community-setup { width:100%; box-sizing:border-box; margin:16px 0 0; padding:18px 22px; border:1px solid var(--border-subtle, #d9e0e8); border-radius:8px; text-align:left; color:var(--fg-strong, #1d1d1f); background:var(--surface-raised, #fff); }
+.home-welcome-body { padding-top:20px; padding-bottom:28px; }
+.home-welcome-portal { min-height:150px; }
+.sidebar-quota-provider[data-provider="tokenPlan"] { display:none; }
+#community-setup h2 { font-size:18px; margin:0 0 8px; }
+#community-setup p { font-size:13px; line-height:1.65; margin:8px 0; }
+#community-providers,.community-setup-actions { display:flex; flex-wrap:wrap; gap:8px; margin:12px 0; }
+.community-provider { padding:5px 9px; border-radius:6px; background:var(--surface-canvas,#f5f7fa); font-size:12px; }
+.community-provider button { border:0; background:transparent; color:var(--brand,#2563eb); text-decoration:underline; cursor:pointer; font:inherit; }
+.community-setup-actions button { padding:8px 12px; border:1px solid #c9d2df; border-radius:8px; background:var(--surface-canvas,#f5f7fa); color:inherit; cursor:pointer; }
+#community-accounts { background:#2563eb; color:#fff; border-color:#2563eb; }
+.community-setup-note { opacity:.72; }
+@media(max-height:820px) { #community-setup { margin-top:12px; padding:12px 18px; } .home-welcome { overflow-y:auto; } }

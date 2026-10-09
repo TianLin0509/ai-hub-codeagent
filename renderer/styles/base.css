@@ -1,0 +1,745 @@
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+/* Selection copy is a global action spanning cards, editors and previews.
+   This verified status pill is intentionally above every Hub surface. */
+.hub-copy-feedback {
+  position: fixed;
+  left: 50%;
+  bottom: 24px;
+  z-index: 200000;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 150px;
+  max-width: min(420px, calc(100vw - 32px));
+  padding: 9px 13px 9px 10px;
+  border: 1px solid rgba(var(--rgb-success), .42);
+  border-radius: var(--radius-lg);
+  background: rgba(var(--rgb-canvas), .96);
+  box-shadow: var(--shadow-lg);
+  color: var(--fg-strong);
+  opacity: 0;
+  pointer-events: none;
+  transform: translate(-50%, 10px) scale(.98);
+  transition: opacity .16s ease, transform .16s ease;
+}
+
+.hub-copy-feedback.visible {
+  opacity: 1;
+  transform: translate(-50%, 0) scale(1);
+}
+
+.hub-copy-feedback[data-state="error"] {
+  border-color: rgba(var(--rgb-danger), .54);
+}
+
+.hub-copy-feedback-icon {
+  display: grid;
+  place-items: center;
+  flex: 0 0 27px;
+  width: 27px;
+  height: 27px;
+  border-radius: 9px;
+  background: var(--status-success-tint);
+  color: var(--status-success);
+  font-size: 15px;
+  font-weight: 850;
+}
+
+.hub-copy-feedback[data-state="error"] .hub-copy-feedback-icon {
+  background: var(--status-danger-tint);
+  color: var(--status-danger);
+}
+
+.hub-copy-feedback-copy {
+  display: grid;
+  min-width: 0;
+  gap: 1px;
+}
+
+.hub-copy-feedback-copy strong {
+  font-size: 11.5px;
+  line-height: 1.25;
+}
+
+.hub-copy-feedback-copy small {
+  overflow: hidden;
+  color: var(--fg-muted);
+  font-size: 9.5px;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hub-copy-feedback { transition: none; }
+}
+
+/* =========================================================================
+   2026-08-26 · 主题 token 层
+   =========================================================================
+   结构：
+
+   ① :root                     主题无关（字体栈、恒深的机器输出面）
+   ② :root, [data-theme=dark]  深色（默认）
+   ③ 四套浅色共享段            所有浅色皮肤都成立的东西
+   ④ 每套浅色皮肤各自的块       claude / codex / hub / slate
+
+   段③④的 specificity 相同（0,2,0），靠**源码顺序**决胜负，所以各皮肤块必须排在
+   共享段之后。别把顺序调乱。
+
+   写业务 CSS 时用语义名（--surface-* / --fg-* / --border-* / --brand-* /
+   --status-* / --mark-* / --radius-* / --shadow-* / rgba(var(--rgb-*), α)），
+   不要再往下写十六进制或像素圆角。旧名（--bg-primary / --ui-purple-* …）保留
+   为纯转发别名，1300+ 处历史引用无需改动。
+
+   主题由 theme-bootstrap.js 在首帧前打到 <html data-theme> 上；属性缺失或值不认识
+   时段②的 :root 兜底，永远不会出现无主题的裸样式。
+
+   —— 为什么几何也进 token ——
+   光换配色做不出"纯 Codex"和"纯 Claude"的区别：这两者的差异主要在**形**，
+   Codex 紧而平、Claude 圆而软。所以 --radius-* / --shadow-* 和调色板一样归主题所有。
+   ========================================================================= */
+
+:root {
+  /* ---- 字体栈 ---- */
+  --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --font-mono: ui-monospace, 'SF Mono', 'Cascadia Mono', Menlo, Consolas, monospace;
+
+  /* ---- 机器输出面：终端 / 代码块 / 工具结果 ----
+     四套浅色下同样恒深。xterm 里跑的 Claude Code / Codex TUI 用 dim 灰自绘框线，
+     浅底下几乎看不见；prism-tomorrow 也是深色语法主题。浅色靠 --machine-island-*
+     把这块收成圆角内缩的嵌入式终端岛，而不是硬把 ANSI 反色。
+     深色下 inset/radius 为 0、ring 为 none，即与从前完全一致。 */
+  --machine-bg: #0d1117;
+  --machine-bg-deep: #08070d;
+  --machine-fg: #c9d1d9;
+  --machine-fg-muted: #8b949e;
+  --machine-border: #21262d;
+  --machine-island-radius: 0px;
+  --machine-island-inset: 0px;
+  --machine-island-ring: none;
+}
+
+/* ---------- ② 深色（默认） ---------- */
+:root,
+:root[data-theme='dark'] {
+  color-scheme: dark;
+
+  --radius-xs: 4px;
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
+  --radius-pill: 999px;
+  --shadow-sm: none;
+  --shadow-md: 0 8px 24px rgba(var(--rgb-shadow), 0.4);
+  --shadow-lg: 0 16px 48px rgba(var(--rgb-shadow), 0.5);
+
+  --surface-canvas: #0d1117;
+  --surface-raised: #161b22;
+  --surface-overlay: #1c2128;
+  --surface-card: #1c1d23;
+  --surface-sunken: #14151a;
+  --surface-hover: rgba(240, 246, 252, 0.06);
+  --surface-active: #1c2128;
+
+  --border-subtle: #21262d;
+  --border-mid: #30363d;
+  --border-strong: #484f58;
+
+  --fg-strong: #f0f6fc;
+  --fg-default: #c9d1d9;
+  --fg-muted: #8b949e;
+  --fg-faint: #484f58;
+  --fg-inverse: #ffffff;
+
+  /* 强调色叫 --brand 不叫 --accent：仓库里已有 48 处 var(--accent, <蓝/靛>)
+     在拿"没定义"当默认走回退（群聊、工作流弹窗）。真定义了 --accent 会把那些
+     地方一夜从蓝变紫——那是另一件事，不该混在换肤里悄悄发生。 */
+  --brand: #8b5cf6;
+  --brand-hover: #a78bfa;
+  --brand-text: #c4b5fd;
+  --brand-ink: #ffffff;
+  --brand-tint: #2a2335;
+  --brand-tint-border: rgba(139, 92, 246, 0.32);
+  --brand-glow: rgba(139, 92, 246, 0.5);
+  --link: #58a6ff;
+  --link-hover: #79c0ff;
+
+  --status-success: #3fb950;
+  --status-success-tint: rgba(var(--rgb-success), 0.14);
+  --status-warning: #f0883e;
+  --status-warning-tint: rgba(var(--rgb-warning), 0.14);
+  --status-danger: #e74c3c;
+  --status-danger-tint: rgba(var(--rgb-danger), 0.14);
+  --status-info: #58a6ff;
+  --status-info-tint: rgba(var(--rgb-info), 0.14);
+
+  /* ---- alpha 叠色的基色 ----
+     全仓 700 多处 rgba() 只围着这几个基色转，抽成 RGB 三元组后
+     rgba(var(--rgb-info), .08) 在每套主题下各自成立。
+     最关键的是 --rgb-overlay：深色下是白色提亮，浅色下必须翻成黑色压暗，
+     否则所有 hover / 选中态在浅底上会整片消失。 */
+  --rgb-overlay: 255, 255, 255;
+  --rgb-scrim: 0, 0, 0;
+  --rgb-shadow: 0, 0, 0;
+  --rgb-canvas: 13, 17, 23;
+  --rgb-neutral: 139, 148, 158;
+  --rgb-info: 88, 166, 255;
+  --rgb-success: 63, 185, 80;
+  --rgb-warning: 210, 153, 34;
+  --rgb-danger: 248, 81, 73;
+  --rgb-brand: 139, 92, 246;
+  --rgb-brand-soft: 167, 139, 250;
+  --rgb-orange: 240, 136, 62;
+  --rgb-feature: 240, 136, 62;
+  --rgb-teal: 95, 212, 208;
+
+  /* ---- 标记色 ----
+     状态点、徽章、计量条上的实心色比四个基础状态色多一层。 */
+  --mark-blue: #79b8ff;
+  --mark-amber: #d29922;
+  --mark-amber-soft: #f0ad4e;
+  --mark-feature: #f0ad4e;
+  --mark-red: #ff7b72;
+  --mark-red-strong: #f85149;
+  --mark-green: #7ee787;
+  --mark-green-strong: #56d364;
+  --mark-teal: #5fd4d0;
+  --mark-indigo: #6366f1;
+  --mark-slate: #9aa8b8;
+  --mark-yellow: #fde68a;
+
+  /* 主 CTA（侧栏「启动」）：深色下是一颗高对比的浅色药丸 */
+  --cta-bg: #eceee9;
+  --cta-fg: #151719;
+  --cta-border: rgba(var(--rgb-overlay), 0.72);
+  --cta-bg-hover: #ffffff;
+  --cta-bg-active: #dfe1dc;
+
+  --session-active: #1c2d1c;
+  --session-waiting: #1c2333;
+
+  --turn-meta-fg: #71717a;
+  --turn-body-fg: #d4d4d8;
+  --tool-call-border: #2a2b32;
+  --tool-call-name: #fbbf24;
+  --tool-call-ok: #34d399;
+  --tool-call-fail: #f87171;
+}
+
+/* ---------- ③ 四套浅色的共享段 ---------- */
+:root[data-theme='claude'],
+:root[data-theme='codex'],
+:root[data-theme='hub'],
+:root[data-theme='slate'] {
+  color-scheme: light;
+
+  /* 浅底上白色提亮无效，必须翻成黑色压暗 */
+  --rgb-overlay: 0, 0, 0;
+  --fg-inverse: #ffffff;
+  --brand-ink: #ffffff;
+
+  --status-success-tint: rgba(var(--rgb-success), 0.12);
+  --status-warning-tint: rgba(var(--rgb-warning), 0.12);
+  --status-danger-tint: rgba(var(--rgb-danger), 0.1);
+  --status-info-tint: rgba(var(--rgb-info), 0.1);
+
+  /* 恒深的终端在浅底上收成嵌入式终端岛 */
+  --machine-island-radius: 10px;
+  --machine-island-inset: 8px;
+  --machine-island-ring: inset 0 0 0 1px var(--machine-border);
+  --machine-border: #2b3038;
+
+  --radius-pill: 999px;
+  --cta-bg: var(--brand);
+  --cta-fg: var(--brand-ink);
+  --cta-border: var(--brand);
+  --cta-bg-hover: var(--brand-hover);
+  --cta-bg-active: var(--brand-text);
+}
+
+/* ---------- ④-A · claude：暖米、圆、软 ----------
+   Claude 那一挂的气质：米色画布 + 纯白卡片 + 陶土强调，圆角偏大、阴影暖而柔。 */
+:root[data-theme='claude'] {
+  --radius-xs: 5px;
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-xl: 20px;
+  --shadow-sm: 0 1px 2px rgba(var(--rgb-shadow), 0.06);
+  --shadow-md: 0 4px 16px rgba(var(--rgb-shadow), 0.1);
+  --shadow-lg: 0 18px 44px rgba(var(--rgb-shadow), 0.16);
+
+  --surface-canvas: #faf9f5;
+  --surface-raised: #f0eee6;
+  --surface-overlay: #ffffff;
+  --surface-card: #ffffff;
+  --surface-sunken: #f5f2e9;
+  --surface-hover: rgba(38, 38, 36, 0.045);
+  --surface-active: #ffffff;
+
+  --border-subtle: #e8e4d9;
+  --border-mid: #dcd6c8;
+  --border-strong: #bdb6a4;
+
+  --fg-strong: #262624;
+  --fg-default: #3c3a35;
+  --fg-muted: #6f6b60;
+  --fg-faint: #7d7768;
+
+  --brand: #c15f3c;
+  --brand-hover: #a94f30;
+  --brand-text: #96421f;
+  --brand-tint: #f6efe6;
+  --brand-tint-border: #e6d9c8;
+  --brand-glow: rgba(193, 95, 60, 0.35);
+  --link: #1b5fa8;
+  --link-hover: #14498a;
+
+  --status-success: #3f7d54;
+  --status-warning: #a8672b;
+  --status-danger: #b3352c;
+  --status-info: #1b5fa8;
+
+  --rgb-scrim: 60, 50, 35;
+  --rgb-shadow: 90, 78, 60;
+  --rgb-canvas: 250, 249, 245;
+  --rgb-neutral: 111, 107, 96;
+  --rgb-info: 27, 95, 168;
+  --rgb-success: 63, 125, 84;
+  --rgb-warning: 168, 103, 43;
+  --rgb-danger: 179, 53, 44;
+  --rgb-brand: 193, 95, 60;
+  --rgb-brand-soft: 201, 122, 90;
+  --rgb-orange: 168, 103, 43;
+  --rgb-feature: 168, 103, 43;
+  --rgb-teal: 23, 112, 108;
+
+  --mark-blue: #1b5fa8;
+  --mark-amber: #96601a;
+  --mark-amber-soft: #a8721f;
+  --mark-feature: #a8721f;
+  --mark-red: #b3352c;
+  --mark-red-strong: #a32a22;
+  --mark-green: #2f6b45;
+  --mark-green-strong: #2f7d4d;
+  --mark-teal: #17706c;
+  --mark-indigo: #4f46b8;
+  --mark-slate: #6f6b60;
+  --mark-yellow: #7a5a10;
+
+  --session-active: #edf3ed;
+  --session-waiting: #fbf1e3;
+  --turn-meta-fg: #8a8578;
+  --turn-body-fg: #3c3a35;
+  --tool-call-border: #e6e1d3;
+  --tool-call-name: #8a5a10;
+  --tool-call-ok: #3f7d54;
+  --tool-call-fail: #b3352c;
+}
+
+/* ---------- ④-B · codex：纸白、紧、平、近乎单色 ----------
+   与 claude 正好相反的一极。三条硬规矩：
+   1. 圆角全线收紧、阴影压到几乎没有，分区靠发丝线而不是色块和投影；
+   2. 主按钮是近黑而不是彩色；
+   3. **去色**——链接、选中、hover 的蓝色 tint 全部退成中性灰（--rgb-info 一起退），
+      只有真正的状态语义（危险 / 警告 / 成功）才留颜色。
+      这条是 codex 和其余三套最本质的区别，改 --rgb-info 之前先想清楚。 */
+:root[data-theme='codex'] {
+  --radius-xs: 3px;
+  --radius-sm: 5px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --radius-xl: 10px;
+  --shadow-sm: 0 1px 1px rgba(var(--rgb-shadow), 0.05);
+  --shadow-md: 0 2px 6px rgba(var(--rgb-shadow), 0.07);
+  --shadow-lg: 0 10px 28px rgba(var(--rgb-shadow), 0.12);
+
+  --surface-canvas: #ffffff;
+  --surface-raised: #fafafa;
+  --surface-overlay: #ffffff;
+  --surface-card: #ffffff;
+  --surface-sunken: #f6f6f6;
+  --surface-hover: rgba(13, 13, 13, 0.04);
+  --surface-active: #f2f2f2;
+
+  --border-subtle: #e6e6e6;
+  --border-mid: #d8d8d8;
+  --border-strong: #b4b4b4;
+
+  --fg-strong: #0d0d0d;
+  --fg-default: #2b2b2b;
+  --fg-muted: #6b6b6b;
+  --fg-faint: #8a8a8a;
+
+  --brand: #1a1a1a;
+  --brand-hover: #000000;
+  --brand-text: #1a1a1a;
+  --brand-tint: #f2f2f2;
+  --brand-tint-border: #e0e0e0;
+  --brand-glow: rgba(13, 13, 13, 0.18);
+  --link: #3f4753;
+  --link-hover: #1e242c;
+
+  --status-success: #157f3c;
+  --status-warning: #8a5a00;
+  --status-danger: #b3261e;
+  --status-info: #3f4753;
+
+  --rgb-scrim: 20, 20, 20;
+  --rgb-shadow: 20, 20, 20;
+  --rgb-canvas: 255, 255, 255;
+  --rgb-neutral: 107, 107, 107;
+  --rgb-info: 90, 98, 110;
+  --rgb-success: 21, 127, 60;
+  --rgb-warning: 138, 90, 0;
+  --rgb-danger: 179, 38, 30;
+  --rgb-brand: 26, 26, 26;
+  --rgb-brand-soft: 90, 90, 90;
+  --rgb-orange: 138, 90, 0;
+  --rgb-feature: 118, 118, 118;
+  --rgb-teal: 60, 90, 88;
+
+  --mark-blue: #3f4753;
+  --mark-amber: #8a5a00;
+  --mark-amber-soft: #8a5a00;
+  --mark-feature: #3f3f3f;
+  --mark-red: #b3261e;
+  --mark-red-strong: #a01c15;
+  --mark-green: #157f3c;
+  --mark-green-strong: #157f3c;
+  --mark-teal: #3c5a58;
+  --mark-indigo: #3f4753;
+  --mark-slate: #6b6b6b;
+  --mark-yellow: #7a5a10;
+
+  --session-active: #f1f5f1;
+  --session-waiting: #f7f4ee;
+  --turn-meta-fg: #8a8a8a;
+  --turn-body-fg: #2b2b2b;
+  --tool-call-border: #e6e6e6;
+  --tool-call-name: #7a4c00;
+  --tool-call-ok: #157f3c;
+  --tool-call-fail: #b3261e;
+
+  --cta-bg-active: #333333;
+  --machine-island-radius: 6px;
+}
+
+/* ---------- ④-C · hub：中性冷灰白 + 保留 Hub 自己的紫 ---------- */
+:root[data-theme='hub'] {
+  --radius-xs: 4px;
+  --radius-sm: 6px;
+  --radius-md: 9px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
+  --shadow-sm: 0 1px 2px rgba(var(--rgb-shadow), 0.06);
+  --shadow-md: 0 4px 12px rgba(var(--rgb-shadow), 0.09);
+  --shadow-lg: 0 16px 40px rgba(var(--rgb-shadow), 0.14);
+
+  --surface-canvas: #f7f7fa;
+  --surface-raised: #f1f1f6;
+  --surface-overlay: #ffffff;
+  --surface-card: #ffffff;
+  --surface-sunken: #f2f2f7;
+  --surface-hover: rgba(24, 24, 27, 0.05);
+  --surface-active: #ffffff;
+
+  --border-subtle: #e6e6ee;
+  --border-mid: #d8d8e4;
+  --border-strong: #b6b6c4;
+
+  --fg-strong: #18181b;
+  --fg-default: #33333a;
+  --fg-muted: #6b6b76;
+  --fg-faint: #86868f;
+
+  /* 紫在白底上容易显廉价，比深色下的 #8b5cf6 压深一档 */
+  --brand: #7c3aed;
+  --brand-hover: #6d28d9;
+  --brand-text: #5b21b6;
+  --brand-tint: #f4efff;
+  --brand-tint-border: #e0d4fb;
+  --brand-glow: rgba(124, 58, 237, 0.35);
+  --link: #2563eb;
+  --link-hover: #1d4ed8;
+
+  --status-success: #15803d;
+  --status-warning: #b45309;
+  --status-danger: #b91c1c;
+  --status-info: #2563eb;
+
+  --rgb-scrim: 24, 24, 27;
+  --rgb-shadow: 60, 60, 72;
+  --rgb-canvas: 247, 247, 250;
+  --rgb-neutral: 107, 107, 118;
+  --rgb-info: 37, 99, 235;
+  --rgb-success: 21, 128, 61;
+  --rgb-warning: 180, 83, 9;
+  --rgb-danger: 185, 28, 28;
+  --rgb-brand: 124, 58, 237;
+  --rgb-brand-soft: 167, 139, 250;
+  --rgb-orange: 180, 83, 9;
+  --rgb-feature: 124, 58, 237;
+  --rgb-teal: 13, 148, 136;
+
+  --mark-blue: #2563eb;
+  --mark-amber: #a16207;
+  --mark-amber-soft: #b45309;
+  --mark-feature: #5b21b6;
+  --mark-red: #b91c1c;
+  --mark-red-strong: #991b1b;
+  --mark-green: #15803d;
+  --mark-green-strong: #166534;
+  --mark-teal: #0f766e;
+  --mark-indigo: #4f46e5;
+  --mark-slate: #6b6b76;
+  --mark-yellow: #854d0e;
+
+  --session-active: #eef6ef;
+  --session-waiting: #eef2fd;
+  --turn-meta-fg: #86868f;
+  --turn-body-fg: #33333a;
+  --tool-call-border: #e6e6ee;
+  --tool-call-name: #a16207;
+  --tool-call-ok: #15803d;
+  --tool-call-fail: #b91c1c;
+}
+
+/* ---------- ④-D · slate：低对比灰白，画布比卡片更暗，卡片"浮"在灰底上 ---------- */
+:root[data-theme='slate'] {
+  --radius-xs: 4px;
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
+  --shadow-sm: 0 1px 2px rgba(var(--rgb-shadow), 0.07);
+  --shadow-md: 0 4px 12px rgba(var(--rgb-shadow), 0.1);
+  --shadow-lg: 0 16px 40px rgba(var(--rgb-shadow), 0.15);
+
+  --surface-canvas: #f1f2f4;
+  --surface-raised: #e8eaee;
+  --surface-overlay: #ffffff;
+  --surface-card: #ffffff;
+  --surface-sunken: #eceef1;
+  --surface-hover: rgba(31, 35, 40, 0.05);
+  --surface-active: #ffffff;
+
+  --border-subtle: #dfe2e7;
+  --border-mid: #ced3d9;
+  --border-strong: #a9b0b9;
+
+  --fg-strong: #1f2328;
+  --fg-default: #353b42;
+  --fg-muted: #5f6a75;
+  --fg-faint: #7c8590;
+
+  --brand: #3b6fe0;
+  --brand-hover: #2f5cc0;
+  --brand-text: #24509e;
+  --brand-tint: #e9f0fd;
+  --brand-tint-border: #d2e0fa;
+  --brand-glow: rgba(59, 111, 224, 0.35);
+  --link: #24509e;
+  --link-hover: #1b3f80;
+
+  --status-success: #1a7f37;
+  --status-warning: #9a6700;
+  --status-danger: #b3352c;
+  --status-info: #24509e;
+
+  --rgb-scrim: 31, 35, 40;
+  --rgb-shadow: 60, 70, 82;
+  --rgb-canvas: 241, 242, 244;
+  --rgb-neutral: 95, 106, 117;
+  --rgb-info: 36, 80, 158;
+  --rgb-success: 26, 127, 55;
+  --rgb-warning: 154, 103, 0;
+  --rgb-danger: 179, 53, 44;
+  --rgb-brand: 59, 111, 224;
+  --rgb-brand-soft: 130, 163, 235;
+  --rgb-orange: 154, 103, 0;
+  --rgb-feature: 154, 103, 0;
+  --rgb-teal: 23, 112, 108;
+
+  --mark-blue: #24509e;
+  --mark-amber: #8a5f10;
+  --mark-amber-soft: #9a6700;
+  --mark-feature: #9a6700;
+  --mark-red: #b3352c;
+  --mark-red-strong: #a32a22;
+  --mark-green: #1a7f37;
+  --mark-green-strong: #17692f;
+  --mark-teal: #17706c;
+  --mark-indigo: #4046b8;
+  --mark-slate: #5f6a75;
+  --mark-yellow: #7a5a10;
+
+  --session-active: #eaf1ea;
+  --session-waiting: #eaf0f8;
+  --turn-meta-fg: #7c8590;
+  --turn-body-fg: #353b42;
+  --tool-call-border: #dfe2e7;
+  --tool-call-name: #8a5f10;
+  --tool-call-ok: #1a7f37;
+  --tool-call-fail: #b3352c;
+}
+
+/* ---------- ⑤ frost「冷杉」·第二套深色（新装默认） ----------
+   为什么只写差值：段②的选择器是 `:root, :root[data-theme='dark']`，其中 `:root`
+   对任何皮肤都成立，所以整套 token 已经有底。这里 (0,2,0) 只覆盖冷杉与 GitHub
+   Dark 真正不同的地方 —— 表面更冷更深、强调色由紫转蓝、圆角放大、CTA 变蓝渐变。
+   段③（四套浅色共享段）选中的是那四个 id，跟这里不相交，不需要排在它后面才成立；
+   放在皮肤区末尾只是为了顺序一致、以后加皮肤照抄位置。 */
+:root[data-theme='frost'] {
+  color-scheme: dark;
+
+  --font-sans: "Inter", "Segoe UI Variable", "Segoe UI", "Microsoft YaHei UI", "PingFang SC", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", "Cascadia Mono", Consolas, monospace;
+
+  --radius-sm: 7px;
+  --radius-md: 9px;
+  --radius-lg: 12px;
+  --radius-xl: 14px;
+  --shadow-md: 0 10px 30px rgba(var(--rgb-shadow), 0.35);
+  --shadow-lg: 0 30px 80px rgba(var(--rgb-shadow), 0.6);
+
+  --surface-canvas: #0f1319;
+  --surface-raised: #121821;
+  --surface-card: #121821;
+  --surface-sunken: #0c0f14;
+  --surface-overlay: #141a24;
+  --surface-hover: rgba(255, 255, 255, 0.05);
+  --surface-active: #141a24;
+
+  --machine-bg: #0a0d12;
+  --machine-border: #1b222c;
+
+  --border-subtle: rgba(255, 255, 255, 0.075);
+  --border-mid: rgba(255, 255, 255, 0.12);
+  --border-strong: rgba(255, 255, 255, 0.2);
+
+  --fg-strong: #ffffff;
+  --fg-default: #e8ecf2;
+  --fg-muted: #7f8a9a;
+  --fg-faint: #4d5665;
+
+  --brand: #6d8dff;
+  --brand-hover: #7c98ff;
+  --brand-text: #c9d5ff;
+  --brand-tint: rgba(109, 141, 255, 0.14);
+  --brand-tint-border: rgba(109, 141, 255, 0.35);
+  --brand-glow: rgba(109, 141, 255, 0.5);
+  --link: #8fa8ff;
+  --link-hover: #b0c1ff;
+
+  --status-success: #4ade80;
+  --status-warning: #fbbf24;
+  --status-danger: #fb7185;
+  --status-info: #6d8dff;
+
+  --rgb-brand: 109, 141, 255;
+  --rgb-brand-soft: 156, 176, 255;
+  --rgb-info: 109, 141, 255;
+  --rgb-success: 74, 222, 128;
+  --rgb-warning: 251, 191, 36;
+  --rgb-danger: 251, 113, 133;
+  --rgb-canvas: 15, 19, 25;
+  --rgb-neutral: 127, 138, 154;
+
+  --mark-blue: #6d8dff;
+  --mark-amber: #fbbf24;
+  --mark-amber-soft: #fcd34d;
+  --mark-feature: #fbbf24;
+  --mark-red: #fb7185;
+  --mark-red-strong: #f43f5e;
+  --mark-green: #4ade80;
+  --mark-green-strong: #22c55e;
+  --mark-indigo: #6d8dff;
+  --mark-slate: #7f8a9a;
+
+  /* 冷杉的 CTA 是蓝渐变，不是深色皮肤那颗浅药丸 */
+  --cta-bg: linear-gradient(180deg, #7c98ff, #5f7fff);
+  --cta-fg: #ffffff;
+  --cta-border: rgba(109, 141, 255, 0.55);
+  --cta-bg-hover: linear-gradient(180deg, #8aa3ff, #6d8dff);
+  --cta-bg-active: linear-gradient(180deg, #6d8dff, #5273f0);
+
+  --session-active: rgba(74, 222, 128, 0.1);
+  --session-waiting: rgba(109, 141, 255, 0.12);
+
+  --turn-meta-fg: #7f8a9a;
+  --turn-body-fg: #e8ecf2;
+  --tool-call-border: rgba(255, 255, 255, 0.1);
+  --tool-call-name: #fbbf24;
+  --tool-call-ok: #4ade80;
+  --tool-call-fail: #fb7185;
+}
+
+/* =========================================================================
+   旧名别名层 —— 只做转发，不再自带值
+   ========================================================================= */
+:root {
+  --bg-primary: var(--surface-canvas);
+  --bg-secondary: var(--surface-raised);
+  --bg-tertiary: var(--surface-overlay);
+  --border: var(--border-subtle);
+  --text-primary: var(--fg-strong);
+  --text-secondary: var(--fg-muted);
+  --text-muted: var(--fg-faint);
+  --accent-green: var(--status-success);
+  --accent-blue: var(--link);
+  --accent-orange: var(--status-warning);
+  --accent-red: var(--status-danger);
+  --session-selected: var(--surface-active);
+
+  /* Spec 1 v0.9.0 起沿用的紫色族。名字保留（400+ 处引用），语义已改成
+     "当前主题的强调色"——浅色皮肤下它们整族跟着变，不必逐处改。 */
+  --ui-purple-1: var(--brand);
+  --ui-purple-2: var(--brand-hover);
+  --ui-purple-3: var(--brand-text);
+  --ui-purple-tint-bg: var(--brand-tint);
+  --ui-purple-glow: var(--brand-glow);
+
+  /* 卡片 */
+  --turn-bg-assistant: var(--surface-card);
+  --turn-bg-user: var(--brand-tint);
+  --turn-radius: var(--radius-md);
+  --turn-padding: 10px 14px;
+  --turn-gap: 8px;
+
+  /* 工具调用块 */
+  --tool-call-bg: var(--surface-sunken);
+  --tool-call-toggle: var(--brand-hover);
+}
+
+html, body {
+  height: 100%;
+  width: 100%;
+  overflow: hidden;
+  background: var(--surface-canvas);
+  color: var(--fg-strong);
+  font-family: var(--font-sans);
+  font-size: 15px;
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+  width: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--fg-faint);
+  border-radius: var(--radius-xs);
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--fg-muted);
+}

@@ -1,0 +1,101 @@
+/* Welcome page uses the same canvas and type scale as the workspaces. */
+.home-workbench {
+  flex: 1; min-width: 0; min-height: 0; display: flex; align-items: stretch;
+  padding: 0; overflow: auto; container-type: inline-size;
+  color: var(--fg-strong); background: var(--surface-canvas);
+}
+.home-welcome {
+  width: 100%; min-height: 100%; display: flex; flex-direction: column;
+  background: var(--surface-canvas);
+}
+.home-welcome-head {
+  display: flex; justify-content: space-between; align-items: center;
+  gap: 16px; padding: 28px 36px;
+}
+.home-welcome-brand {
+  display: flex; align-items: center; gap: 9px; color: var(--fg-strong);
+  font-size: 15px; font-weight: 600; letter-spacing: .3px;
+}
+.home-welcome-brand > span { color: var(--brand); font-size: 24px; line-height: 1; }
+.home-welcome-tools { display: flex; align-items: center; gap: 12px; }
+.home-welcome-greeting { display: none; }
+.home-notification-slot { display: inline-flex; align-items: center; }
+.home-notification-slot .completion-notification-toggle {
+  position: static; inset: auto; min-height: 27px; padding: 3px 9px;
+  border: 1px solid var(--border-subtle); color: var(--fg-muted); background: var(--surface-raised); font-size: 11px;
+}
+.terminal-panel.home-active > .view-toggle { display: none; }
+.home-welcome-body {
+  flex: 1; width: min(790px, calc(100% - 80px));
+  display: flex; flex-direction: column; justify-content: center;
+  margin: 0 auto; padding: 32px 0 72px;
+}
+.home-welcome-eyebrow {
+  margin: 0 0 20px; color: var(--fg-muted); font-size: 11px;
+  font-weight: 600; letter-spacing: 2.6px;
+}
+.home-welcome h1 {
+  margin: 0 0 36px; color: var(--fg-strong);
+  font-size: clamp(26px, 4cqw, 34px); font-weight: 600;
+  line-height: 1.2; letter-spacing: -1.5px;
+}
+.home-welcome-portals {
+  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px;
+}
+.home-welcome-portal {
+  position: relative; min-height: 190px; display: flex; flex-direction: column;
+  align-items: flex-start; width: 100%; padding: 25px;
+  border: 1px solid var(--border-subtle); border-radius: 8px;
+  color: var(--fg-strong); background: var(--surface-raised); text-align: left;
+  cursor: pointer; font: inherit;
+  transition: border-color .18s, background .18s, transform .18s;
+}
+.home-welcome-portal.secondary { background: var(--surface-raised); }
+.home-welcome-portal:hover {
+  border-color: var(--brand); background: var(--brand-tint); transform: translateY(-2px);
+}
+.home-welcome-portal:focus-visible { outline: 2px solid var(--brand); outline-offset: 3px; }
+.home-welcome-portal:disabled { opacity: .6; cursor: wait; }
+.home-welcome-icon {
+  display: grid; place-items: center; width: 38px; height: 38px;
+  margin-bottom: auto; border-radius: 9px;
+  color: var(--brand); background: var(--brand-tint);
+}
+.home-welcome svg {
+  width: 21px; height: 21px; fill: none; stroke: currentColor;
+  stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round;
+}
+.home-welcome-portal strong {
+  display: block; margin-top: 28px; font-size: 18px;
+  line-height: 1.4; font-weight: 600;
+}
+.home-welcome-description {
+  display: block; margin-top: 3px; padding-right: 18px;
+  color: var(--fg-muted); font-size: 12px; line-height: 1.6;
+}
+.home-welcome-arrow {
+  position: absolute; right: 25px; bottom: 25px; color: var(--fg-strong);
+}
+.home-welcome-error {
+  grid-column: 1 / -1; margin: 0; color: var(--status-danger);
+  font-size: 12px; line-height: 1.7; overflow-wrap: anywhere;
+}
+@container (max-width: 720px) {
+  .home-welcome-body { width: calc(100% - 56px); padding-bottom: 44px; }
+  .home-welcome h1 { font-size: 30px; }
+  .home-welcome-portal { min-height: 205px; padding: 20px; }
+  .home-welcome-portal strong { font-size: 18px; }
+  .home-welcome-description { font-size: 11px; }
+}
+@container (max-width: 480px) {
+  .home-welcome-head { padding: 20px; }
+  .home-welcome-body { width: calc(100% - 40px); }
+  .home-welcome h1 { font-size: 26px; }
+  .home-welcome-portals { grid-template-columns: 1fr; }
+  .home-welcome-portal { min-height: 145px; }
+  .home-welcome-portal strong { margin-top: 14px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .home-welcome-portal { transition: none; }
+  .home-welcome-portal:hover { transform: none; }
+}

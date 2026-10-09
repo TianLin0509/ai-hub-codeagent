@@ -1,0 +1,836 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="codex">
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; img-src 'self' file: data:; connect-src 'self' http://127.0.0.1:* http://localhost:*; frame-src 'self' http://127.0.0.1:* http://localhost:*;">
+  <title>AI Hub Community</title>
+  <!-- 主题引导：必须在样式表之前同步执行，先把 <html data-theme> 打上，避免首帧闪深色 -->
+  <script src="theme-bootstrap.js"></script>
+  <link rel="stylesheet" href="../node_modules/@xterm/xterm/css/xterm.css">
+  <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="voice-input.css">
+  <link rel="stylesheet" href="prompt-polish.css">
+  <link rel="stylesheet" href="session-split.css">
+  <link rel="stylesheet" href="session-details.css">
+  <link rel="stylesheet" href="sidebar-unread.css">
+  <link rel="stylesheet" href="workspace.css">
+  <link rel="stylesheet" href="meeting-room.css">
+  <link rel="stylesheet" href="meeting-create-modal.css">
+  <link rel="stylesheet" href="orchestration-ui.css">
+  <link rel="stylesheet" href="workflow-config-modal.css">
+  <link rel="stylesheet" href="dev-workbench.css">
+  <link rel="stylesheet" href="styles/home-workbench.css">
+  <link rel="stylesheet" href="launch-center.css">
+  <link rel="stylesheet" href="memory-panel.css">
+  <link rel="stylesheet" href="capability-panel.css">
+  <link rel="stylesheet" href="account-center-panel.css">
+  <link rel="stylesheet" href="styles/assistant-panel.css">
+  <link rel="stylesheet" href="file-manager-panel.css">
+  <link rel="stylesheet" href="vendor/katex/katex.min.css">
+  <link rel="stylesheet" href="../node_modules/prismjs/themes/prism-tomorrow.css">
+  <link rel="stylesheet" href="conversation-stream.css">
+  <script src="../node_modules/prismjs/prism.js"></script>
+  <script src="../node_modules/prismjs/components/prism-bash.min.js"></script>
+  <script src="../node_modules/prismjs/components/prism-javascript.min.js"></script>
+  <script src="../node_modules/prismjs/components/prism-json.min.js"></script>
+  <script src="../node_modules/prismjs/components/prism-python.min.js"></script>
+  <script src="../node_modules/prismjs/components/prism-typescript.min.js"></script>
+  <script src="../node_modules/prismjs/components/prism-markdown.min.js"></script>
+  <script src="vendor/katex/katex.min.js"></script>
+  <script src="vendor/katex/contrib/auto-render.min.js"></script>
+  <link rel="stylesheet" href="styles/question-directory.css">
+  <link rel="stylesheet" href="styles/ui-polish.css">
+  <link rel="stylesheet" href="styles/groupchat-journal.css">
+  <link rel="stylesheet" href="styles/vpn-traffic-panel.css">
+  <link rel="stylesheet" href="styles/memory-release-panel.css">
+  <link rel="stylesheet" href="styles/disk-release-panel.css">
+  <link rel="stylesheet" href="styles/desktop-organizer-panel.css">
+  <link rel="stylesheet" href="styles/fixed-session-layout.css">
+  <link rel="stylesheet" href="styles/group-composer-compact.css">
+  <link rel="stylesheet" href="styles/d4-workspace.css">
+  <link rel="stylesheet" href="styles/card-view-e2.css">
+  <link rel="stylesheet" href="styles/porcelain-workspaces.css">
+  <!-- 控件状态层必须是最后一张样式表：它统一 focus / active / disabled，
+       而 memory-panel.css、file-manager-panel.css 等也各自写了同名状态规则。
+       用独立 <link> 而不是 styles.css 里的 @import —— @import 进来的表排在
+       styles.css 自己的位置（第 10 行），压不住后面这十几张。 -->
+  <link rel="stylesheet" href="styles/coldwhite-workspace.css">
+  <link rel="stylesheet" href="styles/coldwhite-cli.css">
+  <link rel="stylesheet" href="styles/navigation-artwork.css">
+  <link rel="stylesheet" href="styles/simple-chat.css">
+  <link rel="stylesheet" href="styles/light-surfaces.css">
+  <link rel="stylesheet" href="styles/group-card-parity.css">
+  <link rel="stylesheet" href="styles/compact-status-shell.css">
+  <link rel="stylesheet" href="styles/status-dashboard.css">
+  <link rel="stylesheet" href="styles/editor-workspace.css">
+  <link rel="stylesheet" href="styles/display-presets.css">
+  <link rel="stylesheet" href="styles/navigation-hover.css">
+  <link rel="stylesheet" href="styles/preview-immersive.css">
+  <link rel="stylesheet" href="styles/session-immersive.css">
+  <link rel="stylesheet" href="styles/controls.css" id="controls-layer">
+</head>
+<body>
+  <div class="app-container" id="app-container">
+    <!-- T6 冷杉 v2 · 统一工具栏。原生标题栏隐掉之后，这条 44px 就是窗口最顶上那一行：
+         它既是标题栏（可拖动、双击最大化），也是 T2 那条舞台头部的常驻版。
+         舞台从此没有自己的头部，终端直接顶到卡片顶边。
+         节点是常驻的，内容按「当前屏幕上是哪个视图」刷新（见 renderer.js 的
+         refreshAppToolbar）—— 会话视图填面包屑和动作区，主页 / 投研 / 学习 /
+         开发 / 群聊只填视图名并把动作区收起来。 -->
+    <header class="app-toolbar" id="app-toolbar">
+      <!-- 侧栏开关：原来是浮在主区左上角的一个箭头，只在折叠态出现；进工具栏后常驻，
+           两个方向都点得动。逻辑仍是 renderer.js 的 toggleSidebar，一字未改。 -->
+      <button type="button" class="btn-toggle-navigation" id="btn-toggle-navigation" aria-controls="scene-rail" aria-expanded="true" title="隐藏功能导航" aria-label="隐藏功能导航"><svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M8 4v16"/></svg></button>
+      <button class="btn-expand-sidebar" id="btn-expand-sidebar" title="切换会话栏 (Ctrl+B)">❯</button>
+      <div class="terminal-crumb" id="toolbar-crumb"></div>
+      <div class="hub-identity" id="hub-identity" aria-label="AI Hub 运行实例">
+        <button type="button" class="hub-new-instance" id="btn-new-hub" title="新建 AI Hub 实例" aria-label="新建 AI Hub 实例"><img src="../claude-wx.ico" alt="AI Hub" /></button>
+        <strong>AI Hub</strong><span id="coldwhite-preview-label" hidden>冷白预览 0.1</span><span id="hub-version"></span><span class="hub-pid" id="hub-pid"></span>
+      </div>
+      <div class="terminal-header-actions" id="toolbar-actions"></div>
+      <div id="display-preset-switch" role="group" aria-label="显示预设">
+        <button type="button" data-display-mode="desktop" aria-pressed="true" title="电脑显示预设">电脑</button>
+        <button type="button" data-display-mode="phone" aria-pressed="false" title="手机显示预设 · A 均衡清晰">手机</button>
+        <button type="button" id="btn-display-settings" aria-expanded="false" aria-controls="display-preset-settings" title="调整当前预设的显示参数" aria-label="显示参数">⚙</button>
+      </div>
+      <aside id="display-preset-settings" hidden aria-label="显示参数"><strong>电脑显示参数</strong><div class="display-preset-fields"></div><p>两套参数分别保存；切换不改变会话和草稿。</p></aside>
+      <button type="button" class="backstage-toggle" id="btn-backstage" aria-pressed="false" title="查看后台输出" hidden>后台</button>
+      <button type="button" class="backstage-toggle" id="btn-session-immersive" aria-pressed="false" title="沉浸阅读：当前主界面铺满屏幕，Esc 退出">沉浸</button>
+      <div class="session-layout-buttons" id="session-layout-buttons" role="group" aria-label="会话布局" hidden>
+        <button type="button" class="session-layout-button" data-session-layout="single" title="单屏 · 保留当前聚焦会话" aria-label="切换单屏" aria-pressed="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/></svg></button>
+        <button type="button" class="session-layout-button" data-session-layout="two" title="左右二分屏" aria-label="切换左右二分屏" aria-pressed="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M12 4v16"/></svg></button>
+      </div>
+      <!-- 右端给 Windows 自己画的最小化 / 最大化 / 关闭留位。宽度优先用
+           env(titlebar-area-*)，取不到时回落到 138px 常量。 -->
+      <div class="toolbar-window-controls" id="toolbar-window-controls" aria-hidden="true"></div>
+    </header>
+    <!-- 2026-07-19 maintainer · 方案C：全局配额 ticker 常驻顶部（原侧栏 account-usage 面板迁移） -->
+    <div id="quota-ticker" class="quota-ticker" style="display:none"></div>
+    <div class="app-body" id="app-body">
+    <!-- 场景 rail（冷杉 v2 T0）：四个场景按钮是从 .sidebar-header 原样搬过来的节点，
+         id / data-* / 事件接线一律不变；label 常驻显示，tooltip 补充完整用途。 -->
+    <nav class="scene-rail" id="scene-rail" aria-label="场景">
+      <div class="rail-drawer-head"><strong>导航</strong><button type="button" id="rail-pin" class="rail-pin" aria-label="取消固定并收起导航" aria-pressed="true" title="取消固定并收起导航"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 3h6l-1 6 3 3v2H7v-2l3-3-1-6ZM12 14v7"/></svg></button></div>
+      <div class="rail-navigation">
+      <button type="button" class="btn-shell-nav active" id="btn-home" title="主页" aria-current="page"><span class="btn-icon" aria-hidden="true"><img class="rail-artwork" src="assets/navigation/sticker-v2/home.png" alt="" aria-hidden="true" /></span><span class="btn-label">主页</span></button>
+      <button type="button" class="btn-shell-nav" id="btn-assistant" title="助理 · 进展与下一步" aria-label="助理" aria-controls="terminal-panel"><span class="btn-icon" aria-hidden="true"><img src="assets/assistant/penguin.png" alt="" /></span><span class="btn-label">助理</span></button>
+      <button type="button" class="btn-shell-nav" id="btn-ran" data-ran-entry title="开发看板 · 各任务走到哪一步了"><span class="btn-icon" aria-hidden="true"><img class="rail-artwork" src="assets/navigation/sticker-v2/dev.png" alt="" aria-hidden="true" /></span><span class="btn-label">开发</span></button>
+      <div class="rail-separator" aria-hidden="true"></div>
+      <button type="button" class="btn-shell-nav" id="btn-rail-memo" data-action="open-review" title="回顾 · 备忘与昨日之我" aria-label="回顾" aria-expanded="false" aria-controls="hub-workspace"><span class="btn-icon" aria-hidden="true"><img class="rail-artwork" src="assets/navigation/sticker-v2/review.png" alt="" aria-hidden="true" /></span><span class="btn-label">回顾</span></button>
+      <button type="button" class="btn-shell-nav" id="btn-rail-memory" hidden data-action="open-memory" title="记忆" aria-label="记忆" aria-expanded="false"><span class="btn-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 3 4 7v10l8 4 8-4V7l-8-4ZM4 7l8 4 8-4M12 11v10"/></svg></span><span class="btn-label">记忆</span></button>
+      <button type="button" class="btn-shell-nav" id="btn-rail-capabilities" data-action="open-capabilities" title="资源 · 工具与记忆" aria-label="资源" aria-expanded="false" aria-controls="hub-workspace"><span class="btn-icon" aria-hidden="true"><img class="rail-artwork" src="assets/navigation/sticker-v2/resources.png" alt="" aria-hidden="true" /></span><span class="btn-label">资源</span></button>
+      <button type="button" class="btn-shell-nav" id="btn-rail-accounts" title="账号 · 登录状态与接入配置" aria-label="账号" aria-expanded="false" aria-controls="account-page"><span class="btn-icon" aria-hidden="true"><img class="rail-artwork" src="assets/navigation/sticker-v2/accounts.png" alt="" aria-hidden="true" /></span><span class="btn-label">账号</span><b id="accounts-attention" hidden></b></button>
+      </div>
+      <div class="rail-spacer"></div>
+      <div class="rail-utilities">
+      <button type="button" class="btn-shell-nav" id="btn-desktop-organizer" title="整理电脑桌面 · 归档资料、保留启动入口，可撤销" aria-label="整理电脑桌面" aria-expanded="false" aria-controls="desktop-organizer-panel"><span class="btn-icon" aria-hidden="true">▤</span><span class="btn-label">整理</span></button>
+      <div class="rail-theme-wrapper">
+        <button type="button" class="btn-rail-theme" id="btn-theme" title="主题皮肤" aria-haspopup="true" aria-expanded="false"><img class="rail-artwork" src="assets/navigation/sticker-v2/theme.png" alt="" aria-hidden="true" /><span class="rail-utility-label">主题</span></button>
+        <div class="theme-menu" id="theme-menu" role="menu" aria-labelledby="btn-theme" style="display:none">
+          <div class="options-section-label">主题</div>
+          <!-- 内容由 theme-controller.js 按 core/theme-config.js 的清单生成 -->
+          <div class="options-theme-picker" id="options-theme-picker" role="radiogroup" aria-label="选择主题"></div>
+          <div class="options-theme-note">默认冷白工作室；CLI 终端随冷白主题适配浅色。手动选择会保存。</div>
+        </div>
+      </div>
+      <div class="options-wrapper">
+        <button class="btn-options" id="btn-options" title="选项"><img class="rail-artwork" src="assets/navigation/sticker-v2/settings.png" alt="" aria-hidden="true" /><span class="rail-utility-label">设置</span></button>
+        <div class="options-menu" id="options-menu" style="display:none">
+          <div class="options-item" id="options-suspend-idle" title="后台每 5 分钟巡检；连续 5 小时无输入输出则自动休眠">💤 自动休眠 · 5 小时（立即扫描）</div>
+          <div class="options-divider"></div>
+          <div class="options-item" id="options-settings">⚙️ 设置</div>
+        </div>
+      </div>
+      </div>
+    </nav>
+    <button type="button" class="rail-edge-trigger" id="rail-edge-trigger" aria-label="展开功能导航" aria-controls="scene-rail" title="悬停展开导航 · 点击固定"><span aria-hidden="true"></span></button>
+    <div class="session-sidebar" id="session-sidebar">
+      <div class="sidebar-header">
+        <div class="new-session-wrapper" id="new-session-wrapper">
+          <div class="launch-split">
+            <button type="button" class="btn-new-session" id="btn-new" title="启动新会话 (Ctrl+N)" aria-label="启动新会话" aria-haspopup="dialog" aria-controls="new-session-menu" aria-expanded="false"><svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg><span class="btn-label">启动</span></button>
+            <button type="button" id="btn-new-more" title="打开启动中心 (Ctrl+N)" aria-label="打开启动中心" aria-haspopup="dialog" aria-controls="new-session-menu" aria-expanded="false"><svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="m3 4.5 3 3 3-3"/></svg></button>
+          </div>
+          <div class="new-session-menu" id="new-session-menu" role="dialog" aria-modal="true" aria-labelledby="launch-center-title" style="display:none">
+            <div class="session-create-head">
+              <div><strong id="launch-center-title">启动中心</strong><span id="launch-center-subtitle">选择 AI、模型与工作目录</span></div>
+              <button type="button" class="session-create-close" id="new-session-close" aria-label="关闭启动中心"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg></button>
+            </div>
+            <div class="launch-center-layout">
+              <div class="launch-center-intents" role="tablist" aria-label="启动方式" aria-orientation="vertical">
+                <button type="button" class="launch-center-intent active" id="launch-intent-session" data-launch-intent="session" role="tab" aria-selected="true" aria-controls="launch-center-session-panel"><span class="launch-center-intent-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></span><span><strong>新建会话</strong><small>AI、模型与工作目录</small></span></button>
+                <button type="button" class="launch-center-intent" id="launch-intent-group" data-launch-intent="group" role="tab" aria-selected="false" aria-controls="launch-center-group-panel" tabindex="-1"><span class="launch-center-intent-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 11a3 3 0 1 0 0-6 3 3 0 0 0 0 6Zm8-1a2.5 2.5 0 1 0 0-5M3 19c0-3 2.2-5 5-5s5 2 5 5m1-5c3 0 5 1.7 5 4.5"/></svg></span><span><strong>AI 群聊</strong><small>模板、成员与协作模式</small></span></button>
+                <button type="button" class="launch-center-intent" id="launch-intent-resume" data-launch-intent="resume" role="tab" aria-selected="false" aria-controls="launch-center-resume-panel" tabindex="-1"><span class="launch-center-intent-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7L3 8M3 3v5h5M12 7v5l3 2"/></svg></span><span><strong>恢复会话</strong><small>Hub 与原生 CLI 历史</small></span></button>
+                <div class="launch-center-shortcuts">Ctrl+N 打开启动中心<br>↑↓ 切换 · Enter 确认 · Esc 关闭</div>
+              </div>
+              <div class="launch-center-pages">
+                <section class="launch-center-panel" id="launch-center-session-panel" data-launch-panel="session" role="tabpanel" aria-labelledby="launch-intent-session">
+                  <div class="session-create-body">
+                    <div class="menu-group-label">AI / 终端</div>
+                    <div class="session-kind-grid" role="group" aria-label="选择 AI 或终端">
+                      <button class="new-session-option selected" data-kind="claude" aria-pressed="true"><span class="ai-logo logo-claude"></span>Claude Code</button>
+                      <button class="new-session-option" data-kind="codex" aria-pressed="false"><span class="ai-logo logo-codex"></span>Codex CLI</button>
+                      <button class="new-session-option" data-kind="deepseek" aria-pressed="false"><span class="ai-logo logo-deepseek"></span>DeepSeek</button>
+                      <button class="new-session-option" data-kind="kimi" aria-pressed="false"><span class="ai-logo logo-kimi"></span>Kimi Code · K3</button>
+                      <button class="new-session-option" data-kind="qwen" aria-pressed="false"><span class="ai-logo logo-qwen"></span>千问 · Qwen Code</button>
+                      <button class="new-session-option" data-kind="glm" aria-pressed="false"><span class="ai-logo logo-glm"></span>智谱 · ZCode</button>
+                      <button class="new-session-option" data-kind="codeagent" aria-pressed="false"><span class="ai-logo logo-codeagent"></span>CodeAgent · 公司内网</button>
+                      <button class="new-session-option" data-kind="gemini" aria-pressed="false"><span class="ai-logo logo-gemini"></span>Gemini CLI</button>
+                      <button class="new-session-option" data-kind="powershell" aria-pressed="false"><span class="ai-logo logo-powershell"></span>PowerShell</button>
+                    </div>
+                    <div class="menu-group-label" id="new-session-tuning-label">模型 / 速度 / MCP</div>
+                    <label class="session-tuning-field" id="new-session-deepseek-route-field" hidden><span>DeepSeek 接入</span><select id="new-session-deepseek-route"><option value="deepseek">Codex CLI · DeepSeek API</option><option value="deepseek-acp">Token Plan · 旧 Harness</option></select></label>
+                    <div class="session-tuning-grid" id="new-session-tuning">
+                      <label class="session-tuning-field" id="new-session-account-field" for="new-session-account" hidden><span>Codex 账号 · 全局</span><select id="new-session-account" aria-describedby="new-session-account-note"></select></label>
+                      <label class="session-tuning-field" for="new-session-model"><span class="session-tuning-label-row">模型<button type="button" id="new-session-model-default" class="tuning-default-btn" hidden></button></span><select id="new-session-model"></select></label>
+                      <label class="session-tuning-field" id="new-session-effort-field" for="new-session-effort"><span id="new-session-effort-label">思考强度</span><select id="new-session-effort"></select></label>
+                      <label class="session-tuning-field" id="new-session-mcp-field" for="new-session-mcp" hidden><span>MCP 加载</span><select id="new-session-mcp"></select></label>
+                      <div class="session-tuning-field session-tuning-toggle" id="new-session-fast-field" hidden><span>快速模式</span><label class="session-tuning-check" for="new-session-fast"><input type="checkbox" id="new-session-fast" checked><span id="new-session-fast-hint">fast · 默认开</span></label></div>
+                      <label class="session-tuning-field" id="new-session-codex-tier-field" for="new-session-codex-tier" hidden><span>速度通道 (service_tier)</span><select id="new-session-codex-tier"></select></label>
+                    </div>
+                    <div class="session-tuning-note" id="new-session-tuning-note" hidden></div>
+                    <div class="session-tuning-note" id="new-session-account-note" role="status" hidden></div>
+                    <div class="menu-group-label">工作目录</div>
+                    <div class="session-workspace-grid" role="radiogroup" aria-label="选择工作目录方式">
+                      <button type="button" class="session-workspace-choice selected" data-workspace-mode="default" role="radio" aria-checked="true"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/><path d="M9 13h6"/></svg><span><strong>默认工作目录</strong><small>直接开在工作根，跨会话文件互相可见</small></span></button>
+                      <button type="button" class="session-workspace-choice" data-workspace-mode="scratch" role="radio" aria-checked="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg><span><strong>临时目录</strong><small>随机新建一次性目录，与其它任务完全隔离</small></span></button>
+                      <button type="button" class="session-workspace-choice" data-workspace-mode="existing" role="radio" aria-checked="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/></svg><span><strong>选择已有路径</strong><small>可选项目、领域或外部目录</small></span></button>
+                    </div>
+                    <div class="session-existing-path" id="new-session-existing-path" hidden>
+                      <div class="session-projects"><div class="session-recent-head"><span>项目库</span><button type="button" id="new-session-project-refresh">刷新</button></div><div id="new-session-project-library" class="session-recent-list" role="listbox" aria-label="项目库"></div></div>
+                      <div class="session-recommended" id="new-session-recommended-section" hidden><span class="session-path-section-label">推荐常用路径</span><div class="session-recommended-list" id="new-session-recommended" role="listbox" aria-label="推荐常用工作区"></div></div>
+                      <div class="session-recent-head"><span>最近工作区</span><button type="button" id="new-session-pick-path">浏览文件夹…</button></div>
+                      <div class="session-recent-list" id="new-session-recent" role="listbox" aria-label="最近使用的工作区"></div>
+                      <div class="session-recent-selected"><span>已选目录</span><code id="new-session-path-value">尚未选择</code></div>
+                    </div>
+                    <div class="session-create-error" id="new-session-error" hidden></div>
+                  </div>
+                  <div class="session-create-footer"><span id="new-session-summary">Claude Code · 新建临时 workspace</span><div><button type="button" class="session-create-cancel" id="new-session-cancel">取消</button><button type="button" class="session-create-submit" id="new-session-submit">创建会话</button></div></div>
+                </section>
+                <section class="launch-center-panel" id="launch-center-group-panel" data-launch-panel="group" role="tabpanel" aria-labelledby="launch-intent-group" hidden>
+                  <div class="launch-center-panel-head"><strong id="launch-center-group-title">创建 AI 群聊</strong><span>模板、成员、模型与 Workspace 在本页一次完成</span></div>
+                  <div class="launch-center-group-host" id="launch-center-group-host"></div>
+                  <div class="launch-center-error" id="launch-center-group-error" role="alert" hidden></div>
+                </section>
+                <section class="launch-center-panel" id="launch-center-resume-panel" data-launch-panel="resume" role="tabpanel" aria-labelledby="launch-intent-resume" hidden>
+                  <div class="launch-center-panel-head"><strong>恢复历史会话</strong><span>选择提供方后打开其原生恢复流程</span></div>
+                  <div class="launch-center-panel-body">
+                    <div class="launch-center-resume-list">
+                      <button type="button" class="launch-center-resume-option" data-resume-kind="claude-resume"><span class="ai-logo logo-claude"></span><span class="launch-center-resume-copy"><strong>Claude</strong><small>从 Claude Code 历史中选择</small></span><span class="hint">PTY picker</span></button>
+                      <button type="button" class="launch-center-resume-option" data-resume-kind="codex-resume"><span class="ai-logo logo-codex"></span><span class="launch-center-resume-copy"><strong>Codex</strong><small>从 Codex rollout 中精确恢复</small></span><span class="hint">PTY picker</span></button>
+                      <button type="button" class="launch-center-resume-option" data-resume-kind="gemini-resume"><span class="ai-logo logo-gemini"></span><span class="launch-center-resume-copy"><strong>Gemini</strong><small>继续最近一次原生会话</small></span><span class="hint">最近一次</span></button>
+                      <button type="button" class="launch-center-resume-option" data-resume-kind="deepseek-resume"><span class="ai-logo logo-deepseek"></span><span class="launch-center-resume-copy"><strong>DeepSeek</strong><small>恢复兼容 Claude CLI 的历史</small></span><span class="hint">PTY picker</span></button>
+                      <button type="button" class="launch-center-resume-option" data-resume-kind="kimi-resume"><span class="ai-logo logo-kimi"></span><span class="launch-center-resume-copy"><strong>Kimi</strong><small>恢复 Kimi Code 历史会话</small></span><span class="hint">PTY picker</span></button>
+                    </div>
+                    <div class="launch-center-resume-note">Hub 内已休眠的会话仍可直接从左侧列表唤醒；这里负责提供方原生历史，不会创建重复入口。</div>
+                    <div class="launch-center-error" id="launch-center-error" role="alert" hidden></div>
+                  </div>
+                  <div class="launch-center-panel-footer"><span>所有恢复都保留原模型、cwd 与 provider 元数据</span><button type="button" class="launch-center-secondary" id="launch-center-resume-cancel">取消</button></div>
+                </section>
+              </div>
+            </div>
+          </div>
+        </div>
+        <button type="button" class="global-search-launcher" id="btn-global-search" title="昨日之我 · 全局搜索 (Ctrl+Shift+F)">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.4-3.4"/></svg>
+          <span>昨日之我</span>
+          <kbd>Ctrl Shift F</kbd>
+        </button>
+      </div>
+      <div class="session-detail-bar"><button type="button" id="btn-session-details" aria-pressed="false">详细信息</button><label class="session-model-filter"><select id="session-model-filter" aria-label="侧栏模型" title="按模型筛选"><option value="all">模型</option><option value="claude">Claude</option><option value="codex">Codex</option><option value="other">其他</option></select></label><label class="session-project-filter"><select id="session-project-filter" aria-label="侧栏项目" title="按项目筛选"><option value="random">随机</option><option value="all" selected>项目</option></select></label></div><div id="session-project-filter-note" class="session-project-filter-note" role="status" hidden></div>
+      <div class="session-range-tabs" role="group" aria-label="会话范围"><button type="button" data-session-days="pinned" aria-pressed="false" title="只显示置顶的会话与群聊">置顶</button><button type="button" data-session-days="1" aria-pressed="true" title="未置顶的最近24小时会话；未读和活跃会话始终显示">今天</button><button type="button" data-session-days="3" aria-pressed="false" title="未置顶的最近72小时会话；未读和活跃会话始终显示">3 天</button></div>
+      <div class="session-list" id="session-list"></div>
+      <section class="sidebar-insights" id="sidebar-insights" aria-label="用量与系统状态">
+        <button type="button" class="sidebar-insights-toggle" id="sidebar-insights-toggle" aria-label="展开或收起用量与系统状态" aria-expanded="true" aria-controls="sidebar-insights-content" title="向下收起用量与系统状态">
+          <span>用量与系统状态</span><span class="sidebar-insights-action">收起</span>
+          <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="m5 7.5 5 5 5-5"/></svg>
+        </button>
+        <div class="sidebar-insights-content" id="sidebar-insights-content">
+          <div class="sidebar-insights-inner">
+            <div class="sidebar-account-usage" id="rail-usage" data-presentation="footer" aria-label="账户剩余额度"></div>
+            <div class="sidebar-strip" id="sidebar-strip" style="display:none"></div>
+          </div>
+        </div>
+      </section>
+      <div class="context-menu" id="context-menu" style="display:none">
+        <button class="context-menu-item" data-action="pin">置顶</button>
+        <button class="context-menu-item" data-action="restart">重启</button>
+        <button class="context-menu-item" data-action="join-group">加入群聊…</button>
+        <button class="context-menu-item" data-action="fork-meeting">分支群聊</button>
+        <button class="context-menu-item" data-action="close">休眠</button>
+        <button class="context-menu-item danger" data-action="delete">删除</button>
+        <button class="context-menu-item" data-action="bottom">置底</button>
+      </div>
+      <div class="context-menu" id="terminal-context-menu" style="display:none">
+        <button class="context-menu-item" data-action="preview">预览</button>
+      </div>
+      <div class="context-menu" id="card-selection-context-menu" style="display:none">
+        <button class="context-menu-item" data-action="copy">复制</button>
+      </div>
+      <div class="context-menu" id="path-link-context-menu" style="display:none">
+        <button class="context-menu-item" data-action="copy-abs-path"
+                data-label-file="复制绝对路径" data-label-url="复制 URL">复制绝对路径</button>
+        <button class="context-menu-item" data-action="copy-file" data-file-only>复制对应文件</button>
+        <div class="context-menu-separator" data-file-only></div>
+        <button class="context-menu-item" data-action="show-in-folder" data-file-only>打开上一级文件夹</button>
+        <button class="context-menu-item" data-action="open-file-manager">打开文件管理</button>
+        <button class="context-menu-item" data-action="open-external">在外部打开</button>
+      </div>
+    </div>
+    <div class="terminal-panel home-active" id="terminal-panel">
+      <div class="empty-state home-workbench" id="empty-state">
+        <main class="home-welcome" aria-labelledby="home-welcome-title">
+          <header class="home-welcome-head">
+            <div class="home-welcome-brand"><span aria-hidden="true">✳</span> AI Hub</div>
+            <div class="home-welcome-tools">
+              <span class="home-welcome-greeting">欢迎回来</span>
+              <div class="home-notification-slot" id="home-notification-slot" aria-label="飞书完成通知开关"></div>
+            </div>
+          </header>
+          <div class="home-welcome-body">
+            <div class="home-welcome-intro">
+              <p class="home-welcome-eyebrow">NEW WORK / 01</p>
+              <h1 id="home-welcome-title">选择协作方式</h1>
+            </div>
+            <div class="home-welcome-portals" aria-label="创建会话">
+              <button class="home-welcome-portal" id="home-create-session" type="button" data-home-create="session">
+                <span class="home-welcome-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 4h14a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H9l-5 4v-4H3V6a2 2 0 0 1 2-2Z"/><path d="M8 9h8M8 13h5"/></svg></span>
+                <svg class="home-welcome-arrow" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 18 18 6M8 6h10v10"/></svg>
+                <strong>新建普通会话</strong><span class="home-welcome-description">一个 AI，专注完成你的任务。</span>
+              </button>
+              <button class="home-welcome-portal secondary" id="home-create-group" type="button" data-home-create="group">
+                <span class="home-welcome-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="2" y="3" width="14" height="12" rx="3"/><path d="M7 15v4l5-4M19 8h1a2 2 0 0 1 2 2v9h-3v3l-5-3h-3M6 8h6"/></svg></span>
+                <svg class="home-welcome-arrow" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 18 18 6M8 6h10v10"/></svg>
+                <strong>新建 AI 群聊</strong><span class="home-welcome-description">多个 AI，共同讨论与分工协作。</span>
+              </button>
+              <p id="home-welcome-error" class="home-welcome-error" role="alert" hidden></p>
+            </div>
+          </div>
+        </main>
+      </div>
+      <!-- Spec 1 v0.9.0: 消息层(卡片视图) -->
+      <div id="msg-overlay" class="msg-overlay"></div>
+      <nav id="card-question-nav" class="card-question-nav" aria-label="问题导航" hidden>
+        <div class="card-question-nav-track"></div>
+        <div class="card-question-nav-tooltip" role="tooltip" hidden>
+          <span class="card-question-nav-tooltip-index"></span>
+          <span class="card-question-nav-tooltip-summary"></span>
+        </div>
+      </nav>
+      <button class="completion-notification-toggle unconfigured" id="completion-notification-toggle"
+              type="button" aria-pressed="false" data-state="unconfigured"
+              title="未配置飞书接收对象，点击进入设置">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9"/>
+          <path d="M10 21h4"/>
+          <path class="notification-off-slash" d="M4 4l16 16"/>
+        </svg>
+        <span id="completion-notification-toggle-label">通知未配</span>
+      </button>
+      <!-- 卡片多选操作条：由卡片头部的「多选」按钮唤起，微信式勾选后一次性复制。
+           必须列进 preserveAndClearTerminalPanel，
+           否则关掉一个会话后整条被 innerHTML='' 抹掉，再也回不来。 -->
+      <div class="card-multi-select-bar" id="card-multi-select-bar" role="toolbar" aria-label="卡片多选" hidden>
+        <span class="cms-count" id="card-multi-select-count">已选 0 条</span>
+        <button type="button" class="cms-btn" id="card-multi-select-all">全选</button>
+        <button type="button" class="cms-btn cms-primary" id="card-multi-select-copy" disabled>一键复制</button>
+        <button type="button" class="cms-btn cms-exit" id="card-multi-select-exit" title="退出多选（Esc）">退出多选</button>
+      </div>
+      <!-- 视图切换按钮 T6 已上移到 #app-toolbar（见文件顶部）。 -->
+    </div>
+    <div class="meeting-room-panel" id="meeting-room-panel" style="display:none">
+      <div class="mr-header" id="mr-header"></div>
+        <!-- Arch refactor 2026-05-02: 群聊界面去 shell。原 #mr-terminals
+             (xterm 多家平铺) 已删除。Shell PTY 流通过左侧栏树形展开后点击
+             子 session 进入主区 shell view 查看 (复用 selectSession 路径)。 -->
+      <div class="mr-toolbar" id="mr-toolbar"></div>
+      <!-- Phase 4 v2(2026-05-05): IF-C3 软提醒 banner 已删除, 启动状态文字上移到 onboarding head;
+           下方 mr-input-row 新增头像组 + 模式 dropdown 占位实现一行化 footer -->
+      <div class="mr-input-row" id="mr-input-row">
+        <!-- Phase 4 v2: free 模式头像 checkbox 组(只 logo, 无文字) -->
+        <span class="mr-free-avatars-row" id="mr-free-avatars-row"></span>
+        <!-- 2026-07-20 maintainer [修#10]：模式 chips 死壳已删（功能早已移除，只剩占位 span） -->
+        <select class="mr-target-select" id="mr-input-target" title="发送目标"></select>
+        <div class="mr-input-box" id="mr-input-box" contenteditable="true" data-placeholder="输入消息..."></div>
+        <button class="mr-workflow-btn" id="mr-workflow-btn" title="串行工作流设置">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="4" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="20" cy="12" r="2"/>
+            <path d="M6 12h4M14 12h4"/>
+          </svg>
+          <span class="mr-workflow-badge" id="mr-workflow-badge"></span>
+        </button>
+        <button class="mr-send-btn" id="mr-send-btn" title="发送" aria-label="发送"><svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 4l7 7h-4v9h-6v-9H5z"/></svg></button>
+      </div>
+    </div>
+    <!-- 开发看板：Hub 第五主区视图。一个群聊=一个任务，数据全部推导自 Hub 自己的会议列表，骨架由 renderer/ran.js 自构建。 -->
+    <div id="ran-panel"></div>
+    <!-- 2026-05-05 maintainer：preview-splitter + preview-panel 从 terminal-panel 之后挪到
+           meeting-room-panel 之后。flex 排版下，普通 session 时 mr-panel 隐藏 →
+           排成 [terminal | preview]，群聊时 terminal 隐藏 → 排成 [meeting-room | preview]，
+           两种模式预览统一在右侧。挪之前群聊模式预览跑在左边，与普通 session 不一致。 -->
+    <div class="preview-splitter" id="preview-splitter" style="display:none" role="separator" aria-label="调整预览分栏" aria-orientation="vertical" aria-valuemin="10" aria-valuemax="90" aria-valuenow="50" aria-valuetext="左侧 50%，预览 50%" tabindex="0"></div>
+    <div class="preview-panel" id="preview-panel" style="display:none">
+      <div class="preview-immersive-exit-zone"><button id="preview-immersive-exit" type="button" aria-label="退出沉浸模式" title="退出沉浸模式 (Esc)" hidden>退出沉浸 · Esc</button></div>
+      <div class="preview-tabs-row">
+        <div class="preview-tabs" id="preview-tabs" role="tablist" aria-label="预览文件" aria-orientation="horizontal"></div>
+        <div class="preview-layout-switch" role="group" aria-label="预览布局">
+          <button class="preview-layout-option" id="preview-layout-split" type="button" title="半窗预览 (Split)：同时显示会话与文件" aria-label="半窗预览，同时显示会话与文件" aria-pressed="false"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M12 4v16"/></svg><span>半窗</span></button>
+          <button class="preview-layout-option active" id="preview-layout-full" type="button" title="全屏预览 (Full)：预览占满工作区" aria-label="全屏预览，预览占满工作区" aria-pressed="true"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M8 3H3v5M16 3h5v5M8 21H3v-5M16 21h5v-5"/></svg><span>全屏</span></button>
+          <button class="preview-layout-option" id="preview-layout-immersive" type="button" title="沉浸预览：占满电脑屏幕，Esc 退出" aria-label="沉浸预览，占满电脑屏幕" aria-pressed="false"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M8 3v5H3m13-5v5h5M8 21v-5H3m13 5v-5h5"/></svg><span>沉浸</span></button>
+        </div>
+        <button class="preview-tab-tool" id="preview-outline-toggle" type="button" title="文档大纲 / 行号跳转 (Ctrl+Shift+O)" aria-label="打开文档大纲或行号跳转" aria-controls="preview-outline" aria-expanded="false" disabled><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M9 6h11M9 12h11M9 18h11"/><circle cx="4" cy="6" r="1"/><circle cx="4" cy="12" r="1"/><circle cx="4" cy="18" r="1"/></svg></button>
+        <button class="preview-new-tab" id="preview-new-tab" type="button" title="输入路径或搜索文件 (Ctrl+O)" aria-label="打开新的预览">＋</button>
+      </div>
+      <div class="preview-header">
+        <span class="preview-file-badge" id="preview-file-badge">--</span>
+        <span class="preview-title" id="preview-title">Preview</span>
+        <span class="preview-file-meta" id="preview-file-meta"></span>
+        <span class="preview-change-badge" id="preview-change-badge" role="status" aria-live="polite" aria-atomic="true" hidden></span>
+        <div class="preview-header-actions">
+          <button class="preview-action-btn preview-action-text" id="preview-open-path" title="输入路径或模糊搜索 (Ctrl+O)" aria-label="输入路径或模糊搜索"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M3 7.5A2.5 2.5 0 0 1 5.5 5H10l2 2h6.5A2.5 2.5 0 0 1 21 9.5V18a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/><circle cx="15" cy="13" r="2.5"/><path d="m16.8 14.8 2.2 2.2"/></svg><span>路径</span></button>
+          <button class="preview-action-btn" id="preview-find-toggle" title="在预览中查找 (Ctrl+F)" aria-label="在预览中查找" aria-controls="preview-find-bar" aria-expanded="false"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg></button>
+          <button class="preview-action-btn preview-action-text" id="preview-copy-content" title="复制全文" aria-label="复制全文"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="9" y="9" width="10" height="10" rx="2"/><path d="M7 15H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v2"/></svg><span>全文</span></button>
+          <button class="preview-action-btn preview-action-text" id="preview-copy-path" title="复制路径或 URL" aria-label="复制路径或 URL"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="m10.6 13.4 2.8-2.8"/><path d="m7.8 16.2-1.4 1.4a3 3 0 0 1-4.2-4.2l3.5-3.5a3 3 0 0 1 4.2 0"/><path d="m16.2 7.8 1.4-1.4a3 3 0 0 1 4.2 4.2l-3.5 3.5a3 3 0 0 1-4.2 0"/></svg><span>路径</span></button>
+          <button class="preview-action-btn" id="preview-show-in-folder" title="在资源管理器中定位" aria-label="在资源管理器中定位"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7.5A2.5 2.5 0 0 1 5.5 5H10l2 2h6.5A2.5 2.5 0 0 1 21 9.5V18a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/><path d="m14 12 4 3-4 3"/></svg></button>
+          <button class="preview-action-btn" id="preview-reload" title="重新加载预览" aria-label="重新加载预览"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.3 5.7"/><path d="M20 5v6h-6"/></svg></button>
+          <span class="preview-action-separator"></span>
+          <button class="preview-action-btn" id="preview-zoom-out" title="缩小 (Ctrl+-)">A−</button>
+          <span class="preview-zoom-label" id="preview-zoom-label">100%</span>
+          <button class="preview-action-btn" id="preview-zoom-in" title="放大 (Ctrl++)">A+</button>
+          <button class="preview-action-btn" id="preview-zoom-reset" title="重置缩放">1:1</button>
+          <span class="preview-action-separator"></span>
+          <button class="preview-action-btn" id="preview-open-external" title="在外部打开" aria-label="在外部打开"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 4h6v6"/><path d="m20 4-9 9"/><path d="M18 13v5a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h5"/></svg></button>
+          <button class="preview-action-btn" id="preview-close" title="关闭预览 (Esc)" aria-label="关闭预览"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg></button>
+        </div>
+        <span class="preview-action-status" id="preview-action-status" role="status" aria-live="polite" aria-atomic="true"></span>
+      </div>
+      <div class="preview-find-bar" id="preview-find-bar" role="search" aria-label="在预览中查找" hidden>
+        <input id="preview-find-input" type="text" autocomplete="off" spellcheck="false" aria-label="查找文本" placeholder="在预览中查找…">
+        <span class="preview-find-count" id="preview-find-count" role="status" aria-live="polite">0 / 0</span>
+        <button type="button" id="preview-find-previous" title="上一个匹配 (Shift+Enter)" aria-label="上一个匹配">↑</button>
+        <button type="button" id="preview-find-next" title="下一个匹配 (Enter)" aria-label="下一个匹配">↓</button>
+        <button type="button" id="preview-find-close" title="关闭查找 (Esc)" aria-label="关闭查找">×</button>
+      </div>
+      <div class="preview-content-row" id="preview-content-row">
+        <nav class="preview-outline" id="preview-outline" aria-label="文档大纲与行号跳转" hidden>
+          <div class="preview-outline-head">
+            <strong id="preview-outline-title">文档大纲</strong>
+            <div class="preview-outline-actions">
+              <button type="button" id="preview-outline-copy" title="复制当前标题或行号引用" aria-label="复制当前标题或行号引用" disabled><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M10 13a5 5 0 0 0 7.1.1l2-2a5 5 0 0 0-7.1-7.1l-1.1 1.1"/><path d="M14 11a5 5 0 0 0-7.1-.1l-2 2A5 5 0 0 0 12 20l1.1-1.1"/></svg></button>
+              <button type="button" id="preview-outline-close" title="关闭大纲" aria-label="关闭文档大纲"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg></button>
+            </div>
+          </div>
+          <form class="preview-goto-line" id="preview-goto-line-form" hidden>
+            <label for="preview-goto-line-input">转到行</label>
+            <input id="preview-goto-line-input" type="number" inputmode="numeric" min="1" step="1" autocomplete="off" required>
+            <button type="submit">前往</button>
+          </form>
+          <ol class="preview-outline-list" id="preview-outline-list" aria-label="Markdown 标题"></ol>
+          <div class="preview-outline-empty" id="preview-outline-empty" hidden>此文档没有可用标题</div>
+        </nav>
+        <div class="preview-body" id="preview-body" role="tabpanel" aria-label="预览内容"></div>
+      </div>
+    </div>
+    <div class="preview-quick-open" id="preview-quick-open" style="display:none" role="presentation">
+      <section class="preview-quick-open-dialog" role="dialog" aria-modal="true" aria-labelledby="preview-quick-open-title">
+        <div class="preview-quick-open-heading">
+          <div><strong id="preview-quick-open-title">打开预览</strong><span>精确路径优先，也可模糊输入文件名</span></div>
+          <button type="button" id="preview-quick-open-close" aria-label="关闭">×</button>
+        </div>
+        <label class="preview-quick-open-input-wrap" for="preview-quick-open-input">
+          <span aria-hidden="true">⌕</span>
+          <input id="preview-quick-open-input" type="text" autocomplete="off" spellcheck="false" placeholder="绝对路径、相对路径或文件名…" role="combobox" aria-label="输入路径或搜索文件" aria-describedby="preview-quick-open-mode-hint" aria-autocomplete="list" aria-expanded="false" aria-controls="preview-quick-open-results">
+          <kbd aria-hidden="true">Esc</kbd>
+        </label>
+        <div class="preview-quick-open-status" id="preview-quick-open-status" role="status" aria-live="polite">当前会话最近预览</div>
+        <div class="preview-quick-open-results" id="preview-quick-open-results" role="listbox" aria-label="路径搜索结果"></div>
+        <div class="preview-quick-open-foot"><span id="preview-quick-open-mode-hint">↑↓ 选择 · Enter 临时预览 · Tab 上 Ctrl+Enter 固定</span><span>本地索引，不上传文件内容</span></div>
+      </section>
+    </div>
+    <aside class="file-manager-panel" id="file-manager-panel" style="display:none" aria-label="文件管理" aria-hidden="true">
+      <header class="file-manager-header">
+        <button class="file-manager-root" id="file-manager-root" type="button" disabled aria-haspopup="menu" aria-expanded="false">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6.8A1.8 1.8 0 0 1 4.8 5h4l1.7 1.8h8.7A1.8 1.8 0 0 1 21 8.6v8.6a1.8 1.8 0 0 1-1.8 1.8H4.8A1.8 1.8 0 0 1 3 17.2Z"/></svg>
+          <strong id="file-manager-root-name">未选择目录</strong>
+          <svg class="file-manager-root-caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+        </button>
+        <div class="file-manager-actions">
+          <button class="file-manager-icon-button" id="file-manager-view-menu" type="button" title="浏览范围、排序与筛选" aria-label="浏览范围、排序与筛选" aria-haspopup="menu" aria-expanded="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 5h16l-6 7.5V19l-4 1.5v-8Z"/></svg></button>
+          <button class="file-manager-icon-button" id="file-manager-refresh" type="button" title="刷新（并重算文件夹最近改动）" aria-label="刷新文件树"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.3 5.7"/><path d="M20 5v6h-6"/></svg></button>
+          <button class="file-manager-icon-button" id="file-manager-open-external" type="button" title="在资源管理器中打开" aria-label="在资源管理器中打开"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/></svg></button>
+          <button class="file-manager-icon-button" id="file-manager-close" type="button" title="关闭文件管理" aria-label="关闭文件管理"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg></button>
+        </div>
+      </header>
+      <button class="file-manager-path" id="file-manager-root-path" type="button" title="点击复制路径">当前会话没有工作目录</button>
+      <label class="file-manager-filter-wrap" for="file-manager-filter">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+        <input class="file-manager-filter" id="file-manager-filter" type="search" autocomplete="off" spellcheck="false" placeholder="筛选文件…" aria-label="筛选文件">
+        <kbd class="file-manager-kbd" title="焦点在文件面板内时按 Ctrl+P 聚焦这里">Ctrl P</kbd>
+      </label>
+      <div class="file-manager-tree" id="file-manager-tree" role="tree" aria-label="当前工作目录文件"></div>
+      <footer class="file-manager-footer"><span class="fm-live-dot" aria-hidden="true"></span><span class="file-manager-status" id="file-manager-status" role="status" aria-live="polite"></span></footer>
+    </aside>
+    <!-- memo-panel 在最右,与 preview-panel 互不影响（display:none 不占位） -->
+    <div class="memo-panel" id="memo-panel" style="display:none">
+      <div class="memo-header">
+        <span class="memo-title">备忘录</span>
+        <button class="memo-clear-btn" id="memo-clear-btn" title="关闭备忘录">关闭</button>
+      </div>
+      <div class="memo-input-row">
+        <input type="text" class="memo-input" id="memo-input" placeholder="输入想法...">
+        <button class="memo-add-btn" id="memo-add-btn" title="添加">+</button>
+      </div>
+      <div class="memo-list" id="memo-list"></div>
+    </div>
+    <div class="modal-overlay" id="resume-modal" style="display:none">
+      <div class="modal">
+        <div class="modal-header">
+          <span class="modal-title">Resume past Claude session</span>
+          <input type="text" id="resume-filter" class="modal-filter" placeholder="Filter by cwd / preview…">
+          <button class="modal-close" id="resume-modal-close" title="Close (Esc)">✕</button>
+        </div>
+        <div class="modal-body" id="resume-list">
+          <div class="modal-empty">Scanning…</div>
+        </div>
+      </div>
+    </div>
+    <div class="session-search-overlay" id="search-modal" style="display:none" role="dialog" aria-modal="true" aria-labelledby="session-search-title">
+      <section class="session-search-dialog">
+        <div id="session-search-home" class="session-search-home">
+          <header class="session-search-nav">
+            <div class="session-search-brand"><span>AI HUB</span><i>/</i><h2 id="session-search-title">昨日之我</h2></div>
+            <div class="session-search-nav-actions">
+              <button type="button" class="session-search-index-status" id="session-search-index-status" aria-expanded="false" title="查看索引状态与同步选项"><span class="session-search-status-dot"></span><span id="session-search-status-text">正在读取本地索引…</span></button>
+              <button type="button" class="session-search-close" id="search-modal-close" title="关闭 (Esc)" aria-label="关闭全局会话搜索"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+            </div>
+          </header>
+          <div class="session-search-intro"><span>A THOUGHT IS NEVER LOST</span><h1>想起一句，找回整段。</h1><p>过去的提问、回答与灵感，都在这里。</p></div>
+          <div class="session-search-command" id="session-search-command">
+            <header class="session-search-header">
+              <label class="session-search-box" for="search-query"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.4-3.4"/></svg><input type="search" id="search-query" aria-label="搜索历史会话" placeholder="记得一句话，或一个问题…" autocomplete="off" spellcheck="false"><span class="session-search-key">Enter ↵</span></label>
+              <div class="session-search-provider-filters" id="session-search-provider-filters" role="group" aria-label="按来源筛选">
+
+              <button type="button" class="session-search-chip active" data-provider="all" aria-pressed="true"><span class="provider-dot provider-all"></span><span>全部</span><b>0</b></button>
+              <button type="button" class="session-search-chip" data-provider="claude" aria-pressed="false"><span class="provider-dot provider-claude"></span><span>Claude</span><b>0</b></button>
+              <button type="button" class="session-search-chip" data-provider="codex" aria-pressed="false"><span class="provider-dot provider-codex"></span><span>Codex</span><b>0</b></button>
+              <button type="button" class="session-search-chip" data-provider="other" aria-pressed="false" title="Codex、Claude 之外的模型会话；群聊单独筛选"><span class="provider-dot provider-other"></span><span>其他</span><b>0</b></button>
+              <button type="button" class="session-search-chip" data-provider="meeting" aria-pressed="false"><span class="provider-dot provider-meeting"></span><span>群聊</span><b>0</b></button>
+            </div>
+              <div class="session-search-toolbar">
+                <div class="session-search-result-summary" id="session-search-result-summary"><span>最近的对话</span><span></span></div>
+                <div class="session-search-selects session-search-quick-filters"><label class="session-search-filter" for="session-search-project"><span>项目</span><select id="session-search-project" title="与 AI 群聊项目库一致"><option value="">全部会话</option></select></label> <label class="session-search-filter" for="session-search-time"><span>时间</span><select id="session-search-time"><option value="all">不限时间</option><option value="24h">最近 24 小时</option><option value="3d">最近 3 天</option><option value="7d">最近 7 天</option><option value="30d">最近 30 天</option><option value="365d">最近一年</option></select></label></div>
+                <button type="button" id="session-search-filter-toggle" class="session-search-filter-toggle" aria-expanded="false" aria-controls="session-search-advanced">筛选</button>
+              </div>
+              <div id="session-search-project-note" class="session-search-project-note" role="status" hidden></div>
+              <section id="session-search-advanced" class="session-search-advanced" aria-label="更多筛选" hidden>
+                <div class="session-search-selects"><label class="session-search-filter" for="session-search-time-field"><span>依据</span><select id="session-search-time-field"><option value="eventTime">消息时间</option><option value="conversationTime">会话活动</option></select></label> <div class="session-search-filter session-search-sort-control" role="group" aria-label="排序"><span id="session-search-sort-label">排序</span><select id="session-search-sort" aria-labelledby="session-search-sort-label"><option value="relevance">相关度</option><option value="conversationTime">最近对话</option><option value="matchTime">最近命中</option><option value="title">标题 A–Z</option></select></div></div>
+                <div class="session-search-specific-providers" role="group" aria-label="其他模型细分"><span>其他模型</span>              <button type="button" class="session-search-chip" data-provider="deepseek" aria-pressed="false" hidden><span class="provider-dot provider-deepseek"></span><span>DeepSeek</span><b>0</b></button>
+              <button type="button" class="session-search-chip" data-provider="kimi" aria-pressed="false" hidden><span class="provider-dot provider-kimi"></span><span>Kimi</span><b>0</b></button>
+              <button type="button" class="session-search-chip" data-provider="gemini" aria-pressed="false" hidden><span class="provider-dot provider-gemini"></span><span>Gemini</span><b>0</b></button></div>
+                <div id="session-search-agent-slot"></div>
+                <div class="session-search-scope-tabs" id="session-search-scope-tabs" role="tablist" aria-label="搜索范围">
+            <button type="button" class="active" data-scope="dialogue" role="tab" aria-selected="true">对话内容</button>
+            <button type="button" data-scope="all" role="tab" aria-selected="false">全部内容</button>
+            <button type="button" data-scope="title" role="tab" aria-selected="false">标题</button>
+            <button type="button" data-scope="user" role="tab" aria-selected="false">我的提问</button>
+            <button type="button" data-scope="assistant" role="tab" aria-selected="false">AI 回答</button>
+          </div>
+                <div id="session-search-conditions" class="session-search-conditions" aria-live="polite"></div>
+              </section>
+                            <div class="session-search-progress" id="session-search-progress" hidden>
+                <div class="session-search-progress-track" id="session-search-progress-track"
+                     role="progressbar" aria-label="本地会话索引进度" aria-valuemin="0" aria-valuemax="100">
+                  <span class="session-search-progress-fill" id="session-search-progress-fill"></span>
+                </div>
+                <div class="session-search-progress-meta">
+                  <strong id="session-search-progress-percent">准备中</strong>
+                  <span id="session-search-progress-detail">后台建立索引，可继续使用 AI Hub</span>
+                </div>
+              </div>
+
+              <div id="session-search-index-details" class="session-search-index-details" hidden></div>
+            </header>
+            <div class="session-search-workspace-panes">
+              <section class="session-search-results-pane" id="session-search-results-pane" aria-label="搜索结果"><div class="session-search-results" id="search-results" role="listbox" aria-label="匹配的会话"></div></section>
+            </div>
+            <footer class="session-search-footer"><span><kbd>↑</kbd><kbd>↓</kbd> 选择　<kbd>Enter</kbd> 阅读　<kbd>Ctrl Enter</kbd> 继续会话</span><span>本地索引 · 不上传</span></footer>
+          </div>
+          <nav id="session-search-suggestions" class="session-search-suggestions" aria-label="最近搜索" hidden></nav>
+        </div>
+        <div id="session-search-reader" class="session-search-reader" hidden role="dialog" aria-modal="true" aria-label="对话阅读" tabindex="-1">
+          <button type="button" id="session-search-reader-scrim" class="session-search-reader-scrim" aria-label="返回搜索结果" tabindex="-1"></button>
+          <section class="session-search-reader-sheet"><button type="button" id="session-search-reader-close" class="session-search-back">← 返回结果 <kbd>Esc</kbd></button><div class="session-search-preview-pane" id="session-search-preview" aria-label="命中上下文"></div></section>
+        </div>
+        <div class="session-search-live" id="session-search-live" aria-live="polite" aria-atomic="true"></div>
+      </section>
+    </div>
+    <div class="terminal-search" id="terminal-search" style="display:none">
+      <input type="text" id="terminal-search-input" placeholder="Find in terminal…">
+      <span class="terminal-search-count" id="terminal-search-count"></span>
+      <button class="terminal-search-btn" id="terminal-search-prev" title="Previous (Shift+Enter)">↑</button>
+      <button class="terminal-search-btn" id="terminal-search-next" title="Next (Enter)">↓</button>
+      <button class="terminal-search-btn" id="terminal-search-close" title="Close (Esc)">✕</button>
+    </div>
+    </div>
+  </div>
+  <script src="path-link.js"></script>
+  <script src="prompt-inspector.js"></script>
+  <script src="task-presets.js"></script>
+  <script src="floating-input-history.js"></script>
+  <script src="workspace-controller.js"></script>
+  <script src="meeting-create-modal.js"></script>
+  <section id="account-page" class="ac-page" hidden aria-label="账号">
+      <header class="ac-head"><div><h1>账号</h1><p>统一打开账号，记录最近使用。</p></div><div class="ac-head-actions"><input class="ac-search" type="search" placeholder="搜索平台或账号" aria-label="搜索当前分类的平台或账号"><button class="ac-btn" data-ac="back" hidden>← 返回账号</button><button class="ac-btn" data-ac="close">返回会话</button></div></header>
+      <nav class="ac-tabs" role="tablist" aria-label="账号分类"></nav>
+      <div class="ac-status" role="status" aria-live="polite" hidden></div><div class="ac-content" id="ac-list-panel" role="tabpanel"></div>
+    <div id="account-editor" hidden>          <div class="config-ai-list">
+            <button class="config-ai-row" type="button" data-ai="claude">
+              <span class="config-ai-mark claude">CL</span>
+              <span class="config-ai-copy">
+                <strong>Claude</strong>
+                <small id="cfg-summary-claude">订阅模式 · claude-opus-5[1m]</small>
+              </span>
+              <span class="config-ai-status subscription" id="cfg-status-claude">订阅</span>
+            </button>
+            <button class="config-ai-row" type="button" data-ai="gemini">
+              <span class="config-ai-mark gemini">GE</span>
+              <span class="config-ai-copy">
+                <strong>Gemini</strong>
+                <small id="cfg-summary-gemini">订阅模式 · gemini-3-pro-preview</small>
+              </span>
+              <span class="config-ai-status subscription">订阅</span>
+            </button>
+            <button class="config-ai-row" type="button" data-ai="codex">
+              <span class="config-ai-mark codex">CX</span>
+              <span class="config-ai-copy">
+                <strong>Codex</strong>
+                <small id="cfg-summary-codex">订阅模式 · gpt-5.6-sol</small>
+              </span>
+              <span class="config-ai-status" id="cfg-status-codex">订阅</span>
+            </button>
+            <button class="config-ai-row" type="button" data-ai="kimi">
+              <span class="config-ai-mark kimi">KI</span>
+              <span class="config-ai-copy">
+                <strong>Kimi Code</strong>
+                <small id="cfg-summary-kimi">本机登录 · Kimi K3</small>
+              </span>
+              <span class="config-ai-status subscription" id="cfg-status-kimi">订阅</span>
+            </button>
+            <button class="config-ai-row" type="button" data-ai="deepseek">
+              <span class="config-ai-mark deepseek">DS</span>
+              <span class="config-ai-copy">
+                <strong>DeepSeek</strong>
+                <small id="cfg-summary-deepseek">Codex API · V4 Pro / Flash</small>
+              </span>
+              <span class="config-ai-status api" id="cfg-status-deepseek">API</span>
+            </button>
+          </div>
+        <div id="config-detail-view" class="hidden">
+          <div class="config-detail-head">
+            <button class="config-back-btn" id="config-back" type="button" hidden>‹ 返回模型列表</button>
+            <span class="config-ai-status" id="cfg-detail-status">订阅</span>
+          </div>
+          <h3 id="cfg-detail-title">Codex 设置</h3>
+          <p class="config-hint" id="cfg-detail-hint">全 Hub 新建 Codex 会话统一生效。</p>
+
+          <div class="config-ai-detail" id="cfg-detail-claude">
+            <div class="config-field">
+              <label>Claude Backend <span class="config-label-hint">(new sessions)</span></label>
+              <select id="cfg-claude-backend">
+                <option value="subscription">当前订阅 / Claude Code 登录（默认）</option>
+                <option value="api">同事中转 / Fable 5 · 1M</option>
+              </select>
+            </div>
+            <div class="config-mode-card selected" id="cfg-claude-subscription-card">
+              <strong>当前订阅 / Claude Code 登录</strong>
+              <span>使用当前本机 Claude Code 登录状态。Hub 会保持现有订阅启动方式，不写入 API Key。</span>
+            </div>
+            <div class="config-mode-card" id="cfg-claude-api-card">
+              <strong>同事中转 / Fable 5 · 1M</strong>
+              <span>仅影响切换后新建的 Claude 会话；已有会话不会被迁移，订阅登录也不会被覆盖。</span>
+            </div>
+            <div class="config-note" id="cfg-claude-route-note">中转参数已保存备用；当前订阅模式不会读取或发送中转 Key。</div>
+            <div class="config-field">
+              <label>同事中转 API Key</label>
+              <input type="password" id="cfg-claude-key" placeholder="sk-..." spellcheck="false">
+            </div>
+            <div class="config-field">
+              <label>中转 Base URL</label>
+              <input type="text" id="cfg-claude-url" placeholder="https://api.anthropic.com" spellcheck="false">
+            </div>
+            <div class="config-field">
+              <label>中转模型 <span class="config-label-hint">（Fable 5 · 1M）</span></label>
+              <input type="text" id="cfg-claude-model" placeholder="claude-fable-5" spellcheck="false">
+            </div>
+          </div>
+
+          <div class="config-ai-detail" id="cfg-detail-gemini">
+            <div class="config-mode-card selected">
+              <strong>订阅 / Gemini CLI 登录</strong>
+              <span>使用当前本机 Gemini CLI 登录状态。API 模式暂不接入，避免影响当前可用链路。</span>
+            </div>
+          </div>
+
+          <div class="config-ai-detail" id="cfg-detail-codex">
+            <div class="config-field">
+              <label>Codex 后端 <span class="config-label-hint">（全 Hub 生效）</span></label>
+              <select id="cfg-codex-backend">
+                <option value="subscription">订阅 / ChatGPT 登录</option>
+                <option value="api">第三方 API / Packy</option>
+              </select>
+            </div>
+            <div class="config-field">
+                <label>订阅账号 <span class="config-label-hint">（新建 Codex/群聊默认使用）</span></label>
+              <select id="cfg-codex-subscription-profile"></select>
+            </div>
+            <div class="config-field">
+              <label>主账号名称</label>
+              <input type="text" id="cfg-codex-profile-default-label" placeholder="主账号" spellcheck="false">
+            </div>
+            <div class="config-field">
+              <label>新账号名称</label>
+              <input type="text" id="cfg-codex-profile-second-label" placeholder="新账号" spellcheck="false">
+            </div>
+            <div class="config-field">
+              <label>新账号 CODEX_HOME</label>
+              <input type="text" id="cfg-codex-profile-second-home" placeholder="%USERPROFILE%\.codex-profiles\second" spellcheck="false">
+            </div>
+            <div class="config-note">API 模式仍以 gpt-5.6-sol、YOLO、信任当前目录启动，目标是和订阅模式体感一致。</div>
+            <div class="config-field">
+              <label>Codex API Key</label>
+              <input type="password" id="cfg-codex-key" placeholder="sk-..." spellcheck="false">
+            </div>
+            <div class="config-field">
+              <label>Codex API Base URL</label>
+              <input type="text" id="cfg-codex-url" placeholder="https://api.openai.com/v1" spellcheck="false">
+            </div>
+            <div class="config-field">
+              <label>Codex API Model</label>
+              <input type="text" id="cfg-codex-model" placeholder="gpt-5.6-sol" spellcheck="false">
+            </div>
+          </div>
+
+          <div class="config-ai-detail" id="cfg-detail-kimi">
+            <div class="config-mode-card selected">
+              <strong>订阅 / Kimi Code CLI 登录</strong>
+              <span>使用当前本机 Kimi Code 登录状态与 K3 模型。账号额度会在侧栏与 Claude、Codex 一起刷新。</span>
+            </div>
+            <div class="config-note">登录或切换账号请返回账号总览，点击 Kimi Code 的「登录」；Hub 不保存额外的 Kimi API Key。</div>
+          </div>
+
+          <div class="config-ai-detail" id="cfg-detail-server"><p class="config-note">服务器地址、监控开关仍在设置中。这里只管理访问凭据。</p><div class="config-field"><label for="cfg-aliyun-token">Bearer Token <span class="config-label-hint">（可选，本机保存）</span></label><input type="password" id="cfg-aliyun-token" autocomplete="off" spellcheck="false"></div></div>
+          <div class="config-ai-detail" id="cfg-detail-deepseek">
+            <div class="config-mode-card selected">
+              <strong>API 模式</strong>
+              <span>DeepSeek V4 Pro / Flash 通过原生 Responses API 接入 Codex CLI，使用 Hub 隔离的 CODEX_HOME，不改你的全局 Codex 配置。</span>
+            </div>
+            <div class="config-field">
+              <label>DeepSeek API Key</label>
+              <input type="password" id="cfg-deepseek-key" placeholder="sk-..." spellcheck="false">
+            </div>
+          </div>
+
+        </div>
+
+      <div class="config-modal-actions"><button class="config-btn config-btn-save" id="account-config-save">保存此连接配置</button><button class="ac-btn" data-ac="back">返回账号列表</button></div><div id="account-config-msg" role="status"></div>
+    </div>
+  </section>
+  <script src="renderer.js"></script>
+  <script src="loop-workflow.js"></script>
+  <script src="workflow-templates.js"></script>
+  <script src="meeting-room.js"></script>
+  <script src="workflow-config-modal.js"></script>
+  <script src="community-welcome.js"></script>
+  <script src="dev-progress.js"></script>
+  <script src="ran.js"></script>
+
+  <div id="config-modal" class="config-modal-overlay hidden">
+    <div class="config-modal-content">
+      <div class="config-modal-header">
+        <h2>配置 · Settings</h2>
+        <button class="config-modal-close" id="config-close">✕</button>
+      </div>
+      <div class="config-modal-body">
+        <div id="config-main-view">
+          <p class="config-hint">配置全局代理、通知与显示；账号登录和 AI 接入方式已统一移至左侧「权限」。</p>
+          <div class="config-field">
+            <label>HTTP 代理 <span class="config-label-hint">（VPN/Clash 端口）</span></label>
+            <input type="text" id="cfg-proxy" placeholder="http://127.0.0.1:7890" spellcheck="false">
+          </div>
+          <div class="config-section-label config-operations-title">
+            <span>工作台服务器状态</span>
+            <span>阿里云 / 自建健康端点</span>
+          </div>
+          <div class="config-operations-card">
+            <label class="config-toggle-row" for="cfg-aliyun-enabled">
+              <input type="checkbox" id="cfg-aliyun-enabled">
+              <span><strong>在工作台监控服务器</strong><small>主进程按需读取健康端点；未配置时不会自动探测任何公网地址。</small></span>
+            </label>
+            <div class="config-reading-grid">
+              <div class="config-field"><label for="cfg-aliyun-label">显示名称</label><input type="text" id="cfg-aliyun-label" placeholder="阿里云服务器" maxlength="48"></div>
+              <div class="config-field"><label for="cfg-aliyun-health-url">健康检查 URL</label><input type="url" id="cfg-aliyun-health-url" placeholder="https://server.example.com/health" spellcheck="false"></div>
+            </div>
+            <div class="config-reading-grid">
+              <div class="config-field"><label for="cfg-aliyun-metrics-url">指标 URL <span class="config-label-hint">（可选）</span></label><input type="url" id="cfg-aliyun-metrics-url" placeholder="https://server.example.com/metrics" spellcheck="false"></div>
+              <span class="config-reading-note">Bearer Token 已移至「权限 → 服务器监控授权」。</span>
+            </div>
+            <div class="config-field"><label for="cfg-operations-restore-root">Checkpoint 恢复目录 <span class="config-label-hint">（可选）</span></label><input type="text" id="cfg-operations-restore-root" placeholder="C:\Workspace\Worktrees" spellcheck="false"></div>
+            <p class="config-reading-note">指标 JSON 可返回 <code>storage.totalBytes</code> / <code>usedBytes</code> / <code>usagePct</code>；保存后回到工作台刷新即可验证。</p>
+          </div>
+          <div class="config-section-label config-notification-title">
+            <span>回答完成通知</span>
+            <span>飞书 CLI</span>
+          </div>
+          <div class="config-notification-card" id="config-notification-card">
+            <label class="config-toggle-row" for="cfg-notification-enabled">
+              <input type="checkbox" id="cfg-notification-enabled">
+              <span><strong id="cfg-notification-target-title">当前会话飞书通知</strong><small id="cfg-notification-target-hint">每个会话独立设置；新会话默认关闭，顶栏可随时切换。</small></span>
+            </label>
+            <div class="config-field">
+              <label for="cfg-feishu-target">飞书接收对象 ID <span class="config-label-hint">（oc_ 会话/群聊，或 ou_ 用户）</span></label>
+              <div class="config-secret-row">
+                <input type="text" id="cfg-feishu-target" placeholder="oc_... 或 ou_..." spellcheck="false" autocomplete="off">
+                <button type="button" class="config-test-btn" id="config-notification-test">发送测试</button>
+              </div>
+            </div>
+            <div class="config-check-grid">
+              <label for="cfg-notification-group-chats"><input type="checkbox" id="cfg-notification-group-chats" checked> 当前会话为群聊时，整轮完成后推送一条</label>
+              <label for="cfg-notification-include-preview"><input type="checkbox" id="cfg-notification-include-preview"> 附带回答与成果快递（Card 2.0、HTML 预览及原文件；默认关闭）</label>
+            </div>
+            <p class="config-notification-status" id="config-notification-status" aria-live="polite"></p>
+            <p class="config-reading-note">首次使用：在「权限 → 飞书 CLI」完成授权，并确保机器人已加入目标会话。测试通知可在保存前直接发送。</p>
+          </div>
+          <div class="config-section-label config-reading-title">
+            <span>普通会话卡片</span>
+            <span>调整后立即预览</span>
+          </div>
+          <div class="config-reading-grid">
+            <div class="config-field">
+              <label for="cfg-card-font-size">正文字号 <output id="cfg-card-font-size-value">15px</output></label>
+              <input type="range" id="cfg-card-font-size" min="13" max="22" step="1" value="15">
+            </div>
+            <div class="config-field">
+              <label for="cfg-card-font-family">字体风格</label>
+              <select id="cfg-card-font-family">
+                <option value="system">系统清晰（推荐）</option>
+                <option value="yahei">微软雅黑</option>
+                <option value="serif">中文衬线</option>
+                <option value="mono">等宽技术</option>
+              </select>
+            </div>
+          </div>
+          <p class="config-reading-note">默认已从 13px 调到 15px；代码块仍使用等宽字体。公式由本地 KaTeX 离线渲染。</p>
+          <button type="button" class="config-btn" id="btn-config-accounts">账号登录与接入配置 → 权限</button>
+        </div>
+
+        <div class="config-modal-actions">
+          <button class="config-btn config-btn-save" id="config-save">保存</button>
+          <button class="config-btn config-btn-cancel" id="config-cancel">取消</button>
+        </div>
+        <div class="config-save-msg" id="config-save-msg" style="display:none"></div>
+      </div>
+    </div>
+  </div>
+
+</body>
+</html>

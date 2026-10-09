@@ -1,0 +1,68 @@
+/* Short labels stay visible at both navigation widths. Telemetry has one row. */
+:root { --hub-rail-slot:44px; --hub-rail-open:44px; }
+:root:has(.app-container:not(.rail-pinned)) { --hub-rail-slot:44px; }
+:root body #scene-rail .rail-drawer-head { height:40px; padding:0 8px; }
+:root body #scene-rail .rail-navigation { padding:0 2px; gap:3px; scrollbar-width:none; }
+:root body #scene-rail .rail-navigation::-webkit-scrollbar { width:0; height:0; display:none; }
+:root body #scene-rail .btn-shell-nav,
+:root body .app-container:not(.rail-pinned) #scene-rail .btn-shell-nav {
+  flex-direction:column; align-items:center; justify-content:center;
+  height:54px; min-height:54px; gap:3px; padding:4px 2px; text-align:center;
+}
+:root body #scene-rail .btn-shell-nav .btn-icon { width:26px; height:26px; }
+:root body #scene-rail .btn-shell-nav .btn-label,
+:root body .app-container:not(.rail-pinned) #scene-rail .btn-shell-nav .btn-label {
+  display:block!important; visibility:visible; opacity:1; flex:none;
+  font-size:11px; line-height:15px; white-space:nowrap; max-width:100%; overflow:visible;
+}
+:root body #scene-rail .rail-separator { margin:5px 8px; }
+:root body #scene-rail .rail-utilities { padding:6px 4px; gap:3px; }
+:root body #scene-rail .rail-utilities :is(#btn-hub-restart,#btn-theme,#btn-options) {
+  display:flex; flex-direction:column; align-items:center; justify-content:center;
+  width:24px; height:43px; padding:0; gap:3px;
+}
+#scene-rail .rail-utility-label { display:block; font-size:10px; line-height:13px; white-space:nowrap; }
+:root body #scene-rail .rail-utilities .rail-artwork { width:22px; height:22px; }
+:root body #hub-system-footer {
+  display:flex; align-items:center; gap:14px; padding:0 12px; box-sizing:border-box;
+  white-space:nowrap; overflow-x:auto; overflow-y:hidden; scrollbar-width:thin;
+}
+:root body #hub-system-footer:focus-visible { outline:2px solid var(--brand); outline-offset:-2px; }
+:root body #hub-system-footer #sidebar-strip { display:contents!important; }
+:root body #hub-system-footer #sidebar-strip .strip-resources {
+  display:flex; flex:0 0 auto; gap:12px; order:0; height:auto;
+}
+:root body #hub-system-footer #sidebar-strip .strip-resource { height:24px; gap:4px; font-size:10px; }
+:root body #hub-system-footer #sidebar-strip .strip-resource b { font-size:11px; }
+:root body #hub-system-footer #sidebar-strip .strip-resource-high b { color:var(--status-warning); }
+:root body #hub-system-footer #sidebar-strip .strip-resource-critical b { color:var(--status-danger); }
+:root body #hub-system-footer #sidebar-strip .strip-mini-track { display:none; }
+:root body #hub-system-footer #sidebar-strip .strip-network {
+  display:flex; order:2; flex:1 0 auto; gap:12px; height:auto; min-width:max-content;
+}
+:root body #hub-system-footer #sidebar-strip .strip-route-foreign { flex:0 0 auto; overflow:visible; }
+:root body #hub-system-footer #sidebar-strip .strip-location { overflow:visible; }
+:root body #hub-system-footer #rail-usage { display:flex; order:1; flex:0 0 auto; width:auto; padding:0 12px; border-inline:1px solid var(--border-subtle); }
+#hub-system-footer #rail-usage .sidebar-quota { display:flex; align-items:center; gap:14px; container-type:normal; }
+#hub-system-footer #rail-usage .sidebar-quota::before { content:'余量'; color:var(--fg-muted); font-size:10px; }
+#hub-system-footer #rail-usage :is(.sidebar-quota-claude,.sidebar-quota-pair) { display:contents; }
+#hub-system-footer #rail-usage .sidebar-quota-provider {
+  display:inline-flex; flex:0 0 auto; align-items:center; width:auto; gap:6px;
+  height:26px; min-height:0; padding:0 2px; border:0; border-radius:4px; background:transparent;
+}
+#hub-system-footer #rail-usage .sidebar-quota-provider:hover { background:var(--surface-hover); }
+#hub-system-footer #rail-usage .sidebar-quota-provider:focus-visible { outline:2px solid var(--brand); outline-offset:1px; }
+#hub-system-footer #rail-usage :is(.sidebar-quota-name,.sidebar-quota-value) { font-size:11px; line-height:16px; }
+#hub-system-footer #rail-usage .sidebar-quota-metrics { display:flex; align-items:center; gap:8px; flex:none; }
+#hub-system-footer #rail-usage .sidebar-quota-metric { flex:none; display:inline-flex; width:auto; }
+#hub-system-footer #rail-usage .sidebar-quota-reading { display:inline-flex; align-items:baseline; gap:3px; }
+#hub-system-footer #rail-usage .sidebar-quota-period { font-size:9px; color:var(--fg-muted); }
+#hub-system-footer #rail-usage .sidebar-quota-track { display:none; }
+#hub-system-footer #rail-usage .rail-usage-button { order:1; flex:none; height:24px; }
+:root body #sidebar-insights { display:none; }
+@media(max-width:1100px) {
+  :root body #hub-system-footer { gap:10px; padding-inline:8px; }
+  #hub-system-footer #rail-usage { padding-inline:8px; }
+  #hub-system-footer #rail-usage .sidebar-quota { gap:10px; }
+  :root body #hub-system-footer #sidebar-strip :is(.strip-resources,.strip-network) { gap:8px; }
+}

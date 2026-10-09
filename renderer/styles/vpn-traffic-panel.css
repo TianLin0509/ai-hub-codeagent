@@ -1,0 +1,71 @@
+/* 底部状态条 VPN 行点开的流量详情弹层（renderer/vpn-traffic-panel.js）。 */
+.vpn-traffic-panel {
+  position: fixed; z-index: 10030; width: 420px; max-width: calc(100vw - 16px);
+  max-height: min(72vh, 640px); display: flex; flex-direction: column;
+  box-sizing: border-box; border: 1px solid var(--border-subtle); border-radius: 12px;
+  background: var(--surface-overlay); color: var(--fg-default);
+  box-shadow: var(--shadow-lg, 0 8px 28px #0004); font-size: 13px;
+}
+.vpn-traffic-panel[hidden] { display: none; }
+.vpn-traffic-panel.loading { opacity: .85; }
+.vpn-traffic-scroll { overflow-y: auto; padding: 14px 16px 12px; }
+.vpn-traffic-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+.vpn-traffic-panel > .vpn-traffic-head { padding: 14px 16px 0; }
+.vpn-traffic-head strong { font-size: 14px; font-weight: 600; }
+.vpn-traffic-close {
+  width: 24px; height: 24px; border: 0; border-radius: 6px; background: transparent;
+  color: var(--fg-muted); font-size: 18px; line-height: 1; cursor: pointer;
+}
+.vpn-traffic-close:hover { background: var(--surface-hover); color: var(--fg-default); }
+.vpn-traffic-tabs { display: flex; gap: 4px; margin-bottom: 12px; }
+.vpn-traffic-tab {
+  flex: 1; height: 26px; border: 1px solid var(--border-subtle); border-radius: 6px;
+  background: transparent; color: var(--fg-muted); font: inherit; font-size: 12px; cursor: pointer;
+}
+.vpn-traffic-tab:hover { background: var(--surface-hover); color: var(--fg-default); }
+.vpn-traffic-tab.active { border-color: var(--brand-tint-border, var(--brand)); background: var(--brand-tint); color: var(--brand-text); font-weight: 600; }
+.vpn-traffic-alert {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  margin-bottom: 12px; padding: 8px 10px; border-radius: 8px;
+  border: 1px solid var(--status-warning); color: var(--fg-default); font-size: 12px;
+}
+.vpn-traffic-ack {
+  flex: none; height: 24px; padding: 0 10px; border: 0; border-radius: 6px;
+  background: var(--status-warning); color: #1f1600; font: inherit; font-size: 12px; font-weight: 600; cursor: pointer;
+}
+.vpn-traffic-ack:disabled { opacity: .6; cursor: default; }
+.vpn-traffic-hero { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; margin-bottom: 14px; }
+.vpn-traffic-total { font-size: 26px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.vpn-traffic-split, .vpn-traffic-live { color: var(--fg-muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+.vpn-traffic-live { flex-basis: 100%; }
+.vpn-traffic-section { margin-bottom: 14px; }
+.vpn-traffic-section h4 { margin: 0 0 4px; color: var(--fg-muted); font-size: 11px; font-weight: 600; letter-spacing: .04em; }
+.vpn-traffic-row { display: flex; align-items: flex-start; gap: 9px; padding: 8px 0; border-top: 1px solid var(--border-subtle); }
+.vpn-traffic-rank {
+  display: grid; place-items: center; flex: none; width: 20px; height: 20px; margin-top: 1px;
+  border-radius: 6px; background: var(--brand-tint); color: var(--brand-text); font-size: 11px;
+}
+.vpn-traffic-main { flex: 1; min-width: 0; }
+.vpn-traffic-name { display: flex; align-items: baseline; gap: 6px; min-width: 0; }
+.vpn-traffic-name strong { font-weight: 500; white-space: nowrap; }
+.vpn-traffic-name small { overflow: hidden; color: var(--fg-faint, var(--fg-muted)); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.vpn-traffic-bar { height: 4px; margin: 6px 0 5px; border-radius: 2px; background: var(--border-subtle); overflow: hidden; }
+.vpn-traffic-bar i { display: block; height: 100%; border-radius: 2px; background: var(--brand); }
+.vpn-traffic-sub { display: block; overflow: hidden; color: var(--fg-muted); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.vpn-traffic-row > b { flex: none; min-width: 64px; text-align: right; font-size: 14px; font-variant-numeric: tabular-nums; }
+.vpn-traffic-row > b small { display: block; color: var(--fg-muted); font-size: 11px; font-weight: 400; }
+.vpn-traffic-host { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(40px, 1fr) 64px; align-items: center; gap: 10px; padding: 5px 0; font-size: 12px; }
+.vpn-traffic-host > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.vpn-traffic-host .vpn-traffic-bar { margin: 0; }
+.vpn-traffic-host b { text-align: right; font-weight: 500; font-variant-numeric: tabular-nums; }
+.vpn-traffic-days { display: flex; align-items: flex-end; gap: 2px; height: 56px; padding-top: 4px; }
+.vpn-traffic-day { position: relative; flex: 1; height: 100%; display: flex; align-items: flex-end; cursor: default; }
+.vpn-traffic-day i { display: block; width: 100%; border-radius: 4px 4px 0 0; background: var(--brand); }
+.vpn-traffic-day:hover i { filter: brightness(1.15); }
+.vpn-traffic-day.empty::after { content: ''; position: absolute; left: 0; right: 0; bottom: 0; height: 1px; background: var(--border-subtle); }
+.vpn-traffic-days-axis { display: flex; justify-content: space-between; margin-top: 4px; color: var(--fg-muted); font-size: 10px; }
+.vpn-traffic-empty { padding: 14px 0; color: var(--fg-muted); font-size: 12px; text-align: center; }
+.vpn-traffic-panel > .vpn-traffic-empty { padding: 18px 16px; }
+.vpn-traffic-notes { padding-top: 10px; border-top: 1px solid var(--border-subtle); color: var(--fg-muted); font-size: 11px; line-height: 1.55; }
+.vpn-traffic-notes p { margin: 0 0 3px; }
+#sidebar-strip .strip-route-foreign { cursor: pointer; }

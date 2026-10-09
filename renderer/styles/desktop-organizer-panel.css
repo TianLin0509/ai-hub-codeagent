@@ -1,0 +1,12 @@
+.desktop-organizer-panel { position:fixed; z-index:10032; left:50%; top:50%; transform:translate(-50%,-50%); width:680px; max-width:calc(100vw - 24px); max-height:85vh; display:flex; flex-direction:column; border:1px solid var(--border-subtle); border-radius:12px; background:var(--surface-overlay); color:var(--fg-default); box-shadow:var(--shadow-lg); padding:18px; box-sizing:border-box; font-size:13px; }
+.desktop-organizer-panel[hidden] { display:none; }
+.desktop-organizer-panel header,.desktop-organizer-panel footer { display:flex; gap:10px; align-items:center; justify-content:space-between; }
+.desktop-organizer-panel button { padding:7px 10px; border:1px solid var(--border-subtle); border-radius:6px; background:var(--surface-overlay); color:var(--fg-default); cursor:pointer; }
+.desktop-organizer-panel button:disabled { opacity:.5; cursor:default; }
+.desktop-organizer-panel .do-primary { background:var(--brand); color:var(--fg-on-brand,#fff); }
+.desktop-organizer-panel p { line-height:1.6; }
+.do-list { overflow:auto; min-height:0; margin-bottom:14px; }
+.do-list label { display:flex; gap:10px; padding:8px; border-bottom:1px solid var(--border-subtle); overflow-wrap:anywhere; }
+.do-list small { display:block; color:var(--fg-muted); margin-top:3px; font-size:11px; }
+.do-message { white-space:pre-wrap; overflow-wrap:anywhere; max-height:180px; overflow:auto; line-height:1.6; }
+.do-location { color:var(--fg-muted); overflow-wrap:anywhere; font-size:11px; }

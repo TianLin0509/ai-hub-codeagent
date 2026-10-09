@@ -1,0 +1,60 @@
+/* Hub global styles split manifest. Keep import order identical to the former styles.css. */
+@import url('./styles/base.css');
+@import url('./styles/shell-sidebar-terminal.css');
+@import url('./styles/global-session-search.css');
+@import url('./styles/account-config-preview.css');
+@import url('./styles/card-view.css');
+@import url('./styles/task-presets.css');
+@import url('./styles/prompt-inspector.css');
+@import url('./styles/composer.css');
+@import url('./styles/toolbar.css');
+@import url('./styles/terminal-presentation.css');
+@import url('./styles/codex-backstage.css');
+@import url('./styles/rail.css');
+@import url('./styles/sidebar-v2.css');
+
+/* Native interaction cards sit above the composer; they do not resize xterm. */
+.native-card-send-error, .native-draft-error { color: #f28b82; padding: 6px 10px; font-size: 12px; }
+.codex-native-controls {
+  position: absolute; bottom: calc(100% + 8px); left: 0; right: 0;
+  max-height: min(48vh, 430px); overflow: auto; padding: 14px;
+  background: var(--bg-panel, #20232b); color: var(--text-primary, #eef1f5);
+  border: 1px solid var(--border-color, #555b68); border-radius: 12px;
+  box-shadow: 0 8px 32px #0006; z-index: 40; font-size: 13px;
+}
+.codex-native-controls[hidden] { display: none; }
+/* The native terminal already owns the question/approval UI. The handoff
+   panel belongs to card view; covering the TUI would hide its answer choices. */
+.pty-attention-controls { display: none; }
+.card-view-active .pty-attention-controls:not([hidden]) { display: block; }
+.split-secondary:not(.card-view-active) .pty-attention-controls { display: none; }
+.acp-queued-preview { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; margin: 6px 0; }
+.codex-native-request + .codex-native-request { border-top: 1px solid #7777; margin-top: 14px; padding-top: 14px; }
+.codex-native-controls label { display: block; margin: 10px 0 6px; }
+.codex-native-controls textarea, .codex-native-controls input {
+  display: block; box-sizing: border-box; width: 100%; margin-top: 6px; padding: 8px;
+  border: 1px solid #777; border-radius: 6px; background: var(--bg-input, #151820); color: inherit;
+}
+.codex-native-controls pre { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; max-height: 160px; overflow: auto; }
+.codex-native-controls .codex-native-confirm { display: flex; align-items: center; gap: 8px; }
+.codex-native-controls .codex-native-confirm input { width: auto; margin: 0; padding: 0; }
+.codex-native-controls button {
+  color: inherit; background: var(--bg-hover, #343947); border: 1px solid #7777;
+  padding: 6px 10px; border-radius: 6px; margin: 4px 6px 4px 0; cursor: pointer;
+}
+.codex-native-controls button:disabled { opacity: .55; cursor: wait; }
+.codex-native-actions { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+.codex-native-error { color: #eeb769; white-space: pre-wrap; overflow-wrap: anywhere; }
+.codex-native-thread-list { display: flex; flex-direction: column; }
+#hub-restart-panel {
+  position: fixed; z-index: 10000; bottom: 22px; left: 72px;
+  width: min(480px, calc(100vw - 100px)); max-height: 65vh; overflow: auto;
+  padding: 18px; border: 1px solid var(--border-color, #667085);
+  border-radius: 12px; background: var(--bg-secondary, #20242c); color: var(--text-primary, #f2f4f7);
+  box-shadow: 0 8px 30px #0006; font-size: 13px;
+}
+#hub-restart-panel[hidden] { display: none; }
+#hub-restart-panel p { line-height: 1.6; margin: 10px 0; }
+#hub-restart-panel ul { padding-left: 18px; }
+#hub-restart-panel li { margin: 8px 0; overflow-wrap: anywhere; }
+#hub-restart-panel button { margin-left: 8px; padding: 4px 10px; cursor: pointer; }

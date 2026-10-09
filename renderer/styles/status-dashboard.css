@@ -1,0 +1,135 @@
+/* One footer row: equipment, remaining quota + reset, and network routes.
+   All readings and actions remain available; narrow windows open details. */
+:root { --hub-footer-height:34px; }
+:root body #hub-system-footer {
+  gap:14px; padding:0 14px; color:var(--fg-default);
+  background:var(--surface-raised); border-top:1px solid var(--border-subtle);
+  font-variant-numeric:tabular-nums; overflow:hidden; scrollbar-width:none;
+}
+:root body #hub-system-footer #sidebar-strip .strip-resources {
+  gap:6px; align-items:center;
+}
+:root body #hub-system-footer #sidebar-strip .strip-resource {
+  display:inline-flex; flex-direction:row; justify-content:center; align-items:center;
+  box-sizing:border-box; height:24px; gap:4px; padding:0;
+  font-size:10px; line-height:16px; border-radius:6px; color:var(--fg-muted);
+}
+:root body #hub-system-footer #sidebar-strip .strip-resource b {
+  font-size:11px; line-height:16px; font-weight:650;
+}
+:root body #hub-system-footer #rail-usage {
+  padding:0 10px; align-items:center; height:24px;
+}
+#hub-system-footer #rail-usage .sidebar-quota { gap:10px; }
+#hub-system-footer #rail-usage .sidebar-quota::before {
+  content:'余量'; white-space:nowrap; line-height:16px; color:var(--fg-muted); font-size:10px;
+}
+#hub-system-footer #rail-usage .sidebar-quota-provider {
+  height:26px; padding:0 3px; gap:5px; border-radius:5px;
+  box-sizing:border-box; transition:background-color .15s;
+}
+#hub-system-footer #rail-usage .sidebar-quota-provider:hover {
+  background:var(--brand-tint);
+}
+#hub-system-footer #rail-usage .sidebar-quota-icon {
+  display:inline-block; flex:0 0 12px; width:12px; height:12px;
+  border-radius:3px; opacity:.85; margin-right:0;
+}
+#hub-system-footer #rail-usage .token-plan-icon {
+  text-align:center; font:600 9px/12px var(--font-sans); color:var(--brand); background:var(--brand-tint);
+}
+#hub-system-footer #rail-usage .sidebar-quota-name {
+  font-size:11px; line-height:16px; font-weight:500; color:var(--fg-muted);
+}
+#hub-system-footer #rail-usage .sidebar-quota-metrics { gap:10px; }
+#hub-system-footer #rail-usage .sidebar-quota-reading {
+  display:inline-flex; flex-direction:row; align-items:baseline; justify-content:center; gap:4px; flex-wrap:nowrap;
+}
+#hub-system-footer #rail-usage .sidebar-quota-value {
+  font-size:11px; line-height:16px; font-weight:650;
+}
+#hub-system-footer #rail-usage .sidebar-quota-period {
+  font-size:10px; line-height:16px; font-weight:400; color:var(--fg-muted);
+}
+#hub-system-footer #rail-usage .sidebar-quota-metric[data-reset-state='due'] .sidebar-quota-period {
+  color:var(--status-warning);
+}
+#hub-system-footer #rail-usage .sidebar-quota-provider[data-state='loading'] .sidebar-quota-name {
+  color:var(--brand);
+}
+#hub-system-footer #rail-usage .sidebar-quota-provider[data-state='error'] .sidebar-quota-name {
+  color:var(--status-warning);
+}
+#hub-system-footer #rail-usage .rail-usage-button {
+  width:20px; height:24px; border-radius:5px; border:0; margin-left:0;
+}
+:root body #hub-system-footer #sidebar-strip .strip-network {
+  align-items:center; justify-content:flex-start; gap:12px; border:0;
+}
+:root body #hub-system-footer #sidebar-strip .strip-route-row {
+  gap:4px; height:24px; border-radius:5px; font-size:11px;
+}
+:root body #hub-system-footer #sidebar-strip .strip-route-foreign {
+  padding:0 3px; min-height:24px;
+}
+:root body #hub-system-footer #sidebar-strip .strip-route-foreign:hover {
+  background:var(--surface-hover);
+}
+:root body #hub-system-footer #sidebar-strip .strip-route-dot {
+  flex-basis:6px; height:6px;
+}
+:root body #hub-system-footer #sidebar-strip .strip-delay {
+  margin-left:3px; padding:2px 5px; border-radius:4px; background:var(--brand-tint);
+  font-size:10px; font-weight:500;
+}
+:root body #hub-system-footer #sidebar-strip .strip-transfer {
+  margin-left:auto; gap:8px; font-size:11px;
+}
+@media(max-width:1100px) {
+  :root body #hub-system-footer { gap:8px; padding-inline:8px; }
+  :root body #hub-system-footer #rail-usage { padding-inline:8px; }
+  #hub-system-footer #rail-usage .sidebar-quota { gap:6px; }
+  #hub-system-footer #rail-usage .sidebar-quota-provider { padding-inline:4px; }
+  :root body #hub-system-footer #sidebar-strip .strip-network { gap:8px; }
+}
+@media(prefers-reduced-motion:reduce) {
+  #hub-system-footer #rail-usage .sidebar-quota-provider { transition:none; }
+}
+
+/* Reduce repeated decoration first, then secondary network text. Never shrink the font. */
+#hub-system-footer::-webkit-scrollbar { display:none; }
+:root body #hub-system-footer #sidebar-strip .strip-network { min-width:0; flex:1 1 auto; }
+#hub-system-footer .footer-quota-summary { display:none; }
+#footer-status-details { order:3; flex:none; width:24px; height:24px; border:0; border-radius:5px; background:transparent; color:var(--fg-muted); cursor:pointer; font:600 16px var(--font-sans); }
+#footer-status-details:hover { color:var(--brand); background:var(--brand-tint); }
+#hub-system-footer[data-density='full'] #footer-status-details { display:none; }
+:root body #hub-system-footer:is([data-density='compact'],[data-density='minimal'],[data-density='summary']) { gap:6px; padding-inline:6px; }
+:root body #hub-system-footer:not([data-density='full']) #rail-usage { padding-inline:6px; }
+#hub-system-footer:not([data-density='full']) #rail-usage .sidebar-quota::before,
+#hub-system-footer:not([data-density='full']) #rail-usage .sidebar-quota-icon { display:none; }
+#hub-system-footer:not([data-density='full']) #rail-usage :is(.sidebar-quota,.sidebar-quota-metrics) { gap:6px; }
+#hub-system-footer:not([data-density='full']) #rail-usage .sidebar-quota-provider { padding:0; gap:3px; }
+#hub-system-footer:not([data-density='full']) #rail-usage .rail-usage-button { display:none; }
+:root body #hub-system-footer:not([data-density='full']) #sidebar-strip :is(.strip-resources,.strip-network) { gap:6px; }
+:root body #hub-system-footer:not([data-density='full']) #sidebar-strip .strip-location { max-width:68px; overflow:hidden; text-overflow:ellipsis; }
+:root body #hub-system-footer:is([data-density='minimal'],[data-density='summary']) #sidebar-strip :is(.strip-location,.strip-transfer,.strip-route-domestic) { display:none; }
+#hub-system-footer[data-density='minimal'] #rail-usage .sidebar-quota-name { display:none; }
+#hub-system-footer[data-density='minimal'] #rail-usage .sidebar-quota-icon { display:inline-block; }
+#hub-system-footer[data-density='summary'] #rail-usage :is(.sidebar-quota-provider,.rail-usage-button) { display:none; }
+:root body #hub-system-footer[data-density='summary'] #rail-usage { flex:0 1 auto; min-width:0; }
+#hub-system-footer[data-density='summary'] #rail-usage .sidebar-quota { min-width:0; }
+#hub-system-footer[data-density='summary'] .footer-quota-summary { display:block; min-width:0; max-width:150px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; border:0; background:transparent; color:var(--fg-default); padding:0; font:11px/24px var(--font-sans); cursor:pointer; }
+:root body #hub-system-footer[data-density='summary'] #sidebar-strip .strip-disk { display:none; }
+:root body #hub-system-footer[data-density='summary'] #sidebar-strip .strip-network { flex:0 0 auto; margin-left:auto; }
+:root body #hub-system-footer[data-density='summary'] #sidebar-strip .strip-delay { margin-left:0; padding-inline:2px; }
+#footer-status-popover { position:fixed; z-index:2200; bottom:42px; right:8px; width:400px; max-width:calc(100vw - 16px); max-height:calc(100vh - 100px); box-sizing:border-box; overflow-y:auto; border:1px solid var(--border-mid); border-radius:10px; padding:14px; background:var(--surface-overlay); color:var(--fg-default); box-shadow:0 8px 26px rgba(20,35,55,.12); font:12px/1.7 var(--font-sans); }
+#footer-status-popover[hidden] { display:none; }
+#footer-status-popover > strong { display:block; margin-bottom:8px; }
+#footer-status-popover p { margin:3px 0; }
+#footer-status-popover button { display:block; width:100%; border:0; background:transparent; color:inherit; padding:6px 0; text-align:left; font:inherit; cursor:pointer; }
+#footer-status-popover button:hover { background:var(--surface-hover); }
+#footer-status-popover [data-level='danger'], .footer-quota-summary[data-level='danger'] { color:var(--status-danger); }
+#footer-status-popover [data-level='warn'], .footer-quota-summary[data-level='warn'] { color:var(--status-warning); }
+@media(max-width:360px) {
+  :root body #hub-system-footer[data-density='summary'] #sidebar-strip [data-resource-kind='cpu'] { display:none; }
+}

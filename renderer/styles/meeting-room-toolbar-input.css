@@ -1,0 +1,690 @@
+/* Toolbar */
+.mr-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 12px;
+  background: transparent;
+  font-size: 12px;
+  flex-shrink: 0;
+}
+/* Phase 7(2026-05-05): free 模式 toolbar 完全空时, 不占任何高度(避免空灰线) */
+.mr-toolbar:empty {
+  padding: 0;
+  height: 0;
+  min-height: 0;
+}
+
+.mr-toolbar label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--text-secondary, var(--fg-muted));
+}
+
+.mr-target-select {
+  padding: 2px 6px;
+  border: 1px solid var(--border, var(--border-mid));
+  border-radius: var(--radius-xs);
+  background: var(--bg-primary, var(--surface-canvas));
+  color: var(--text-primary, var(--fg-default));
+  font-size: 12px;
+}
+
+.mr-sync-toggle {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+  color: var(--text-secondary, var(--fg-muted));
+}
+
+.mr-sync-toggle.active {
+  color: var(--accent, var(--mark-indigo));
+}
+
+/* Input Row */
+.mr-input-row {
+  position: relative;
+  display: flex;
+  align-items: flex-end;
+  padding: 8px 12px;
+  gap: 8px;
+  background: transparent;
+  flex-shrink: 0;
+  z-index: 2; /* 浮于 G 地平线光晕之上 */
+}
+
+/* Group composer shares the session chips, while keeping its member controls
+   and file-workflow preflight above the input. */
+.mr-input-row.mr-group-composer {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  margin: 8px 12px;
+  padding: 10px 12px 8px;
+  gap: 8px;
+  border-radius: var(--radius-lg);
+  background: var(--surface-card);
+  box-shadow: inset 0 0 0 1px var(--border-subtle), var(--shadow-md);
+}
+.mr-group-composer .mr-free-avatars-row { grid-column: 1 / -1; grid-row: 1; justify-self: start; }
+.mr-group-composer .mr-composer-head { grid-column: 1 / -1; grid-row: 1; display: flex; align-items: center; gap: 10px; min-width: 0; overflow-x: auto; scrollbar-width: thin; }
+.mr-composer-head .mr-free-avatars-row { padding: 2px; border: 0; background: transparent; max-width: 150px; gap: 4px; overflow-y: hidden; scrollbar-width: none; }
+.mr-composer-head .mr-free-avatars-row::-webkit-scrollbar { display: none; }
+.mr-composer-head .mr-free-avatar-chk { width: 28px; height: 28px; flex: none; }
+.mr-composer-head .mr-free-avatar-chk-mark { width: 12px; height: 12px; font-size: 8px; }
+.mr-composer-head .mr-input-preflight { flex: 1; min-width: 0; padding: 0; min-height: 32px; flex-wrap: nowrap; gap: 8px; }
+.mr-composer-head .mr-file-flow { flex: 1; width: auto; min-width: 0; flex-wrap: nowrap; gap: 10px; padding: 0; }
+.mr-composer-head .mr-file-steps, .mr-composer-head .mr-file-recipients { display: none; }
+.mr-composer-head .mr-file-detail { flex: 1; min-width: 90px; font-size: 12px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.mr-composer-head .mr-file-detail strong { font-weight: 500; }
+.mr-composer-head .mr-file-error { display: inline; margin-left: 6px; }
+.mr-composer-head .mr-file-actions { flex: none; flex-wrap: nowrap; gap: 6px; }
+.mr-composer-head .mr-file-actions button { white-space: nowrap; padding: 4px 9px; }
+.mr-composer-head:has(.mr-delivery-flow) { flex-wrap: wrap; overflow-x: hidden; }
+.mr-composer-head:has(.mr-delivery-flow) .mr-input-preflight { flex-basis: 100%; }
+.mr-composer-head .mr-delivery-flow { flex-direction: row; flex-wrap: wrap; align-items: center; gap: 6px; }
+.mr-composer-head .mr-delivery-flow .mr-file-detail { min-width: 0; white-space: normal; overflow-wrap: anywhere; }
+.mr-composer-head .mr-delivery-flow .mr-file-detail small,
+.mr-composer-head .mr-delivery-flow .mr-file-detail span { display: block; margin: 3px 0 0; }
+/* The action group may shrink and wrap, so narrow panes never push buttons out of view. */
+.mr-composer-head .mr-delivery-flow .mr-file-actions { flex: 0 1 auto; min-width: 0; max-width: 100%; flex-wrap: wrap; }
+.mr-composer-head .mr-delivery-flow > .mr-file-detail { flex: 1 1 160px; }
+.mr-composer-head .mr-delivery-flow > .mr-file-error,
+.mr-delivery-recipients, .mr-delivery-details { flex-basis: 100%; min-width: 0; }
+.mr-delivery-recipients { color: var(--fg-muted); font-size: 11px; }
+.mr-delivery-details[hidden] { display: none; }
+.mr-delivery-details { padding-top: 8px; border-top: 1px solid var(--border-subtle); }
+.mr-delivery-details p { margin: 6px 0; color: var(--fg-muted); font-size: 12px; }
+.mr-delivery-stages { display: flex; flex-wrap: wrap; gap: 6px 22px; margin: 0; padding-left: 20px; color: var(--fg-muted); font-size: 12px; }
+.mr-delivery-stages [aria-current="step"] { color: var(--accent, var(--mark-indigo)); font-weight: 600; }
+.mr-delivery-flow button:focus-visible, .mr-gc-dispatch-details summary:focus-visible { outline: 2px solid var(--accent, var(--mark-indigo)); outline-offset: 2px; }
+.mr-gc-dispatch-details { margin-top: 8px; border-top: 1px solid var(--border-subtle); padding-top: 6px; }
+.mr-gc-dispatch-details summary { cursor: pointer; color: var(--fg-muted); font-size: 12px; }
+.mr-composer-head .mr-input-battle-detail { max-width: 180px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.mr-composer-head .mr-input-battle-chips { flex-wrap: nowrap; }
+.mr-composer-head .mr-next-actions { flex-wrap: nowrap; white-space: nowrap; }
+.mr-gc-tools[hidden] { display: none !important; }
+.mr-gc-tools { flex: none; max-height: 35vh; overflow-y: auto; border-bottom: 1px solid var(--border-subtle); }
+.mr-gc-tools .mr-gc-search-row { margin-bottom: 8px; }
+.mr-group-composer .mr-input-box { grid-column: 1 / -1; grid-row: 2; min-width: 0; }
+.mr-group-composer #mr-input-tuning { grid-column: 1; grid-row: 3; flex-wrap: wrap; min-width: 0; }
+.mr-group-composer .mr-workflow-btn { grid-column: 2; grid-row: 3; align-self: end; }
+.mr-group-composer .mr-send-btn { grid-column: 3; grid-row: 3; align-self: end; }
+.mr-input-tuning-members { display: flex; flex-wrap: wrap; gap: 6px 12px; min-width: 0; }
+.mr-input-member-tuning { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; min-width: 0; }
+.mr-input-member-label { color: var(--fg-muted); font-size: 11px; max-width: 100px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mr-input-member-tuning .composer-model { max-width: 230px; }
+.mr-input-member-tuning .composer-chip-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mr-input-member-tuning .composer-thinking:disabled { opacity: .65; cursor: default; }
+
+.mr-input-preflight {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 26px;
+  padding: 4px 12px 0;
+  background: transparent;
+  flex-wrap: wrap;
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--text-secondary, var(--fg-muted));
+}
+
+.mr-input-preflight-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 22px;
+  padding: 0 8px;
+  border: 1px solid rgba(var(--rgb-neutral), 0.22);
+  border-radius: var(--radius-sm);
+  background: rgba(var(--rgb-neutral), 0.08);
+  white-space: nowrap;
+}
+
+.mr-input-preflight-chip strong {
+  color: var(--text-primary, var(--fg-default));
+  font-weight: 600;
+}
+
+.mr-input-preflight-chip.accent {
+  border-color: rgba(var(--rgb-info), 0.34);
+  background: rgba(var(--rgb-info), 0.10);
+}
+
+.mr-input-preflight-chip.saved {
+  border-color: rgba(var(--rgb-success), 0.28);
+  background: rgba(var(--rgb-success), 0.09);
+}
+
+.mr-input-preflight-chip.warn {
+  border-color: rgba(245, 215, 110, 0.38);
+  background: rgba(245, 215, 110, 0.11);
+}
+
+.mr-input-battle-label {
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  padding: 0 9px;
+  border: 1px solid rgba(var(--rgb-info), 0.35);
+  border-radius: var(--radius-sm);
+  background: rgba(var(--rgb-info), 0.10);
+  color: var(--text-primary, var(--fg-default));
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.mr-input-battle-detail {
+  min-width: 160px;
+  max-width: min(520px, 46vw);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-secondary, var(--fg-muted));
+}
+
+.mr-input-battle-chips {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+/* 2026-06-28 maintainer：把聊天区的 nextActions（综合共识/互相挑错/生成交接/引用焦点卡）融入作战面板这一行——
+   去掉独立卡片的边框/外边距/背景，靠右排，与目标/引用/字数 chips 同行。 */
+.mr-input-preflight .mr-next-actions {
+  margin: 0 0 0 auto;
+  padding: 0;
+  border: none;
+  background: transparent;
+  gap: 6px;
+}
+.mr-input-preflight .mr-next-actions-label {
+  margin-right: 2px;
+}
+
+/* Phase 4 v2(2026-05-05): footer 一行化 — 头像 checkbox 组(只 logo, 无文字) */
+.mr-free-avatars-row {
+  display: inline-flex; gap: 4px; padding: 4px;
+  border: 1px solid var(--border, var(--border-mid));
+  border-radius: 22px;
+  background: var(--bg-secondary, var(--surface-raised));
+  flex-shrink: 0;
+  align-self: center;
+  max-width: min(38vw, 360px);
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+.mr-free-avatar-chk {
+  position: relative;
+  width: 32px; height: 32px;
+  border-radius: 50%;
+  cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  border: 2px solid transparent;
+  transition: all .15s;
+}
+.mr-free-avatar-chk img {
+  width: 100%; height: 100%;
+  border-radius: 50%;
+  object-fit: cover;
+}
+.mr-free-avatar-chk.group img {
+  object-fit: contain;
+  background: #fff;
+  padding: 4px;
+  box-sizing: border-box;
+}
+.mr-free-avatar-chk input { display: none; }
+.mr-free-avatar-chk-mark {
+  position: absolute; bottom: -2px; right: -2px;
+  width: 14px; height: 14px;
+  background: var(--mark-green-strong);
+  border: 1.5px solid var(--bg-secondary, var(--surface-raised));
+  border-radius: 50%;
+  font-size: 9px; color: white; font-weight: bold;
+  display: flex; align-items: center; justify-content: center;
+}
+.mr-free-avatar-chk:not(.checked) .mr-free-avatar-chk-mark {
+  display: none;
+}
+.mr-free-avatar-chk:not(.checked) img {
+  opacity: 0.4;
+  filter: grayscale(0.7);
+}
+.mr-free-avatar-chk.checked {
+  border-color: rgba(var(--rgb-success), 0.4);
+}
+.mr-free-avatar-chk:hover:not(.disabled) {
+  transform: none;
+}
+.mr-free-avatar-chk.disabled {
+  cursor: not-allowed; opacity: 0.5;
+}
+.mr-free-avatar-chk:focus-visible { outline: 2px solid var(--accent, var(--mark-indigo)); outline-offset: 2px; }
+
+/* 2026-07-20 maintainer [修#10]：模式 dropdown 死样式已删（功能早移除，原 125 行） */
+
+/* Phase 4 v2: 欢迎 head 动态状态 — 启动中黄色 / 全员就绪绿色 */
+.mr-gc-ob-head {
+  display: flex; align-items: center; justify-content: center; gap: 10px;
+  padding: 10px 18px;
+  border-radius: var(--radius-md);
+  font-size: 14px;
+  margin: 0 auto 22px;
+  max-width: 640px;
+  line-height: 1.5;
+}
+.mr-gc-ob-head.loading {
+  background: rgba(245,215,110,0.08);
+  border: 1px solid rgba(245,215,110,0.2);
+  color: var(--mark-yellow);
+}
+.mr-gc-ob-head.loading strong { color: var(--mark-yellow); }
+.mr-gc-ob-head.ready {
+  background: rgba(var(--rgb-success), 0.08);
+  border: 1px solid rgba(var(--rgb-success), 0.2);
+  color: var(--mark-green-strong);
+}
+.mr-gc-ob-head.ready strong { color: var(--mark-green); }
+.mr-gc-ob-head-icon { font-size: 16px; }
+
+#mr-input-target {
+  padding: 8px 6px;
+  border: 1px solid var(--border, var(--border-mid));
+  border-radius: var(--radius-sm);
+  background: var(--bg-primary, var(--surface-canvas));
+  color: var(--text-primary, var(--fg-default));
+  font-size: 12px;
+  min-width: 80px;
+  align-self: stretch;
+}
+
+.mr-input-box {
+  flex: 1;
+  min-height: 36px;
+  max-height: 120px;
+  padding: 8px 12px;
+  border: 1px solid var(--border, var(--border-mid));
+  border-radius: var(--radius-sm);
+  background: var(--bg-primary, var(--surface-canvas));
+  color: var(--text-primary, var(--fg-default));
+  font-size: 13px;
+  font-family: inherit;
+  outline: none;
+  overflow-y: auto;
+  word-break: break-word;
+  /* 2026-07-20 maintainer [修#7a]：JS 写入（草稿恢复/模板注入）后换行不再被折叠成空格 */
+  white-space: pre-wrap;
+}
+
+.mr-input-box:focus {
+  border-color: var(--accent, var(--mark-indigo));
+}
+
+.mr-input-box:empty::before {
+  content: attr(data-placeholder);
+  color: var(--text-secondary, var(--fg-muted));
+}
+
+.mr-input-tool-btn {
+  width: 36px;
+  height: 36px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 36px;
+  border: 1px solid var(--border, var(--border-mid));
+  border-radius: var(--radius-sm);
+  background: var(--bg-primary, var(--surface-canvas));
+  color: var(--text-primary, var(--fg-default));
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.mr-input-tool-btn:hover:not(:disabled) {
+  border-color: var(--accent, var(--mark-indigo));
+  background: var(--bg-hover, var(--surface-overlay));
+}
+
+.mr-input-tool-btn:disabled {
+  opacity: 0.42;
+  cursor: default;
+}
+
+.mr-input-tool-btn.attention {
+  border-color: rgba(245, 215, 110, 0.48);
+  color: var(--mark-yellow);
+}
+
+.mr-input-history-menu {
+  position: fixed;
+  width: min(348px, calc(100vw - 24px));
+  max-height: min(360px, calc(100vh - 120px));
+  overflow: auto;
+  padding: 6px;
+  border: 1px solid var(--border, var(--border-mid));
+  border-radius: var(--radius-md);
+  background: var(--bg-secondary, var(--surface-raised));
+  box-shadow: var(--shadow-lg);
+  z-index: 1600;
+}
+
+.mr-input-history-item {
+  width: 100%;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 9px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-primary, var(--fg-default));
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+}
+
+.mr-input-history-item:hover {
+  background: var(--bg-hover, var(--surface-overlay));
+}
+
+.mr-input-history-item span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mr-input-history-item small,
+.mr-input-history-empty {
+  color: var(--text-secondary, var(--fg-muted));
+  font-size: 11px;
+}
+
+.mr-input-history-empty {
+  padding: 10px;
+}
+
+.mr-input-editor-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1700;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding: 22px;
+  background: rgba(var(--rgb-scrim), 0.56);
+}
+
+.mr-input-editor {
+  width: min(960px, 100%);
+  max-height: min(72vh, 720px);
+  display: grid;
+  grid-template-rows: auto minmax(220px, 1fr) auto;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid var(--border, var(--border-mid));
+  border-radius: var(--radius-md);
+  background: var(--bg-secondary, var(--surface-raised));
+  box-shadow: var(--shadow-lg);
+}
+
+.mr-input-editor-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--text-primary, var(--fg-default));
+  font-size: 13px;
+}
+
+.mr-input-editor-head span {
+  color: var(--text-secondary, var(--fg-muted));
+  font-size: 12px;
+}
+
+.mr-input-editor-textarea {
+  width: 100%;
+  min-height: 220px;
+  resize: vertical;
+  padding: 12px;
+  border: 1px solid var(--border, var(--border-mid));
+  border-radius: var(--radius-sm);
+  background: var(--bg-primary, var(--surface-canvas));
+  color: var(--text-primary, var(--fg-default));
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 1.55;
+  outline: none;
+}
+
+.mr-input-editor-textarea:focus {
+  border-color: var(--accent, var(--mark-indigo));
+}
+
+/* 开发群聊「开工」弹窗：复用展开编辑的壳，只多一行说明。 */
+.mr-dev-kickoff-hint {
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-secondary, var(--fg-muted));
+}
+
+.mr-input-editor-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.mr-input-editor-btn {
+  min-width: 72px;
+  height: 34px;
+  padding: 0 12px;
+  border: 1px solid var(--border, var(--border-mid));
+  border-radius: var(--radius-sm);
+  background: var(--bg-primary, var(--surface-canvas));
+  color: var(--text-primary, var(--fg-default));
+  cursor: pointer;
+}
+
+.mr-input-editor-btn:hover {
+  background: var(--bg-hover, var(--surface-overlay));
+}
+
+.mr-input-editor-btn.primary {
+  border-color: rgba(var(--rgb-info), 0.42);
+}
+
+.mr-input-editor-btn.send {
+  border-color: transparent;
+  background: var(--accent, var(--mark-indigo));
+  color: var(--fg-inverse);
+}
+
+.mr-gc-mention-menu {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  z-index: 1200;
+  padding: 4px;
+  border: 1px solid var(--border, var(--border-mid));
+  border-radius: var(--radius-sm);
+  background: var(--bg-secondary, var(--surface-raised));
+  box-shadow: var(--shadow-md);
+}
+
+.mr-gc-mention-item {
+  display: grid;
+  grid-template-columns: minmax(72px, auto) minmax(92px, 1fr) auto;
+  align-items: center;
+  width: 100%;
+  gap: 10px;
+  padding: 7px 9px;
+  border: 0;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--text-primary, var(--fg-default));
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+}
+
+.mr-gc-mention-item:hover,
+.mr-gc-mention-item.active {
+  background: var(--bg-hover, var(--surface-overlay));
+}
+
+.mr-gc-mention-label {
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.mr-gc-mention-value {
+  color: var(--accent, var(--mark-indigo));
+  font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+  white-space: nowrap;
+}
+
+.mr-gc-mention-hint {
+  color: var(--text-secondary, var(--fg-muted));
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.mr-send-btn {
+  padding: 8px 16px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: var(--accent, var(--mark-indigo));
+  color: var(--fg-inverse);
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.mr-send-btn:hover {
+  opacity: 0.9;
+}
+
+/* Right-click context menu for quoting */
+.mr-quote-menu {
+  position: fixed;
+  background: var(--bg-secondary, var(--surface-raised));
+  border: 1px solid var(--border, var(--border-mid));
+  border-radius: var(--radius-sm);
+  padding: 4px 0;
+  min-width: 160px;
+  z-index: 1000;
+  box-shadow: var(--shadow-md);
+}
+
+.mr-quote-menu-item {
+  display: block;
+  width: 100%;
+  padding: 6px 12px;
+  border: none;
+  background: none;
+  color: var(--text-primary, var(--fg-default));
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.mr-quote-menu-item:hover {
+  background: var(--bg-hover, var(--surface-overlay));
+}
+
+/* Sidebar meeting item badge */
+.meeting-badge {
+  display: inline-block;
+  padding: 0 5px;
+  border-radius: var(--radius-md);
+  background: var(--accent, var(--mark-indigo));
+  color: var(--fg-inverse);
+  font-size: 10px;
+  font-weight: 600;
+  margin-left: 4px;
+  vertical-align: middle;
+}
+
+.mr-ft-md a.rt-file-link:hover, .mr-ft-preview-md a.rt-file-link:hover, .mr-gc-tl-body a.rt-file-link:hover {
+  color: var(--link-hover);
+  background: rgba(121,192,255,0.10);
+}
+.mr-ft-md a:not(.rt-file-link),
+.mr-ft-preview-md a:not(.rt-file-link),
+.mr-gc-tl-body a:not(.rt-file-link) {
+  color: var(--link-hover);
+  cursor: pointer;
+  font-weight: 600;
+  text-decoration-line: underline;
+  text-decoration-thickness: 1.5px;
+  text-underline-offset: 2px;
+  overflow-wrap: anywhere;
+}
+.mr-ft-md a:not(.rt-file-link):hover,
+.mr-ft-preview-md a:not(.rt-file-link):hover,
+.mr-gc-tl-body a:not(.rt-file-link):hover {
+  color: var(--link-hover);
+  background: rgba(121,192,255,0.10);
+}
+.mr-ft-md a:focus-visible,
+.mr-ft-preview-md a:focus-visible,
+.mr-gc-tl-body a:focus-visible,
+.mr-gc-md a:focus-visible,
+.mr-gc-anchor:focus-visible {
+  outline: 2px solid rgba(9,105,218,0.55);
+  outline-offset: 2px;
+  border-radius: var(--radius-xs);
+}
+
+
+/* 2026-07-20 maintainer [修#3a]：休眠成员头像灰显（配合 JS 的 disabled 禁勾） */
+.mr-free-avatar-chk.dormant img { opacity: 0.45; filter: grayscale(0.8); }
+.mr-free-avatar-chk.dormant { cursor: not-allowed; }
+
+/* 2026-07-20 maintainer [修#8]：可点击 chip（循环状态停止钮） */
+.mr-input-preflight-chip.clickable { cursor: pointer; }
+.mr-input-preflight-chip.clickable:hover { border-color: rgba(245, 215, 110, 0.6); background: rgba(245, 215, 110, 0.16); }
+
+/* 2026-07-29 maintainer [群聊运行中可操作]：「⏹ 停止本轮」chip —— 本轮有 AI 在跑时常驻，
+   与输入框可用状态并存（运行中既能追加提问，也能一键叫停）。 */
+.mr-input-preflight-chip.stop {
+  border-color: rgba(233, 105, 105, 0.55);
+  background: rgba(233, 105, 105, 0.12);
+  color: var(--turn-body-fg);
+}
+.mr-input-preflight-chip.stop strong { color: var(--turn-body-fg); }
+.mr-input-preflight-chip.stop.clickable:hover {
+  border-color: rgba(233, 105, 105, 0.85);
+  background: rgba(233, 105, 105, 0.22);
+}
+/* File workflow: one progress strip, one set of controls. */
+.mr-file-flow { width: 100%; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 18px; padding: 3px 0; }
+.mr-file-steps { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text-secondary, #9ca3af); }
+.mr-file-steps span { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
+.mr-file-steps b { border: 1px solid currentColor; border-radius: 50%; width: 19px; height: 19px; display: inline-flex; align-items: center; justify-content: center; font-size: 10px; }
+.mr-file-steps .active { color: var(--accent, #74a7ff); font-weight: 600; }
+.mr-file-steps i { font-style: normal; opacity: .4; }
+.mr-file-detail { flex: 1; min-width: 140px; font-size: 12px; color: var(--text-secondary, #9ca3af); }
+.mr-file-detail strong { color: var(--text-primary, #ddd); font-weight: 500; }
+.mr-file-error { color: #f18e85; display: block; }
+.mr-file-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.mr-file-recipients { flex: 0 1 180px; min-width: 0; overflow-wrap: anywhere; opacity: .7; font-size: 12px; }
+.mr-file-actions button { font: inherit; font-size: 12px; font-weight: 600; padding: 4px 10px; border-radius: 7px; border: 1px solid var(--border-strong, #64748b); background: var(--surface-raised, #1c2128); color: var(--fg-default, #e8ecf2); cursor: pointer; }
+.mr-file-actions button[data-file-kickoff],
+.mr-file-actions button[data-file-independent] { color: var(--brand-text, #c9d5ff); background: var(--brand-tint, #202c48); border-color: var(--brand, #6d8dff); }
+.mr-file-actions button:not(:disabled):hover { border-color: var(--brand, #6d8dff); background: var(--surface-active, #253044); color: var(--fg-strong, #fff); }
+.mr-file-actions button:focus-visible { outline: 2px solid var(--brand, #6d8dff); outline-offset: 3px; }
+.mr-file-actions button.stop { color: var(--status-danger, #f18e85); }
+/* Continue: the Hub picks the next owner; the small line names who gets it. Same emphasis as kickoff. */
+.mr-file-actions button.continue { display: inline-flex; align-items: baseline; gap: 6px; color: var(--brand-text, #c9d5ff); background: var(--brand-tint, #202c48); border-color: var(--brand, #6d8dff); }
+.mr-file-actions button.continue small { font-size: 11px; font-weight: 500; opacity: .8; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mr-file-actions button.continue.is-busy { opacity: .6; cursor: progress; }
+.mr-file-actions button:disabled { opacity: .5; cursor: wait; }
+
+.mr-group-composer.drop-active { outline: 2px dashed var(--brand, #6d8dff); outline-offset: -3px; }

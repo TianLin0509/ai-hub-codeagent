@@ -1,0 +1,88 @@
+html body.session-immersive-active :is(#terminal-panel, #writing-panel, #study-panel, #ran-panel, #xresearch-panel, #meeting-room-panel, #hub-workspace, #assistant-page, #account-page, #memo-panel, .split-secondary).session-immersive {
+  position: fixed !important;
+  inset: 0 !important;
+  width: 100vw !important;
+  height: 100vh !important;
+  min-width: 0 !important;
+  max-width: none !important;
+  margin: 0 !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  z-index: 2147483000 !important;
+  background: var(--bg-primary);
+  -webkit-app-region: no-drag;
+}
+body.session-immersive-active #scene-rail,
+body.session-immersive-active #session-sidebar,
+body.session-immersive-active #status-footer { visibility: hidden; }
+body.session-immersive-active #app-toolbar { visibility: hidden; }
+.session-immersive-exit-zone {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 180px;
+  height: 54px;
+  z-index: 10001;
+}
+.session-immersive-exit {
+  position: absolute;
+  left: 10px;
+  top: 10px;
+  opacity: 0;
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  padding: 8px 14px;
+  background: var(--bg-secondary);
+  color: var(--fg-default);
+  box-shadow: 0 3px 14px #0001;
+  cursor: pointer;
+  font-size: 13px;
+  transition: opacity .15s;
+}
+.session-immersive-exit-zone:hover .session-immersive-exit,
+.session-immersive-exit-zone:focus-within .session-immersive-exit { opacity: 1; }
+@media (hover: none) { .session-immersive-exit { opacity: 1; } }
+
+.composer-collapse, .composer-expand {
+  flex: 0 0 auto;
+  border: 1px solid var(--border-subtle);
+  border-radius: 7px;
+  background: var(--bg-secondary);
+  color: var(--fg-muted);
+  cursor: pointer;
+  font: inherit;
+}
+.composer-collapse { display: inline-grid; place-items: center; width: 28px; height: 28px; padding: 0; }
+.composer-collapse:hover, .composer-expand:hover { color: var(--fg-default); border-color: var(--brand); }
+.composer-expand { padding: 5px 10px; font-size: 12px; }
+.composer-expand[hidden] { display: none; }
+.mr-send-actions { display: flex; align-items: center; gap: 6px; grid-column: 3; grid-row: 3; align-self: end; }
+.mr-group-composer.voice-enabled > .mr-send-actions { grid-column: 4; }
+.mr-group-composer.voice-enabled:has(.prompt-polish-tools) > .mr-send-actions { grid-column: 5; }
+.mr-group-composer:has(#mr-input-tuning.models-on-own-row) > .mr-send-actions { grid-row: 4; }
+:root body .composer-is-collapsed > :not(.composer-expand) { display: none !important; }
+:root body .floating-input-bar.visible.composer-is-collapsed,
+:root body #mr-input-row.composer-is-collapsed,
+:root body .ap-composer.composer-is-collapsed,
+:root body .wb-basket.composer-is-collapsed {
+  position: relative;
+  flex: 0 0 0 !important;
+  height: 0 !important;
+  min-height: 0 !important;
+  max-height: 0 !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  border: 0 !important;
+  overflow: visible !important;
+}
+.floating-input-bar > .composer-expand,
+#mr-input-row > .composer-expand,
+.ap-composer > .composer-expand,
+.wb-basket > .composer-expand { position: absolute; bottom: 10px; right: 14px; z-index: 75; }
+
+/* Keep session actions clear of native window controls on narrow windows.
+   PID remains in the native title; the visible version is retained here. */
+@media (max-width: 900px) {
+  #app-toolbar { gap: 4px; }
+  #app-toolbar #hub-pid { display: none; }
+}

@@ -1,0 +1,48 @@
+/* AI 编排模式（2026-10-04）：复用输入框上方状态条位置；账本是状态条下的展开区。 */
+.mr-composer-head:has(.mr-orch-strip) { flex-wrap: wrap; overflow-x: hidden; }
+.mr-composer-head:has(.mr-orch-strip) .mr-input-preflight { flex-basis: 100%; flex-wrap: wrap; }
+.mr-orch-strip { display: flex; flex: 1 1 100%; flex-wrap: wrap; align-items: center; gap: 6px 10px; min-width: 0; font-size: 12px; }
+.mr-orch-main { display: flex; flex: 1 1 240px; flex-wrap: wrap; align-items: center; gap: 4px 10px; min-width: 0; }
+.mr-orch-label { font-weight: 600; color: var(--fg-strong, var(--text)); }
+.mr-orch-strip.is-halted .mr-orch-label { color: var(--status-danger, #d1372b); }
+.mr-orch-budget { display: inline-flex; align-items: center; gap: 6px; color: var(--fg-muted); white-space: nowrap; }
+.mr-orch-bar { display: inline-block; width: 90px; height: 5px; border-radius: 3px; background: rgba(var(--rgb-overlay), 0.12); overflow: hidden; }
+.mr-orch-bar i { display: block; height: 100%; background: var(--accent, var(--mark-indigo)); }
+.mr-orch-strip.is-halted .mr-orch-bar i { background: var(--status-danger, #d1372b); }
+.mr-orch-muted { color: var(--fg-muted); font-size: 11.5px; }
+.mr-orch-actions { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.mr-orch-actions button {
+  padding: 3px 10px; font-size: 12px; white-space: nowrap; cursor: pointer;
+  border: 1px solid var(--border-mid, var(--border-subtle)); border-radius: var(--radius-sm, 6px);
+  background: var(--surface-card, transparent); color: var(--fg-strong, var(--text));
+}
+.mr-orch-actions button.primary { background: var(--accent, var(--mark-indigo)); border-color: var(--accent, var(--mark-indigo)); color: #fff; }
+.mr-orch-actions button:focus-visible { outline: 2px solid var(--accent, var(--mark-indigo)); outline-offset: 2px; }
+.mr-orch-ledger { flex-basis: 100%; min-width: 0; max-height: 34vh; overflow-y: auto; margin-top: 6px; padding-top: 8px; border-top: 1px solid var(--border-subtle); font-size: 12px; }
+.mr-orch-ledger-title { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; margin-bottom: 6px; }
+.mr-orch-ledger-file { margin-left: auto; font-size: 11px; color: var(--fg-muted); }
+.mr-orch-plan, .mr-orch-report { margin: 4px 0 8px; }
+.mr-orch-plan strong, .mr-orch-report strong { margin-right: 6px; }
+.mr-orch-plan-text { margin-top: 3px; white-space: pre-wrap; color: var(--fg-strong, var(--text)); line-height: 1.55; max-height: 9em; overflow-y: auto; }
+.mr-orch-table { width: 100%; border-collapse: collapse; }
+.mr-orch-table th, .mr-orch-table td { border: 1px solid var(--border-subtle); padding: 4px 8px; text-align: left; vertical-align: top; }
+.mr-orch-table th { background: rgba(var(--rgb-overlay), 0.04); font-weight: 600; }
+.mr-orch-table code { font-size: 11px; overflow-wrap: anywhere; }
+.mr-orch-pill { display: inline-block; padding: 0 7px; border-radius: 999px; font-size: 11px; border: 1px solid var(--border-subtle); margin-left: 4px; }
+.mr-orch-pill.s-passed, .mr-orch-pill.s-completed { color: #1f7a45; border-color: #a9dbbd; background: #f2fbf5; }
+.mr-orch-pill.s-rework, .mr-orch-pill.s-paused, .mr-orch-pill.s-starting { color: #9a5a00; border-color: #f2cf98; background: #fff8ec; }
+.mr-orch-pill.s-running { color: #2c5bb8; border-color: #b8c9ee; background: #f5f8ff; }
+.mr-orch-pill.s-cancelled, .mr-orch-pill.s-failed { color: #b3362a; border-color: #f0b7b0; background: #fff5f4; }
+.mr-gc-to-badge.mr-orch-badge-lead { color: #9a5a00; border-color: #f2cf98; background: #fff8ec; }
+.mr-gc-to-badge.mr-orch-badge { color: #2c5bb8; border-color: #b8c9ee; background: #f5f8ff; }
+.mr-orch-title-tag { margin-left: 6px; vertical-align: middle; }
+.mr-orch-peek { flex: 1 1 auto; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: var(--fg-muted); font-size: 12px; }
+.mr-gc-msg:not([data-journal-minimized="true"]) .mr-orch-peek { display: none; }
+.mr-orch-dispatch summary { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sl-orch-tag { display: inline-block; margin-left: 4px; padding: 0 5px; border-radius: 999px; font-size: 10px; line-height: 15px; color: #9a5a00; border: 1px solid #f2cf98; background: #fff8ec; vertical-align: 1px; }
+.mr-orch-budget-check { margin-top: 4px; font-size: 12px; color: var(--fg-muted); }
+.mr-orch-budget-check.short { color: #b42318; font-weight: 600; }
+.mr-orch-decision { font-size: 12px; }
+.mr-orch-decision.d-pass { color: #067647; }
+.mr-orch-decision.d-rework { color: #b42318; }
+.mr-orch-decision.d-open { color: #b54708; }

@@ -1,0 +1,99 @@
+/* 串行工作流（2026-06-17 maintainer）：群聊输入框旁「串行工作流」按钮 + 配置弹窗。
+   复用 meeting-create-modal.css 的 mcm-* 骨架（overlay/dialog/header/body/footer/primary）；
+   本文件只定义工作流专属元素 wf-* + 触发按钮 .mr-workflow-btn。色板全部跟随全局 theme variables。 */
+
+/* ---- 输入框旁触发按钮 ---- */
+.mr-workflow-btn {
+  position: relative;
+  flex-shrink: 0;
+  width: 34px;
+  height: 34px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border, var(--border-mid));
+  background: var(--bg-card-2, #1c232c);
+  color: var(--text-dim, var(--fg-muted));
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-right: 6px;
+  padding: 0;
+  transition: color .15s, border-color .15s, background .15s;
+}
+.mr-workflow-btn:hover {
+  color: var(--text, var(--fg-strong));
+  border-color: var(--accent, var(--link));
+}
+.mr-workflow-btn.active {
+  color: var(--accent, var(--link));
+  border-color: var(--accent, var(--link));
+  background: rgba(var(--rgb-info), 0.12);
+}
+/* active 时步数角标 */
+.mr-workflow-btn .mr-workflow-badge {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: var(--radius-md);
+  background: var(--accent, var(--link));
+  color: #000;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 16px;
+  text-align: center;
+  display: none;
+}
+.mr-workflow-btn.active .mr-workflow-badge { display: block; }
+
+/* A: expanded rounds; selectors stay inside the settings window. */
+#workflow-config-modal{background:rgba(4,10,12,.7);padding:24px;z-index:10050}
+#workflow-config-modal .wf-dialog{--wf-bg:#141b1f;--wf-card:#1c252a;--wf-field:#11191d;--wf-line:#34434a;--wf-muted:#a5b5bd;--wf-text:#edf2f4;--wf-accent:#b7dcc6;color-scheme:dark;width:min(1120px,94vw);max-width:1120px;max-height:92vh;background:var(--wf-bg);color:var(--wf-text);border:1px solid #56636b;border-radius:14px;box-shadow:0 25px 90px #0007;display:flex;flex-direction:column;overflow:hidden}
+#workflow-config-modal button,#workflow-config-modal input,#workflow-config-modal textarea,#workflow-config-modal select{font:inherit;color:inherit}
+#workflow-config-modal button{cursor:pointer;border:1px solid var(--wf-line);background:transparent;border-radius:7px;padding:7px 12px;font-size:12px}
+#workflow-config-modal button:disabled{opacity:.4;cursor:not-allowed}
+#workflow-config-modal :is(button,input,textarea,select):focus-visible{outline:2px solid #8eb7ed;outline-offset:2px}
+#workflow-config-modal .wf-header{padding:21px 26px;display:flex;align-items:center;gap:12px;border-bottom:1px solid var(--wf-line);flex:none}
+#workflow-config-modal .wf-header h2{margin:0;font-size:20px;font-weight:600}
+#workflow-config-modal .wf-header p{margin:4px 0 0;color:var(--wf-muted);font-size:12px}
+#workflow-config-modal .wf-mark{background:#253d30;color:var(--wf-accent);border-radius:9px;font-size:25px;width:37px;height:37px;text-align:center}
+#workflow-config-modal .mcm-close{margin-left:auto;font-size:24px;border:0;position:static}
+#wf-body{display:flex;flex-direction:column;min-height:0;overflow:hidden}
+#workflow-config-modal .wf-templatebar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:16px 26px;border-bottom:1px solid var(--wf-line)}
+#workflow-config-modal .wf-templatebar small,#workflow-config-modal .wf-budget{font-size:11px;color:var(--wf-muted)}
+#workflow-config-modal .wf-budget{margin-left:auto;padding-left:14px;border-left:1px solid var(--wf-line)}
+#workflow-config-modal .wf-budget b{font-size:17px;color:var(--wf-text)}
+#workflow-config-modal .wf-preset.selected,#workflow-config-modal .wf-member-chip.selected{background:#253d30;border-color:#87ab95}
+#workflow-config-modal .wf-summary{display:flex;justify-content:space-between;align-items:center;padding:13px 26px 0;color:var(--wf-muted);font-size:11px;gap:12px}
+#workflow-config-modal .wf-summary em{font-style:normal;color:#e6c18b;margin-left:8px}
+#workflow-config-modal .wf-tag{padding:3px 8px;background:#253d30;color:var(--wf-accent);border-radius:5px;white-space:nowrap}
+#workflow-config-modal .wf-scroll{padding:17px 26px 20px;overflow:auto;min-height:0;scrollbar-color:var(--wf-line) transparent;scrollbar-width:thin}
+#workflow-config-modal .wf-steps{display:flex;flex-direction:column;gap:13px}
+#workflow-config-modal .wf-step-row{display:block;padding:13px 16px;background:var(--wf-card);border:1px solid var(--wf-line);border-radius:9px}
+#workflow-config-modal .wf-round-header{display:flex;align-items:center;gap:10px;margin-bottom:11px}
+#workflow-config-modal .wf-step-index{color:var(--wf-accent);border:1px solid var(--wf-line);border-radius:6px;width:26px;height:26px;display:grid;place-items:center;font:12px Consolas,monospace;flex:none}
+#workflow-config-modal .wf-step-name{background:transparent;border:1px solid transparent;padding:3px 5px;font-weight:600;min-width:0;width:260px;border-radius:5px;font-size:13px}
+#workflow-config-modal .wf-step-name:hover{border-color:var(--wf-line)}
+#workflow-config-modal .wf-round-tools{display:flex;gap:3px;margin-left:auto}
+#workflow-config-modal .wf-round-tools button{padding:2px 7px;border:0;color:var(--wf-muted)}
+#workflow-config-modal .wf-member-chips{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:11px}
+#workflow-config-modal .wf-member-chips small{font-size:10px;color:var(--wf-muted)}
+#workflow-config-modal .wf-member-chip{display:flex;align-items:center;gap:6px;padding:4px 8px;font-size:11px;border-radius:5px;color:var(--wf-muted)}
+#workflow-config-modal .wf-member-chip.selected{color:var(--wf-text)}
+#workflow-config-modal .wf-member-chip img{width:16px;height:16px}
+#workflow-config-modal .wf-prompt-label{display:block;font-size:11px;color:var(--wf-muted);margin-bottom:6px}
+#workflow-config-modal .wf-step-prompt{width:100%;box-sizing:border-box;resize:vertical;min-height:106px;background:var(--wf-field);border:1px solid var(--wf-line);border-radius:6px;padding:11px 13px;font-size:12px;line-height:1.8}
+#workflow-config-modal .wf-round-rule{display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;color:var(--wf-muted);font-size:11px;margin-top:7px}
+#workflow-config-modal select{background:var(--wf-field);border:1px solid var(--wf-line);padding:3px 6px;border-radius:5px}
+#workflow-config-modal .wf-add{width:100%;border-style:dashed;margin:13px 0;color:var(--wf-muted)}
+#workflow-config-modal .wf-protocolbar{display:flex;align-items:center;justify-content:space-between;gap:12px;font-size:11px;color:var(--wf-muted)}
+#workflow-config-modal .wf-protocolbar button{border:0;color:var(--wf-accent);white-space:nowrap;padding:0}
+#workflow-config-modal :is(#wf-protocol,#wf-preview){white-space:pre-wrap;overflow-wrap:anywhere;background:var(--wf-field);padding:14px;border-radius:7px;font-size:12px;line-height:1.8}
+#workflow-config-modal .wf-footer{padding:15px 26px;border-top:1px solid var(--wf-line);display:flex;align-items:center;justify-content:space-between;gap:16px;flex:none}
+#workflow-config-modal .wf-footer p{margin:0;color:var(--wf-muted);font-size:11px}
+#workflow-config-modal #wf-error{color:#e6c18b;margin-top:4px}
+#workflow-config-modal .wf-actions{display:flex;gap:8px;flex-shrink:0}
+#workflow-config-modal .wf-save{background:var(--wf-accent);color:#142b20;border-color:var(--wf-accent);font-weight:600}
+@media(max-width:760px){#workflow-config-modal{padding:10px}#workflow-config-modal .wf-dialog{width:100%;max-height:96vh}#workflow-config-modal .wf-header{padding:15px}#workflow-config-modal .wf-templatebar{padding:12px 15px}#workflow-config-modal .wf-budget{width:100%;margin:0;padding:0;border:0}#workflow-config-modal .wf-summary{padding:12px 15px 0}#workflow-config-modal .wf-scroll{padding:13px}#workflow-config-modal .wf-step-row{padding:11px}#workflow-config-modal .wf-footer{padding:12px 15px;flex-wrap:wrap}#workflow-config-modal .wf-actions{margin-left:auto}#workflow-config-modal .wf-protocolbar{flex-wrap:wrap}#workflow-config-modal .wf-step-name{width:170px}}

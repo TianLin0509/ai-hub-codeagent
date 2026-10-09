@@ -1,0 +1,73 @@
+/* A quiet frame around the existing xterm. Padding stays identical in card
+   and PTY modes; the welcome layer never changes the terminal's dimensions. */
+.terminal-container.pty-surface {
+  padding: 6px 10px 6px;
+  box-sizing: border-box;
+  border: 1px solid #8795b51c;
+  box-shadow: 0 8px 30px #00000012;
+}
+.pty-welcome {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  display: grid;
+  place-items: center;
+  overflow: auto;
+  padding: 28px;
+  background: radial-gradient(ellipse at 50% 38%, #748bff0d, transparent 62%), var(--machine-bg);
+  color: #e9eef9;
+  text-align: center;
+}
+.pty-welcome[hidden] { display: none; }
+.pty-welcome-body { margin: auto; max-width: 440px; }
+.pty-welcome-mark {
+  margin: 0 auto 25px;
+  width: 68px;
+  height: 62px;
+  border: 1px solid #92a7ff40;
+  border-radius: 18px;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 7px;
+  background: linear-gradient(145deg, #7c91ef24, #7c91ef06);
+  box-shadow: 0 8px 28px #0002, inset 0 1px #ffffff0d;
+  color: #a8b8ff;
+}
+.pty-welcome-mark span { font: 46px/1 Consolas, monospace; margin-top: -6px; }
+.pty-welcome-mark i { width: 14px; height: 3px; background: currentColor; align-self: center; margin-top: 20px; border-radius: 2px; }
+.pty-welcome-eyebrow { color: #9aabc7; font-size: 10px; letter-spacing: 2px; margin-bottom: 12px; }
+.pty-welcome h2 { font: 600 clamp(23px, 2.2vw, 32px)/1.4 system-ui, sans-serif; letter-spacing: 1px; margin: 0 0 14px; }
+.pty-welcome p { color: #9caec8; font-size: 13px; line-height: 1.9; margin: 0 0 25px; }
+.pty-welcome-compose {
+  color: #e1e8ff;
+  border: 1px solid #92a7ff45;
+  background: #7d94f51a;
+  border-radius: 9px;
+  padding: 10px 17px;
+  min-height: 40px;
+  font: 500 12px/1.4 system-ui, sans-serif;
+  cursor: pointer;
+  transition: background .15s, border-color .15s;
+}
+.pty-welcome-compose span { margin-left: 15px; color: #a8b8ff; }
+.pty-welcome-compose:hover { background: #7d94f52e; border-color: #92a7ff80; }
+.pty-welcome-compose:focus-visible { outline: 2px solid #a8b8ff; outline-offset: 4px; }
+.pty-welcome-hint { margin-top: 25px; color: #8999b1; font-size: 11px; line-height: 1.7; }
+.pty-awaiting-output > .terminal-output-host { visibility: hidden; }
+.pty-awaiting-output .prompt-nav-buttons { display: none; }
+.pty-surface .prompt-nav-buttons { top: auto; bottom: 10px; right: 14px; flex-direction: row; gap: 4px; }
+.pty-surface .prompt-nav-btn { width: 26px; height: 24px; border-color: #8795b528; background: #1a2432; color: #a9b6cc; }
+.card-view-active .pty-presentation { display: none; }
+@media (max-width: 900px) {
+  .terminal-container.pty-surface { padding: 4px 6px; }
+  .pty-welcome { padding: 22px 16px; }
+}
+@media (max-height: 620px) {
+  .pty-welcome-mark { width: 48px; height: 44px; margin-bottom: 14px; border-radius: 12px; }
+  .pty-welcome p { margin-bottom: 14px; }
+  .pty-welcome-hint { margin-top: 16px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .pty-welcome-compose { transition: none; }
+}

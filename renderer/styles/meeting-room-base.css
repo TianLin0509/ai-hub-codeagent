@@ -1,0 +1,282 @@
+/* AI Identity Color Tokens (legacy kind-based — used by feed / summary panels
+ * that semantically tag content by *AI identity* rather than *seat position*).
+ * Group chat cards (.mr-ft.* / .mr-gc-card.* / .mr-ft-progress-bar.* etc.)
+ * use the slot-based palette below: 3 fixed visual themes per round-table
+ * seat (slot 1 / 2 / 3), independent of which AI kind sits there.
+ * 御三家配色 — 槽位 1 永远皮卡丘黄, 2 永远小火龙橙, 3 永远杰尼龟蓝. */
+:root {
+  --c-claude: var(--status-warning);
+  --c-claude-rgb: 240, 132, 58;
+  --c-gemini: var(--link);
+  --c-gemini-rgb: 91, 141, 239;
+  --c-codex: var(--mark-green);
+  --c-codex-rgb: 74, 210, 139;
+  --c-deepseek: var(--link);
+  --c-deepseek-rgb: 88, 166, 255;
+  --c-kimi: var(--mark-amber);
+  --c-kimi-rgb: 230, 184, 0;
+
+  /* Slot tokens — 御三家 (Pikachu / Charmander / Squirtle) */
+  --c-slot-1: var(--mark-amber);
+  --c-slot-1-rgb: 251, 191, 36;
+  --c-slot-2: var(--status-warning);
+  --c-slot-2-rgb: 249, 115, 22;
+  --c-slot-3: #3b82f6;
+  --c-slot-3-rgb: 59, 130, 246;
+}
+
+/* Meeting Room Panel */
+.meeting-room-panel {
+  display: none;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  background: var(--bg-primary, var(--surface-canvas));
+  color: var(--text-primary, var(--fg-default));
+  /* Phase 7(2026-05-05 maintainer): G 方案 — 地平线光晕。卡片底部 ~80px 高度有微蓝径向光晕,
+     暗示"AI 群聊中心"。pointer-events:none 防止挡 click;伪元素层 z-index 低于 footer。 */
+  position: relative;
+}
+.meeting-room-panel::after {
+  content: '';
+  position: absolute;
+  bottom: 56px; /* footer 高度上方,正对卡片底部边界 */
+  left: 0; right: 0;
+  height: 96px;
+  background: radial-gradient(ellipse at center bottom, rgba(var(--rgb-info), 0.08) 0%, rgba(var(--rgb-info), 0.02) 40%, transparent 70%);
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* Header */
+.mr-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 16px;
+  background: var(--bg-secondary, var(--surface-raised));
+  border-bottom: 1px solid var(--border, var(--border-mid));
+  min-height: 40px;
+}
+
+.mr-header-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.mr-header-title {
+  font-weight: 600;
+  font-size: 14px;
+  cursor: text;
+}
+
+.mr-workspace-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  max-width: min(32vw, 430px);
+  padding: 3px 7px;
+  border: 1px solid rgba(var(--rgb-neutral), .22);
+  border-radius: var(--radius-sm);
+  background: rgba(var(--rgb-neutral), .08);
+  color: var(--text-secondary, var(--fg-muted));
+  cursor: pointer;
+  font: 11px Consolas, monospace;
+}
+.mr-workspace-chip:hover { border-color: rgba(var(--rgb-info), .45); color: var(--text-primary, var(--fg-default)); }
+.mr-workspace-chip:focus-visible { outline: 2px solid var(--link); outline-offset: 2px; }
+.mr-workspace-chip svg { width: 14px; height: 14px; flex: 0 0 auto; fill: none; stroke: currentColor; stroke-width: 1.25; }
+.mr-workspace-chip span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* 归档提示：任务还在 _scratch 临时区时，chip 变成一个可点的入口。
+   刻意做得很轻——一圈琥珀色边 + 末尾一个小圆点，不闪不弹不挡路。
+   旧行为是首轮结束直接弹全局模态，打断阅读且可能弹在用户没在看的会话上。 */
+.mr-workspace-chip.has-archive-hint {
+  border-color: rgba(var(--rgb-warning), .55);
+  color: var(--text-primary, var(--fg-default));
+  background: rgba(var(--rgb-warning), .10);
+}
+.mr-workspace-chip.has-archive-hint:hover { border-color: rgba(var(--rgb-warning), .85); }
+.mr-workspace-chip.has-archive-hint::after {
+  content: '';
+  flex: 0 0 auto;
+  width: 5px;
+  height: 5px;
+  margin-left: 1px;
+  border-radius: 50%;
+  background: var(--mark-amber);
+}
+
+.mr-header-right {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+}
+
+.mr-header-primary-actions,
+.mr-header-secondary-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+}
+
+.mr-header-secondary-actions {
+  padding-left: 8px;
+  margin-left: 2px;
+  border-left: 1px solid rgba(var(--rgb-neutral), 0.22);
+}
+
+.mr-header-secondary-actions .mr-header-btn,
+.mr-header-secondary-actions .btn-zoom {
+  opacity: 0.86;
+}
+
+.mr-header-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  white-space: nowrap;
+  padding: 4px 10px;
+  border: 1px solid var(--border, var(--border-mid));
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--text-secondary, var(--fg-muted));
+  font-size: 12px;
+  cursor: pointer;
+}
+
+/* H3 Phase 4(2026-05-05): Header meta + 进度条 */
+.mr-header-meta {
+  color: var(--text-secondary, var(--fg-muted));
+  font-size: 12px;
+  font-weight: 400;
+  white-space: nowrap;
+  margin-left: 4px;
+}
+.mr-header-meta .mr-header-meta-active {
+  color: var(--accent, var(--link));
+  font-weight: 600;
+}
+.mr-header-progress {
+  flex: 0 1 240px;
+  max-width: 240px;
+  height: 4px;
+  margin: 0 14px;
+  background: var(--bg-primary, var(--surface-canvas));
+  border-radius: var(--radius-xs);
+  overflow: hidden;
+  position: relative;
+}
+.mr-header-progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #f5d76e 0%, #ff7849 50%, #5dade2 100%);
+  transition: width .3s ease-out;
+}
+.mr-header-progress.mr-header-progress-thinking .mr-header-progress-fill {
+  animation: mr-header-prog-pulse 1.4s ease-in-out infinite;
+}
+.mr-header-progress.mr-header-progress-idle .mr-header-progress-fill {
+  background: var(--bg-tertiary, var(--border-subtle));
+  opacity: 0.5;
+}
+@keyframes mr-header-prog-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
+}
+
+/* Focus mode tabs */
+.mr-tabs {
+  display: flex;
+  gap: 2px;
+  margin-left: 12px;
+  padding: 2px;
+  background: var(--bg-primary, var(--surface-canvas));
+  border-radius: var(--radius-sm);
+}
+
+.mr-tab {
+  padding: 4px 12px;
+  border: none;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--text-secondary, var(--fg-muted));
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.mr-tab:hover {
+  background: var(--bg-hover, var(--surface-overlay));
+  color: var(--text-primary, var(--fg-default));
+}
+
+.mr-tab.active {
+  background: var(--accent, var(--mark-indigo));
+  color: var(--fg-inverse);
+}
+
+.mr-tab-status {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  margin-right: 4px;
+  vertical-align: middle;
+}
+.mr-tab-status.streaming  { background: #22c55e; }
+.mr-tab-status.new-output { background: #eab308; }
+.mr-tab-status.idle       { background: #6b7280; }
+.mr-tab-status.error      { background: var(--status-danger); }
+.mr-tab .new-badge {
+  font-size: 9px;
+  padding: 1px 4px;
+  background: rgba(250,204,21,0.25);
+  border-radius: var(--radius-xs);
+  color: var(--mark-amber);
+  font-weight: 600;
+  margin-left: 4px;
+}
+.mr-tab.has-new {
+  border: 1px solid rgba(250,204,21,0.5);
+}
+
+.mr-header-btn:hover {
+  background: var(--bg-hover, var(--surface-overlay));
+  color: var(--text-primary, var(--fg-default));
+}
+
+.mr-header-btn.active {
+  background: var(--accent, var(--mark-indigo));
+  color: var(--fg-inverse);
+  border-color: var(--accent, var(--mark-indigo));
+}
+
+.mr-view-toggle {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px;
+  border: 1px solid var(--border, var(--border-mid));
+  border-radius: var(--radius-sm);
+  background: var(--bg-primary, var(--surface-canvas));
+}
+.mr-view-toggle .mr-view-btn {
+  min-width: 42px;
+  padding: 4px 9px;
+  border: 0;
+  border-radius: var(--radius-xs);
+}
+.mr-view-toggle .mr-view-btn:not(.active) {
+  background: transparent;
+  color: var(--text-secondary, var(--fg-muted));
+}
+.mr-view-toggle .mr-view-btn:focus-visible {
+  outline: 2px solid rgba(var(--rgb-info), 0.75);
+  outline-offset: 1px;
+}

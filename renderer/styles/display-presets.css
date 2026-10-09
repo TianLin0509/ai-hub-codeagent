@@ -1,0 +1,80 @@
+/* A keeps the same workspaces and operations; only display geometry changes. */
+#display-preset-switch { position:relative; display:flex; align-items:center; flex:none; gap:2px; padding:2px; border:1px solid var(--border-subtle); border-radius:7px; -webkit-app-region:no-drag; }
+#display-preset-switch > button { height:25px; padding:0 7px; border:0; border-radius:5px; background:transparent; color:var(--fg-muted); font:12px var(--font-sans); cursor:pointer; white-space:nowrap; }
+#display-preset-switch > button[aria-pressed='true'] { color:var(--brand-text); background:var(--brand-tint); }
+#display-preset-switch > button:hover { background:var(--surface-hover); }
+#display-preset-switch > button:focus-visible { outline:2px solid var(--brand); }
+#display-preset-settings { position:fixed; right:16px; top:48px; z-index:5000; width:min(300px,calc(100vw - 32px)); padding:15px; background:var(--surface-overlay); color:var(--fg-default); border:1px solid var(--border-mid); border-radius:10px; box-shadow:0 8px 30px #0002; -webkit-app-region:no-drag; }
+#display-preset-settings[hidden] { display:none; }
+#display-preset-settings strong { font-size:13px; }
+#display-preset-settings p { margin:10px 0 0; color:var(--fg-muted); font-size:11px; }
+.display-preset-fields label { display:grid; grid-template-columns:100px 1fr 35px; align-items:center; gap:8px; margin-top:12px; font-size:12px; }
+.display-preset-fields input { width:100%; min-width:0; accent-color:var(--brand); }
+.display-preset-fields output { text-align:right; font-variant-numeric:tabular-nums; }
+:root[data-display-mode] { --hub-rail-slot:var(--display-rail-width,44px); --hub-rail-open:var(--display-rail-width,44px); }
+:root[data-display-mode]:has(.app-container.rail-hidden) { --hub-rail-slot:0px; }
+:root[data-display-mode] body #session-sidebar { width:var(--display-session-width,var(--hub-session-width)); min-width:var(--display-session-width,var(--hub-session-width)); }
+:root[data-display-mode] body .app-container.workspace-active #session-sidebar { width:0; min-width:0; }
+:root[data-display-mode] body .app-container.sidebar-collapsed #session-sidebar { width:0; min-width:0; border-right:0; }
+:root[data-display-mode] body .terminal-panel .composer .floating-input-box { height:var(--display-input-height,calc(2lh + 18px)); min-height:var(--display-input-height,calc(2lh + 18px)); max-height:var(--display-input-height,calc(2lh + 18px)); font-size:var(--display-ui-font,13px); }
+:root[data-display-mode='phone'] body .terminal-panel .floating-input-bar.visible { --fi-layout-h:calc(var(--display-input-height,52px) + 84px); flex-basis:var(--fi-layout-h); height:var(--fi-layout-h); min-height:var(--fi-layout-h); max-height:var(--fi-layout-h); }
+:root[data-display-mode] body .terminal-panel .composer .composer-chip { font-size:var(--display-ui-font,12px); }
+:root[data-display-mode='phone'] body #scene-rail .btn-shell-nav { height:46px; min-height:46px; gap:2px; }
+:root[data-display-mode='phone'] body #scene-rail .rail-drawer-head { height:32px; }
+:root[data-display-mode='phone'] body #scene-rail .rail-utilities { gap:4px; padding:6px 2px; }
+:root[data-display-mode='phone'] body #session-sidebar .sidebar-header { padding:10px 8px 8px; gap:8px; }
+:root[data-display-mode='phone'] body #session-sidebar .session-detail-bar { padding:6px 8px; }
+:root[data-display-mode='phone'] body #session-list { padding:4px; }
+:root[data-display-mode='phone'] body #session-list .session-item.slim { padding:8px 6px; }
+:root[data-display-mode] body #session-list :is(.sl-title,.session-name) { font-size:calc(var(--display-ui-font,13px) - 1px); }
+:root[data-display-mode='phone'] .session-range-tabs { padding:4px 8px 6px; }
+:root[data-display-mode='phone'] .session-range-tabs button { padding:5px 10px; }
+:root[data-display-mode='phone'] body .msg-overlay { padding:12px 14px; }
+:root[data-display-mode='phone'] body .msg-overlay .turn-card[data-chat-style='message'] { gap:9px; margin-bottom:18px; }
+:root[data-display-mode='phone'] body :is(.msg-overlay .turn-body,.mr-gc-messages .mr-gc-text,.assistant-message .assistant-bubble) { font-size:var(--display-reading-font,18px); }
+:root[data-display-mode='phone'] body .msg-overlay .chat-message-bubble { padding:10px 12px; }
+:root[data-display-mode='phone'] body .composer-rail { gap:4px; }
+:root[data-display-mode='phone'] body .terminal-panel .composer .composer-chip { padding-inline:5px; }
+/* Footer remains the existing single 34px row, including every provider and VPN. */
+
+/* Every compact session uses one line in both display modes. Explicit details
+   remain an opt-in expansion; logo and time reserve only their actual width. */
+:root[data-display-mode] body #session-list .session-item.slim:not(.meeting):not(.has-details),
+:root[data-display-mode] body #session-list .session-item.slim .sl-line1 {
+  display:grid; grid-template-columns:minmax(0,1fr) auto auto; gap:3px;
+  height:27px; min-height:27px; max-height:27px; padding:0 6px;
+  align-items:center; box-sizing:border-box;
+}
+:root[data-display-mode] body #session-list .session-item.slim:is(.meeting,.has-details) { display:block; height:auto; max-height:none; padding:0; }
+:root[data-display-mode] body #session-list .session-item.slim.child { padding-left:18px; }
+:root[data-display-mode] body #session-list .sl-title {
+  display:block; min-width:0; white-space:nowrap; overflow:hidden;
+  text-overflow:ellipsis; line-height:1.3;
+}
+:root[data-display-mode] body #session-list .sl-line1.with-arrow { grid-template-columns:10px minmax(0,1fr) auto auto; }
+:root[data-display-mode] body #session-list .sl-kind { width:13px; height:13px; margin:0; }
+:root[data-display-mode] body #session-list .sl-group-logos { padding:0; }
+:root[data-display-mode] body #session-list .sl-group-logos .sl-kind { animation:none; }
+:root[data-display-mode] body #session-list .sl-kind[data-state='dorm'] { filter:grayscale(1); opacity:.48; }
+:root[data-display-mode] body #session-list .sl-kind[data-state='unknown'] { filter:grayscale(.6); opacity:.65; outline:1px dashed var(--status-warning); outline-offset:1px; }
+:root[data-display-mode] body #session-list .sl-kind[data-state='wait'] { outline:1px solid var(--status-warning); outline-offset:1px; }
+:root[data-display-mode] body #session-list .sl-kind[data-state='error'] { filter:none; outline:2px solid var(--status-danger); outline-offset:1px; }
+:root[data-display-mode] body #session-list .sl-kind:is([data-state='run'],[data-state='start']) { animation:sl-logo-breathe 1.6s ease-in-out infinite; animation-delay:var(--sidebar-work-phase,0ms); }
+:root[data-display-mode] body #session-list .sl-time { font-size:10px; margin:0; }
+:root[data-display-mode] body #session-list .sl-time.has-unread { color:var(--brand); font-weight:700; text-decoration:underline; text-underline-offset:3px; }
+:root[data-display-mode] body #session-list .sl-group-actions { display:none; position:absolute; left:0; right:0; top:27px; z-index:30; padding:6px; background:var(--surface-overlay); border:1px solid var(--border-subtle); border-radius:var(--radius-sm); box-shadow:var(--shadow-md); }
+:root[data-display-mode] body #session-list .session-item:is(:hover,:focus-within) > .sl-group-actions { display:block; }
+:root body #session-sidebar .sidebar-header { grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:6px; padding:8px; }
+:root body #session-sidebar .sidebar-header > :is(.new-session-wrapper,.global-search-launcher) { width:100%; min-width:0; }
+:root body #session-sidebar .global-search-launcher { justify-content:center; gap:4px; height:32px; min-height:32px; padding:0 4px; font-size:12px; white-space:nowrap; }
+:root body #new-session-wrapper .launch-split,
+:root body #new-session-wrapper .launch-split :is(#btn-new,#btn-new-more) { height:32px; min-height:32px; }
+:root body #new-session-wrapper .launch-split #btn-new { font-size:12px; gap:4px; padding:0 4px; }
+:root body #new-session-wrapper .launch-split #btn-new-more { width:20px; flex-basis:20px; }
+:root body #session-sidebar .global-search-launcher :is(svg,kbd) { display:none; }
+@media (prefers-reduced-motion:reduce) { :root[data-display-mode] body #session-list .sl-kind { animation:none !important; } }
+:root[data-display-mode] body .codex-backstage .cb-output { font-size:var(--display-cli-font,16px); }
+.paste-encoding-dialog pre { white-space:pre-wrap; overflow-wrap:anywhere; max-height:32vh; overflow:auto; font:13px/1.55 var(--font-sans); }
+.paste-encoding-dialog .paste-encoding-preview { padding:12px; background:var(--surface-sunken); border-radius:8px; }
+.paste-encoding-dialog details { color:var(--fg-muted); font-size:12px; }
+.paste-encoding-dialog .hub-dialog-actions { flex-wrap:wrap; }

@@ -1,0 +1,53 @@
+/* Approved journal layout: identity in the margin, member wash on the text. */
+.mr-gc-msg[data-journal-key] { --journal-member:#e0ae8d; --journal-wash:#282522; }
+.mr-gc-msg[data-journal-color="1"] { --journal-member:#8bcab6; --journal-wash:#202b28; }
+.mr-gc-msg[data-journal-color="2"] { --journal-member:#a7bfe9; --journal-wash:#242a36; }
+.mr-gc-msg[data-journal-color="3"] { --journal-member:#c4ade3; --journal-wash:#2c2634; }
+.mr-gc-msg[data-journal-color="4"] { --journal-member:#d5bf86; --journal-wash:#2c291f; }
+.mr-gc-msg[data-journal-color="5"] { --journal-member:#dfa4c1; --journal-wash:#30242d; }
+.mr-gc-msg[data-journal-color="6"] { --journal-member:#8cc8d9; --journal-wash:#202d33; }
+.mr-gc-msg[data-journal-color="7"] { --journal-member:#beca92; --journal-wash:#292d22; }
+:root[data-theme="codex"] .mr-gc-msg[data-journal-key] { --journal-member:#945b36; --journal-wash:#fbf1e7; }
+:root[data-theme="codex"] .mr-gc-msg[data-journal-color="1"] { --journal-member:#326e60; --journal-wash:#edf5ef; }
+:root[data-theme="codex"] .mr-gc-msg[data-journal-color="2"] { --journal-member:#4567a3; --journal-wash:#edf2fb; }
+:root[data-theme="codex"] .mr-gc-msg[data-journal-color="3"] { --journal-member:#8254a3; --journal-wash:#f4edf9; }
+:root[data-theme="codex"] .mr-gc-msg[data-journal-color="4"] { --journal-member:#86691e; --journal-wash:#f8f3e1; }
+:root[data-theme="codex"] .mr-gc-msg[data-journal-color="5"] { --journal-member:#a1507d; --journal-wash:#faedf5; }
+:root[data-theme="codex"] .mr-gc-msg[data-journal-color="6"] { --journal-member:#326b80; --journal-wash:#eaf5f8; }
+:root[data-theme="codex"] .mr-gc-msg[data-journal-color="7"] { --journal-member:#657634; --journal-wash:#f1f5e8; }
+.mr-gc-messages { padding:24px clamp(16px,3vw,46px) 30px; }
+.mr-gc-messages .mr-gc-msg[data-journal-key] { max-width:960px; margin:0 auto 24px; gap:13px; border:0; background:transparent; box-shadow:none; }
+.mr-gc-messages .mr-gc-msg[data-journal-key] > .mr-gc-avatar { width:29px; height:29px; min-width:29px; border-color:color-mix(in srgb,var(--journal-member) 30%,transparent); }
+.mr-gc-messages .mr-gc-msg[data-journal-key] .mr-gc-msg-body { max-width:calc(100% - 42px); }
+/* Member identity and activity belong to the answer's normal scroll flow. */
+.mr-gc-messages .mr-gc-msg[data-journal-key] .mr-gc-meta { padding:5px 0 9px; margin:0; min-height:39px; background:var(--surface-canvas); gap:9px; }
+.mr-gc-msg[data-journal-key] .mr-gc-name { color:var(--journal-member); font-size:13px; font-weight:600; }
+.mr-gc-msg[data-journal-key] .mr-gc-wordcount { font-size:10px; color:var(--fg-muted); }
+.mr-gc-messages .mr-gc-msg[data-journal-key] .mr-gc-bubble { border:0; border-left:2px solid color-mix(in srgb,var(--journal-member) 55%,transparent); background:var(--journal-wash); border-radius:0 8px 8px 0; padding:14px 18px; box-shadow:none; color:var(--fg-default); }
+.mr-gc-msg[data-journal-key] .mr-gc-bubble::before { display:none; }
+.gc-journal-text { overflow-wrap:anywhere; }
+.gc-journal-text > :first-child,.gc-journal-text p:first-child { margin-top:0; }
+.gc-journal-long[data-journal-expanded="false"] .gc-journal-text { max-height:240px; overflow:hidden; position:relative; }
+.gc-journal-long[data-journal-expanded="false"] .gc-journal-text::after { content:""; position:absolute; bottom:0; left:0; right:0; height:28px; pointer-events:none; background:linear-gradient(transparent,var(--journal-wash)); }
+.mr-gc-msg[data-journal-minimized="true"] .mr-gc-bubble-row,.mr-gc-msg[data-journal-minimized="true"] .gc-journal-expand { display:none; }
+.mr-gc-msg[data-journal-minimized="true"] .mr-gc-meta { border-bottom:1px solid var(--border-subtle); }
+.gc-journal-actions { display:flex; align-items:center; gap:3px; margin-left:auto; }
+.gc-journal-actions svg { width:16px; height:16px; fill:none; stroke:currentColor; stroke-width:1.6; stroke-linecap:round; stroke-linejoin:round; }
+.gc-journal-actions > button,.gc-journal-menu > summary { display:grid; place-items:center; width:28px; min-height:28px; padding:4px; border:0; border-radius:6px; background:transparent; color:var(--journal-member); cursor:pointer; margin:0; opacity:1; pointer-events:auto; transform:none; }
+.gc-journal-actions > .mr-gc-retry-btn { width:auto; padding-inline:8px; }
+.gc-journal-menu > summary { list-style:none; }
+.gc-journal-menu > summary::-webkit-details-marker { display:none; }
+.gc-journal-actions > button:hover,.gc-journal-menu > summary:hover { background:color-mix(in srgb,var(--journal-member) 10%,transparent); }
+.gc-journal-actions button:focus-visible,.gc-journal-menu summary:focus-visible,.gc-journal-expand:focus-visible { outline:2px solid var(--brand); outline-offset:2px; }
+.gc-journal-menu { position:relative; }
+.gc-journal-menu[open] { z-index:8; }
+.gc-journal-menu-body { position:fixed; width:200px; padding:7px; border:1px solid var(--border-mid); border-radius:9px; background:var(--surface-overlay); box-shadow:var(--shadow-lg); z-index:200; }
+.gc-journal-menu-body > button { display:block; width:100%; height:auto; min-height:32px; text-align:left; padding:7px 9px; margin:0; color:var(--fg-default); background:transparent; border:0; border-radius:5px; font:inherit; font-size:12px; line-height:1.5; opacity:1; pointer-events:auto; transform:none; cursor:pointer; }
+.gc-journal-menu-body > button:hover { background:var(--surface-hover); }
+.gc-journal-menu-label { border-top:1px solid var(--border-subtle); margin-top:5px; padding:9px 9px 3px; color:var(--fg-muted); font-size:10px; }
+.gc-journal-expand { display:block; margin:7px 0 0 auto; background:transparent; border:0; border-radius:5px; padding:4px 8px; color:var(--journal-member); cursor:pointer; font:inherit; font-size:12px; line-height:1.5; }
+.gc-journal-expand[hidden] { display:none; }
+.gc-journal-collapse-all { border:1px solid var(--border-subtle); border-radius:6px; background:transparent; color:var(--fg-muted); padding:4px 9px; cursor:pointer; }
+.mr-gc-msg[data-journal-key] .turn-delivery-summary { margin-top:12px; background:transparent; border-color:color-mix(in srgb,var(--journal-member) 22%,transparent); }
+.mr-gc-msg[data-journal-key] .conversation-entry { font-size:var(--card-content-font-size,15px); }
+@media(max-width:800px) { .mr-gc-messages { padding:16px 12px 24px; } .mr-gc-messages .mr-gc-msg[data-journal-key] { gap:8px; } .mr-gc-messages .mr-gc-msg[data-journal-key] .mr-gc-bubble { padding:12px; } .mr-gc-msg[data-journal-key] .mr-gc-wordcount { display:none; } }

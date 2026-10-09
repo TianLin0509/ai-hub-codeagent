@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="zh-CN"><head><meta charset="UTF-8">
+<title>今日一档 · 视频模板</title>
+<style>
+/* Vibe 知识大赏式画面：深黑 + 香槟金，衬线正文、楷体标签；所有元素由时间 t 纯函数决定。 */
+:root{--bg:#0A0A0A;--bg2:#141210;--ink:#F5F1E8;--gold:#D7B979;--gold2:#B8944A;--line:#8A7655;--halo:#6B4A1A}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{width:1280px;height:720px;overflow:hidden;background:var(--bg)}
+body{font-family:"Noto Serif SC","Source Han Serif SC","STSong","SimSun",serif;color:var(--ink);-webkit-font-smoothing:antialiased}
+#stage{position:relative;width:1280px;height:720px;overflow:hidden;background:radial-gradient(ellipse at 50% 46%,#171411 0%,#100e0c 45%,#0A0A0A 100%)}
+#bgsvg,#fx{position:absolute;inset:0}
+.layer{position:absolute;inset:0}
+.t{position:absolute;white-space:nowrap;will-change:opacity,transform}
+.gold{background:linear-gradient(180deg,#F3E2B3 0%,#D7B979 42%,#A9873F 78%,#E8D29A 100%);-webkit-background-clip:text;background-clip:text;color:transparent;filter:drop-shadow(0 0 14px rgba(215,185,121,.18))}
+.kai{font-family:"STKaiti","KaiTi","Kaiti SC",serif}
+.note{color:rgba(245,241,232,.56);font-size:21px;line-height:1.45;white-space:normal}
+.lab{font-size:22px;color:rgba(245,241,232,.86)}
+.dotlab::before{content:"";display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--gold);margin-right:8px;vertical-align:middle;transform:translateY(-2px)}
+.foot{position:absolute;left:64px;bottom:30px;font-size:13px;color:rgba(245,241,232,.28);letter-spacing:.06em}
+.prog{position:absolute;left:64px;right:64px;bottom:22px;height:1px;background:rgba(138,118,85,.25)}
+.prog i{display:block;height:1px;background:var(--gold2)}
+.tag{position:absolute;right:64px;top:34px;font-size:15px;color:rgba(245,241,232,.34);letter-spacing:.12em}
+</style></head>
+<body><div id="stage"><svg id="bgsvg" width="1280" height="720"></svg><div id="layer" class="layer"></div><svg id="fx" width="1280" height="720"></svg><div class="foot" id="foot"></div><div class="tag" id="tag"></div><div class="prog"><i id="prog"></i></div></div>
+<script>
+'use strict';
+// ---------- 工具 ----------
+const clamp=(x,a=0,b=1)=>Math.max(a,Math.min(b,x));
+const ease=x=>{x=clamp(x);return x<.5?4*x*x*x:1-Math.pow(-2*x+2,3)/2;};
+const outE=x=>1-Math.pow(1-clamp(x),3);
+const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+function rng(seed){let s=seed>>>0||1;return()=>{s^=s<<13;s^=s>>>17;s^=s<<5;return((s>>>0)%100000)/100000;};}
+let SPEC={title:'',screens:[]};
+const FADE_IN=.8,FADE_OUT=.9,LINE_IN=.9,GAP=2.2;
+
+// ---------- 时间轴：每屏起止、每个元素的出场时间 ----------
+function layout(spec){
+  let t=0;const screens=[];
+  for(const [i,s] of spec.screens.entries()){
+    const d=clamp(Number(s.duration)||16,6,40);
+    screens.push({...s,index:i,start:t,end:t+d,d});t+=d+0.3;
+  }
+  return {screens,total:t};
+}
+let L=layout(SPEC);
+// 事件拟声：swish（线/环生长）、tick（文字出场）、pulse（球脉动）、impact（重音）
+const EVENTS=[];
+function ev(t,kind){EVENTS.push({t:+t.toFixed(3),kind});}
+
+// 每屏的元素出场节奏：图形先动（0–1.4s），主标题随后，标签/注释按 ≥2.2s 间隔
+function beats(s,count,first=1.6){const usable=s.d-FADE_OUT-1.4-first;const gap=count>1?Math.max(1.4,Math.min(GAP,usable/(count-1))):0;return Array.from({length:count},(_,i)=>s.start+first+i*gap);}
+function vis(t,at,dur=LINE_IN){return outE((t-at)/dur);}
+function screenAlpha(s,t){if(t<s.start||t>s.end)return 0;const a=clamp((t-s.start)/FADE_IN),b=clamp((s.end-t)/FADE_OUT);return Math.min(ease(a),ease(b));}
+
+// ---------- 背景弱结构 ----------
+const R0=rng(7);const PARTS=Array.from({length:70},()=>({x:R0()*1280,y:R0()*720,r:.6+R0()*1.6,a:.04+R0()*.1,vx:(R0()-.5)*6,vy:(R0()-.5)*4,ph:R0()*6.28}));
+function drawBg(t){
+  const rays=Array.from({length:14},(_,i)=>{const ang=(i/14)*Math.PI*2+t*0.25*Math.PI/180;const x2=640+Math.cos(ang)*900,y2=330+Math.sin(ang)*900;return `<line x1="640" y1="330" x2="${x2.toFixed(1)}" y2="${y2.toFixed(1)}" stroke="#8A7655" stroke-opacity=".035" stroke-width="1"/>`;}).join('');
+  const breath=.05+.035*Math.sin(t*2*Math.PI/30);
+  const parts=PARTS.map(p=>{const x=((p.x+p.vx*t)%1280+1280)%1280,y=((p.y+p.vy*t)%720+720)%720;return `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="${p.r}" fill="#D7B979" fill-opacity="${(p.a*(.7+.3*Math.sin(t+p.ph))).toFixed(3)}"/>`;}).join('');
+  // 低透明概率曲线
+  let path='M 0 560';for(let x=0;x<=1280;x+=20){const y=560-150*Math.exp(-Math.pow((x-640)/230,2))+4*Math.sin(t*.4+x/90);path+=` L ${x} ${y.toFixed(1)}`;}
+  document.getElementById('bgsvg').innerHTML=`<defs><radialGradient id="halo" cx="50%" cy="44%" r="45%"><stop offset="0" stop-color="#6B4A1A" stop-opacity="${breath.toFixed(3)}"/><stop offset="1" stop-color="#6B4A1A" stop-opacity="0"/></radialGradient><radialGradient id="vig" cx="50%" cy="50%" r="75%"><stop offset=".6" stop-color="#000" stop-opacity="0"/><stop offset="1" stop-color="#000" stop-opacity=".55"/></radialGradient></defs><rect width="1280" height="720" fill="url(#halo)"/>${rays}<path d="${path}" fill="none" stroke="#8A7655" stroke-opacity=".06" stroke-width="1"/>${parts}<rect width="1280" height="720" fill="url(#vig)"/>`;
+}
+
+// ---------- 元素构件 ----------
+function T(html,x,y,{size=28,cls='',align='left',alpha=1,dy=0,w=0,weight=600,ls=0}={}){
+  if(alpha<=0.001)return '';const tx=align==='center'?'-50%':align==='right'?'-100%':'0';
+  return `<div class="t ${cls}" style="left:${x}px;top:${y}px;font-size:${size}px;font-weight:${weight};letter-spacing:${ls}em;opacity:${alpha.toFixed(3)};transform:translate(${tx},${(dy).toFixed(1)}px);${w?`width:${w}px;white-space:normal;text-align:${align};`:''}">${html}</div>`;
+}
+const rise=(a)=>(1-a)*14; // 出场只上浮 14px，不弹跳
+function ball(cx,cy,r,{a=1,label='',fill=.08,gold=true,glow=0}={}){
+  if(a<=0.001)return '';const c=gold?'#D7B979':'#8A7655';
+  return `<g opacity="${a.toFixed(3)}">${glow?`<circle cx="${cx}" cy="${cy}" r="${(r*1.9).toFixed(1)}" fill="${c}" fill-opacity="${(glow*.08).toFixed(3)}"/>`:''}<circle cx="${cx}" cy="${cy}" r="${r.toFixed(1)}" fill="${c}" fill-opacity="${fill}" stroke="${c}" stroke-width="1.5"/>${label?`<text x="${cx}" y="${cy+r*.18}" text-anchor="middle" font-size="${Math.max(14,r*.62).toFixed(0)}" fill="#F5F1E8" font-family="Noto Serif SC,STSong,serif" font-weight="600">${esc(label)}</text>`:''}</g>`;
+}
+function growLine(x1,y1,x2,y2,p,{w=1.2,op=.7,c='#B8944A'}={}){if(p<=0)return '';const x=x1+(x2-x1)*p,y=y1+(y2-y1)*p;return `<line x1="${x1}" y1="${y1}" x2="${x.toFixed(1)}" y2="${y.toFixed(1)}" stroke="${c}" stroke-opacity="${op}" stroke-width="${w}"/>`;}
+
+// ---------- 七类屏 ----------
+const SCREENS={
+ hook(s,t,A){ // 主角：一个金球生长，L0 爆点写入
+  const g=vis(t,s.start+.2,1.4),b=beats(s,3,1.7);let svg='',html='';
+  const r=20+150*outE(g),br=1+.03*Math.sin((t-s.start)*2*Math.PI/6);
+  svg+=ball(640,300,r*br,{a:g*A,fill:.05,glow:g});
+  if(t>=s.start+.2)ev(0,'');
+  const big=vis(t,b[0]);html+=T(`<span class="gold">${esc(s.big)}</span>`,640,300-(s.bigSize||170)*.62,{size:s.bigSize||170,align:'center',alpha:big*A,dy:rise(big),weight:700});
+  const h=vis(t,b[1]);html+=T(esc(s.headline),640,500,{size:40,align:'center',alpha:h*A,dy:rise(h)});
+  const n=vis(t,b[2]);if(s.notes?.[0])html+=T(esc(s.notes[0]),640,566,{size:21,cls:'note',align:'center',alpha:n*A*.95,dy:rise(n),w:900});
+  return {svg,html,marks:[[s.start+.2,'swish'],[b[0],'impact'],[b[1],'tick'],[b[2],'tick']]};
+ },
+ concept(s,t,A){ // 中心概念 + 环绕卫星，连线生长
+  const nodes=(s.nodes||[]).slice(0,6),n=nodes.length,cx=640,cy=356,R=210;let svg='',html='';
+  const ring=vis(t,s.start+.3,1.6);
+  svg+=`<circle cx="${cx}" cy="${cy}" r="${R}" fill="none" stroke="#8A7655" stroke-opacity="${(.45*A).toFixed(3)}" stroke-width="1" stroke-dasharray="${(2*Math.PI*R*ring).toFixed(1)} 9999" transform="rotate(-90 ${cx} ${cy})"/>`;
+  const head=vis(t,s.start+1.2);html+=T(`<span class="gold">${esc(s.headline)}</span>`,640,58,{size:44,align:'center',alpha:head*A,dy:rise(head)});
+  const cg=vis(t,s.start+.8,1.2);svg+=ball(cx,cy,62*outE(cg)+1,{a:cg*A,glow:cg,fill:.1});
+  html+=T(esc(s.center),cx,cy-18,{size:26,align:'center',alpha:cg*A,weight:700});
+  const b=beats(s,n+(s.notes?.length?1:0),2.6);const marks=[[s.start+.3,'swish'],[s.start+1.2,'tick']];
+  nodes.forEach((lab,i)=>{const ang=-Math.PI/2+i*2*Math.PI/n,x=cx+Math.cos(ang)*R,y=cy+Math.sin(ang)*R,p=vis(t,b[i],1.0);
+   svg+=growLine(cx+Math.cos(ang)*64,cy+Math.sin(ang)*64,cx+Math.cos(ang)*(R-26),cy+Math.sin(ang)*(R-26),p,{op:.55*A});
+   svg+=ball(x,y,24*outE(p)+.1,{a:p*A,fill:.14});
+   const right=Math.cos(ang)>=-.05,lx=x+(right?36:-36),ly=y-14;
+   html+=T(esc(lab),lx,ly,{size:22,cls:'kai dotlab lab',align:right?'left':'right',alpha:p*A,weight:400});marks.push([b[i],'pulse']);});
+  if(s.notes?.length){const p=vis(t,b[n]);html+=T(esc(s.notes.join('　')),640,628,{size:20,cls:'note',align:'center',alpha:p*A,w:1040});marks.push([b[n],'tick']);}
+  return {svg,html,marks};
+ },
+ compare(s,t,A){ // 左右对照：中线拉伸，两侧球阵 + 条目，结论落金字
+  let svg='',html='';const mid=vis(t,s.start+.3,1.4);
+  svg+=growLine(640,130,640,130+390*mid,1,{op:.5*A});
+  const head=vis(t,s.start+1.0);html+=T(`<span class="gold">${esc(s.headline)}</span>`,640,46,{size:42,align:'center',alpha:head*A,dy:rise(head)});
+  const sides=[s.left||{},s.right||{}],marks=[[s.start+.3,'swish'],[s.start+1.0,'tick']];
+  const items=Math.max(sides[0].items?.length||0,sides[1].items?.length||0);
+  const b=beats(s,2+items+1,2.2);
+  sides.forEach((side,k)=>{const x0=k?700:120,cx=k?960:320,p=vis(t,b[k]);
+   const nb=Math.max(1,Math.min(12,Number(side.count)||4)),cols=Math.min(6,nb);
+   for(let i=0;i<nb;i++){const pi=vis(t,b[k]+i*.08,.6);svg+=ball(cx-(cols-1)*24+(i%cols)*48,190+Math.floor(i/cols)*48,15,{a:pi*A,gold:k===1||side.gold,fill:k?.16:.06});}
+   const rows=Math.max(...sides.map(sd=>Math.ceil(Math.max(1,Math.min(12,Number(sd.count)||4))/6)));html+=T(esc(side.title),cx,200+rows*48+12,{size:30,align:'center',alpha:p*A,dy:rise(p),cls:k?'gold':''});marks.push([b[k],'pulse']);
+   (side.items||[]).forEach((it,i)=>{const q=vis(t,b[2+i]);html+=T(esc(it),cx,200+rows*48+66+i*44,{size:21,cls:'note',align:'center',alpha:q*A*(k?1:.85),w:500});});
+  });
+  for(let i=0;i<items;i++)marks.push([b[2+i],'tick']);
+  const v=vis(t,b[2+items]);if(s.verdict){html+=T(`<span class="gold">${esc(s.verdict)}</span>`,640,560,{size:32,align:'center',alpha:v*A,dy:rise(v),w:1100});marks.push([b[2+items],'impact']);}
+  return {svg,html,marks};
+ },
+ number(s,t,A){ // 大数字计数 + 对比柱生长
+  let svg='',html='';const b=beats(s,2+(s.bars?.length||0)+1,1.2);
+  const raw=String(s.value),num=parseFloat(raw.replace(/[^0-9.\-]/g,'')),dec=(raw.split('.')[1]||'').replace(/\D/g,'').length;
+  const cp=clamp((t-b[0])/1.6),shown=isFinite(num)?(num*outE(cp)).toFixed(dec):raw,va=vis(t,b[0],.6);
+  html+=T(`<span class="gold">${esc(isFinite(num)?raw.replace(/[0-9.]+/,shown):raw)}</span><span style="font-size:40px;margin-left:12px;color:rgba(245,241,232,.7)">${esc(s.unit||'')}</span>`,640,92,{size:150,align:'center',alpha:va*A,weight:700});
+  const h=vis(t,b[1]);html+=T(esc(s.headline),640,292,{size:34,align:'center',alpha:h*A,dy:rise(h),w:1100});
+  const bars=(s.bars||[]).slice(0,4),anyGold=bars.some(x=>x.gold),isGold=(x,i)=>anyGold?!!x.gold:i===bars.length-1,max=Math.max(...bars.map(x=>Math.abs(+x.value)||0),1);const marks=[[b[0],'impact'],[b[1],'tick']];
+  bars.forEach((bar,i)=>{const p=vis(t,b[2+i],1.3),y=372+i*58,w=640*Math.abs(+bar.value||0)/max*outE(p);
+   html+=T(esc(bar.label),300,y-4,{size:21,cls:'kai lab',align:'right',alpha:p*A,weight:400});
+   svg+=`<rect x="320" y="${y}" width="${w.toFixed(1)}" height="22" rx="2" fill="${isGold(bar,i)?'#D7B979':'#8A7655'}" fill-opacity="${(isGold(bar,i)?.75:.4)*A}"/>`;
+   html+=T(esc(bar.text??bar.value),330+w,y-3,{size:20,alpha:p*A,weight:600,cls:''});marks.push([b[2+i],'swish']);});
+  const n=vis(t,b[2+bars.length]);if(s.notes?.length){html+=T(esc(s.notes.join('　')),640,620,{size:20,cls:'note',align:'center',alpha:n*A,w:1080});marks.push([b[2+bars.length],'tick']);}
+  return {svg,html,marks};
+ },
+ flow(s,t,A){ // 横向路径，金色光点沿路走，到站点亮
+  let svg='',html='';const steps=(s.steps||[]).slice(0,6),n=steps.length,x0=n>4?190:230,x1=n>4?1090:1050,y=340,dx=(x1-x0)/Math.max(1,n-1);
+  const head=vis(t,s.start+.6);html+=T(`<span class="gold">${esc(s.headline)}</span>`,640,72,{size:42,align:'center',alpha:head*A,dy:rise(head)});
+  const lineP=vis(t,s.start+.3,1.6);svg+=growLine(x0,y,x1,y,lineP,{op:.45*A,w:1});
+  const b=beats(s,n+(s.notes?.length?1:0),2.0);const marks=[[s.start+.3,'swish'],[s.start+.6,'tick']];
+  steps.forEach((st,i)=>{const x=x0+i*dx,p=vis(t,b[i],.9),on=t>=b[i];
+   svg+=ball(x,y,(on?20:10)*(.5+.5*outE(p))+.1,{a:Math.max(.25,p)*A,fill:on?.18:.04,glow:on?p:0,gold:on});
+   const up=i%2===0;html+=T(esc(st.label),x,up?y-82:y+42,{size:24,cls:'kai',align:'center',alpha:p*A,weight:400,dy:rise(p)});
+   if(st.note)html+=T(esc(st.note),x,up?y-48:y+78,{size:18,cls:'note',align:'center',alpha:p*A*.9,w:Math.min(250,dx-10)});marks.push([b[i],'pulse']);});
+  // 光点：从第一个站点走到当前站点
+  const last=steps.reduce((k,_,i)=>t>=b[i]?i:k,-1);if(last>=0){const prev=b[last],pos=Math.min(last+clamp((t-prev)/Math.max(.1,(b[last+1]||s.end)-prev)),n-1);const px=x0+pos*dx;svg+=`<circle cx="${px.toFixed(1)}" cy="${y}" r="5" fill="#F3E2B3" opacity="${A}"/><circle cx="${px.toFixed(1)}" cy="${y}" r="14" fill="#D7B979" fill-opacity="${(.12*A).toFixed(3)}"/>`;}
+  if(s.notes?.length){const p=vis(t,b[n]);html+=T(esc(s.notes.join('　')),640,606,{size:20,cls:'note',align:'center',alpha:p*A,w:1080});marks.push([b[n],'tick']);}
+  return {svg,html,marks};
+ },
+ loop(s,t,A){ // 循环机制：环上节点依次脉动，中心写机制名
+  let svg='',html='';const nodes=(s.nodes||[]).slice(0,6),n=nodes.length,cx=640,cy=360,R=190;
+  const head=vis(t,s.start+.6);html+=T(`<span class="gold">${esc(s.headline)}</span>`,640,52,{size:42,align:'center',alpha:head*A,dy:rise(head)});
+  const ring=vis(t,s.start+.2,1.8);svg+=`<circle cx="${cx}" cy="${cy}" r="${R}" fill="none" stroke="#B8944A" stroke-opacity="${(.5*A).toFixed(3)}" stroke-width="1.2" stroke-dasharray="${(2*Math.PI*R*ring).toFixed(1)} 9999" transform="rotate(-90 ${cx} ${cy})"/>`;
+  const b=beats(s,n+1,2.0),marks=[[s.start+.2,'swish'],[s.start+.6,'tick']];
+  nodes.forEach((lab,i)=>{const ang=-Math.PI/2+i*2*Math.PI/n,x=cx+Math.cos(ang)*R,y=cy+Math.sin(ang)*R,p=vis(t,b[i]);
+   const pulse=t>b[i]?.5+.5*Math.cos(((t-b[i])%(n*1.2))/(n*1.2)*2*Math.PI):0;
+   svg+=ball(x,y,22,{a:p*A,fill:.1+.12*pulse,glow:pulse*p});
+   const right=Math.cos(ang)>=-.05;html+=T(esc(lab),x+(right?34:-34),y-14,{size:22,cls:'kai dotlab lab',align:right?'left':'right',alpha:p*A,weight:400});marks.push([b[i],'pulse']);});
+  // 沿环转动的光点
+  if(t>b[0]){const ang=-Math.PI/2+((t-b[0])/(n*1.2))*2*Math.PI;svg+=`<circle cx="${(cx+Math.cos(ang)*R).toFixed(1)}" cy="${(cy+Math.sin(ang)*R).toFixed(1)}" r="4.5" fill="#F3E2B3" opacity="${A}"/>`;}
+  const c=vis(t,b[n]);html+=T(esc(s.center||''),cx,cy-22,{size:28,align:'center',alpha:c*A,weight:700,cls:'gold',w:300});
+  if(s.notes?.length)html+=T(esc(s.notes.join('　')),640,612,{size:19,cls:'note',align:'center',alpha:c*A,w:1080});
+  marks.push([b[n],'tick']);return {svg,html,marks};
+ },
+ quote(s,t,A){ // 粒子汇成水平线，金句登场，最后压暗
+  let svg='',html='';const g=clamp((t-s.start)/2.4),R1=rng(11);
+  for(let i=0;i<60;i++){const sx=R1()*1280,sy=R1()*720,tx=240+i*(800/59),ty=430;const p=outE(g);svg+=`<circle cx="${(sx+(tx-sx)*p).toFixed(1)}" cy="${(sy+(ty-sy)*p).toFixed(1)}" r="1.4" fill="#D7B979" fill-opacity="${(.5*A).toFixed(3)}"/>`;}
+  const b=beats(s,3,2.4);const q=vis(t,b[0],1.2);
+  html+=T(`<span class="gold">${esc(s.quote)}</span>`,640,300,{size:52,align:'center',alpha:q*A,dy:rise(q),w:1100});
+  const sub=vis(t,b[1]);if(s.sub)html+=T(esc(s.sub),640,470,{size:24,cls:'kai',align:'center',alpha:sub*A*.85,weight:400,w:1000});
+  const fin=vis(t,b[2]);html+=T(esc(SPEC.series||'今日一档'),640,560,{size:16,align:'center',alpha:fin*A*.45,weight:400,ls:.3});
+  return {svg,html,marks:[[s.start+.2,'swish'],[b[0],'impact'],[b[1],'tick']]};
+ },
+};
+
+// 收集全片事件（拟声用）：在 t=end 处渲染一次即可拿到全部 marks
+function allEvents(){const out=[];for(const s of L.screens){const f=SCREENS[s.type]||SCREENS.concept;const r=f(s,s.end-1,1);for(const [at,k] of r.marks||[])if(at>=s.start&&at<=s.end)out.push({t:+at.toFixed(3),kind:k});}return out.sort((a,b)=>a.t-b.t);}
+
+
+function render(t){
+  drawBg(t);let svg='',html='';
+  for(const s of L.screens){const A=screenAlpha(s,t);if(A<=0)continue;const r=(SCREENS[s.type]||SCREENS.concept)(s,t,A);svg+=r.svg;html+=r.html;}
+  document.getElementById('fx').innerHTML=svg;document.getElementById('layer').innerHTML=html;
+  document.getElementById('prog').style.width=(clamp(t/L.total)*100).toFixed(2)+'%';
+  document.getElementById('foot').textContent=SPEC.footer||'';document.getElementById('tag').textContent=SPEC.tag||'';
+}
+window.__render=render;
+// 先打开页面、再传入分镜：返回总时长与拟声事件。
+window.__init=spec=>{SPEC=spec;L=layout(SPEC);render(0);return {total:L.total,events:allEvents()};};
+// 逐帧：画完等两次重绘，保证截到的是这一帧。
+window.__frame=t=>new Promise(r=>{render(t);requestAnimationFrame(()=>requestAnimationFrame(()=>r(true)));});
+if(window.__SPEC)window.__init(window.__SPEC);
+</script></body></html>

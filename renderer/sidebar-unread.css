@@ -1,0 +1,48 @@
+/* B: completion attention remains visible independently of runtime/selection. */
+#session-list {
+  --unread-edge: #72adff;
+  --unread-fill: color-mix(in srgb, #518eed 22%, var(--bg-secondary));
+  --unread-hover: color-mix(in srgb, #518eed 30%, var(--bg-secondary));
+}
+#session-list .session-item.slim.need-unread {
+  background: var(--unread-fill);
+  box-shadow: inset 3px 0 var(--unread-edge), inset 0 0 0 1px color-mix(in srgb, var(--unread-edge) 42%, transparent);
+  margin-bottom: 4px;
+  border-radius: 5px;
+  opacity: 1;
+}
+#session-list .session-item.slim.need-unread:hover { background: var(--unread-hover); }
+#session-list .session-item.slim.need-unread.selected {
+  background: var(--unread-fill);
+  outline: 1px solid var(--text-primary);
+  outline-offset: -1px;
+}
+#session-list .session-item.slim.need-unread .sl-title { color: var(--text-primary); font-weight: 700; }
+#session-list .sl-unread-badge {
+  padding: 1px 5px; border-radius: 4px; color: #10223e; background: #8bbaff;
+  font-size: 10px; font-weight: 700; line-height: 16px; white-space: nowrap;
+}
+#session-list .sl-unread-members { display: flex; flex-wrap: wrap; gap: 4px; padding: 3px 5px 6px 20px; }
+#session-list .sl-unread-member {
+  display: inline-flex; align-items: center; gap: 4px; max-width: 100%; min-width: 0; width: auto; height: auto;
+  margin: 0; padding: 2px 5px; min-height: 23px; border-radius: 4px;
+  background: transparent; color: var(--text-secondary); border: 1px solid transparent;
+  font: 10px/16px var(--font-ui, sans-serif); cursor: pointer;
+}
+#session-list .sl-member-name { max-width: 90px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#session-list .sl-unread-member.has-unread { background: var(--bg-secondary); color: var(--text-primary); font-weight: 600; }
+#session-list .sl-unread-member:hover { border-color: var(--unread-edge); }
+#session-list .sl-member-unread-dot { width: 5px; height: 5px; flex: none; border-radius: 50%; background: var(--unread-edge); }
+#session-list .sl-member-runtime { font-size: 9px; white-space: nowrap; }
+#session-list .sl-member-runtime.run { color: var(--accent-green); }
+#session-list .sl-member-runtime.wait { color: var(--accent-orange); }
+#session-list .sl-meeting-read {
+  display: block; margin: 0 5px 5px auto; padding: 1px 5px; border: 0; border-radius: 3px;
+  color: var(--text-secondary); background: transparent; font: 10px/17px var(--font-ui, sans-serif); cursor: pointer;
+}
+#session-list .sl-meeting-read:hover { background: var(--bg-secondary); color: var(--text-primary); }
+#session-list .sl-unread-member:focus-visible,
+#session-list .sl-meeting-read:focus-visible { outline: 2px solid var(--unread-edge); outline-offset: 1px; }
+#session-list .sec-unread { color: var(--text-primary); font-weight: 700; }
+#session-list .sec-unread .sec-count { padding: 1px 5px; border-radius: 4px; background: var(--unread-fill); }
+#session-list .sl-group-icon.unread { stroke: var(--unread-edge); }

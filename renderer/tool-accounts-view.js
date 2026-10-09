@@ -1,0 +1,19 @@
+'use strict';
+const LABELS = { shared: '共享 Hub 主账号', bound: '已绑定 Hub 账号', changed: '绑定配置已变化', pending: '待迁移', native: '独立授权', host: '客户端授权' };
+function toolAccountsHtml(data, esc, error = '') {
+  const head = '<div class="ac-section-heading"><h2>工具与账号</h2><button class="ac-text-btn" data-ac="tool-accounts-refresh">刷新盘点</button></div>';
+  if (error) return head + `<p class="ac-item-error" role="alert">${esc(error)}</p>`;
+  if (!data) return head + '<p role="status">正在核对 MCP、技能和插件的账号来源…</p>';
+  return head + `<p class="ac-tool-help">${data.counts.enabled} 个已启用条目 · ${data.services.length} 组账号依赖 · ${data.counts.pending} 组待迁移${data.counts.unknown ? ' · ' + data.counts.unknown + ' 项待核对' : ''}。网页登录不会代替 API 或客户端授权。</p>
+    ${(data.groups || [{ id: 'ai', name: '工具账号', help: '' }]).map(group => `<section class="ac-service-group" data-account-group="${esc(group.id)}"><div class="ac-section-heading"><h3>${esc(group.name)}</h3><span>${esc(group.help)}</span></div><div class="ac-tool-accounts">${data.services.filter(s => (s.group || 'ai') === group.id).map(s => `<article class="ac-tool-account" data-account-service="${esc(s.id)}"><header><strong>${esc(s.name)}</strong><span class="ac-state ${['pending', 'changed'].includes(s.status) ? 'warn' : ''}">${esc(LABELS[s.status])}</span></header>
+    <p>${esc(s.help)}</p>${s.identities.length ? `<p>使用：${s.identities.map(i => (i.identity === 'main' ? '账号 1' : '账号 2') + (i.count ? ' · ' + i.count + ' 个工作页面' : '')).join('；')}</p>` : ''}
+    <small>${s.credential === 'read_error' ? '授权记录读取失败，请检查原工具配置' : s.credential === 'record_found' ? '发现原工具配置；尚未验证授权有效性' : '尚未验证任务可用性'}</small>
+    ${s.nativeStatus ? `<p class="ac-native-status">${s.nativeStatus.state === 'signed_in' ? '上次确认 GitHub CLI 已授权：' + esc(s.nativeStatus.account) : s.nativeStatus.state === 'signed_out' ? 'GitHub CLI 尚未授权' : 'GitHub CLI 授权尚未确认'}<small>${s.nativeStatus.checkedAt ? esc(new Date(s.nativeStatus.checkedAt).toLocaleString('zh-CN')) : ''}</small></p>` : ''}
+    ${s.website ? `<div class="ac-external-actions"><button class="ac-text-btn" data-ac="external" data-service="${esc(s.id)}" data-operation="open">打开网页登录 ↗</button>${s.canCheck ? `<button class="ac-text-btn" data-ac="external" data-service="${esc(s.id)}" data-operation="check">检查工具授权</button>` : ''}${s.canAuthorize ? `<button class="ac-text-btn" data-ac="external" data-service="${esc(s.id)}" data-operation="authorize">授权 GitHub CLI ↗</button>` : ''}</div><small>网页使用 Hub 主账号；工具授权状态另行确认。</small>` : ''}
+    <details data-details="tool-${esc(s.id)}"><summary>使用此账号的工具 · ${s.consumers.length}</summary>${s.consumers.map(t => `<div>${esc(t.name)} <small>${esc({ mcp: 'MCP', skill: '技能', plugin: '插件' }[t.type] || t.type)}</small></div>`).join('')}</details>
+    ${s.site ? `<button class="ac-text-btn" data-ac="open" data-site="${esc(s.site)}">查看 ${s.site === 'chatgpt' ? 'ChatGPT' : esc(s.site)} 网页 ↗</button>` : ''}</article>`).join('')}</div></section>`).join('')}
+    ${data.counts.unknown ? `<details class="ac-tool-help" data-details="unreviewed-tools"><summary>待核对账号依赖</summary>${data.tools.filter(t => t.enabled && t.state === 'unknown').map(t => `<p>${esc(t.name)}：尚未确认，未自动改动其授权。</p>`).join('')}</details>` : ''}
+    <details class="ac-tool-help" data-details="account-audit"><summary>全部工具的账号盘点 · ${data.counts.total}</summary>${data.tools.map(t => `<p>${esc(t.name)} · ${t.enabled ? '' : '已停用 · '}${esc(t.services.map(id => data.services.find(s => s.id === id)?.name || id).join('、') || (t.state === 'unknown' ? '依赖待确认' : '本身无需额外登录'))}</p>`).join('')}</details>
+    ${data.warnings.length ? `<details class="ac-tool-help" data-details="account-warnings"><summary>盘点范围提示 · ${data.warnings.length}</summary>${data.warnings.map(w => `<p>${esc(w)}</p>`).join('')}</details>` : ''}<p class="ac-evidence">${esc(data.boundary)}</p>`;
+}
+module.exports = { toolAccountsHtml };

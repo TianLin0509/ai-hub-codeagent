@@ -1,0 +1,309 @@
+/* =========================================================================
+   场景 rail（冷杉 B v2 · T0）
+   =========================================================================
+   最左侧 100px 的常驻陶瓷图标条：logo → 八个带文字入口 → 底部工具。
+
+   四个场景按钮是从 .sidebar-header 原样搬过来的 .btn-shell-nav 节点，所以这里
+   全部用 .scene-rail 前缀去压 launch-center.css 里那套「横排带文字」的形态：
+   launch-center.css 是在 styles.css 之后由独立 <link> 引入的，同 specificity 时
+   它赢；靠 (0,2,0) > (0,1,0) 才稳，别把前缀去掉改成裸类名。
+
+   本车道不许改 shell-sidebar-terminal.css，所以展开按钮的位移、options 菜单的
+   翻边也都在这里覆盖。
+   ========================================================================= */
+
+.scene-rail {
+  flex: none;
+  width: 100px;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 0;
+  background: var(--surface-sunken);
+  box-shadow: inset -1px 0 0 var(--border-subtle);
+  z-index: 60;
+}
+
+.rail-logo {
+  width: 30px;
+  height: 30px;
+  flex: none;
+  margin-bottom: 8px;
+  border-radius: var(--radius-md);
+  background: linear-gradient(180deg, #7c98ff, #5f7fff);
+  color: #fff;
+  font-weight: 800;
+  font-size: 11px;
+  letter-spacing: 0.02em;
+  display: grid;
+  place-items: center;
+  box-shadow: 0 4px 12px rgba(var(--rgb-brand), 0.35);
+  user-select: none;
+}
+
+.rail-spacer { flex: 1 1 auto; min-height: 6px; }
+
+/* 用量环占位：T5 之前是空的，不该占出一块空白 */
+.rail-usage {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.rail-usage:empty { display: none; }
+
+/* T5: keep the legacy node for one release without reserving a top row. */
+#quota-ticker { display: none !important; }
+
+.rail-usage-button {
+  --usage-color: var(--fg-muted);
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  cursor: pointer;
+}
+.rail-usage-button[data-level='warn'] { --usage-color: var(--status-warning); }
+.rail-usage-button[data-level='danger'] { --usage-color: var(--status-danger); }
+.rail-usage-button:hover,
+.rail-usage-button[aria-expanded='true'] { background: var(--brand-tint); }
+.rail-usage-button:focus-visible,
+.usage-popover button:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
+.rail-usage-ring {
+  box-sizing: border-box;
+  width: 26px;
+  height: 26px;
+  border-radius: var(--radius-pill);
+  display: grid;
+  place-items: center;
+  color: var(--usage-color);
+  background: conic-gradient(var(--usage-color) 0 var(--usage-percent), var(--border-subtle) var(--usage-percent) 100%);
+}
+.rail-usage-value {
+  width: 19px;
+  height: 19px;
+  border-radius: var(--radius-pill);
+  display: grid;
+  place-items: center;
+  background: var(--surface-sunken);
+  font-family: var(--font-mono);
+  font-size: 7.5px; /* Explicit T5 ring exception to the general font scale. */
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.rail-usage-button:not([data-freshness='fresh']) .rail-usage-ring {
+  background: none;
+  border: 2px dashed var(--fg-muted);
+  color: var(--fg-muted);
+}
+.usage-popover {
+  position: fixed;
+  z-index: 1000;
+  box-sizing: border-box;
+  width: min(420px, calc(100vw - 16px));
+  max-height: calc(100vh - 16px);
+  overflow: auto;
+  padding: 12px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  background: var(--surface-overlay);
+  color: var(--fg-default);
+  box-shadow: var(--shadow-lg);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+.usage-popover[hidden] { display: none; }
+.usage-popover-title { display: block; margin-bottom: 10px; font-size: 12.5px; }
+.usage-provider-row {
+  display: grid;
+  grid-template-columns: minmax(80px, 1fr) 40px minmax(160px, 1.7fr);
+  align-items: center;
+  gap: 8px;
+  padding: 9px 0;
+  border-bottom: 1px solid var(--border-subtle);
+}
+.usage-provider-name { overflow-wrap: anywhere; font-weight: 600; }
+.usage-bar-track { height: 4px; overflow: hidden; background: var(--border-subtle); border-radius: var(--radius-pill); }
+.usage-popover .usage-bar-fill { display: block; height: 100%; background: var(--fg-muted); border-radius: var(--radius-pill); }
+.usage-popover .usage-bar-fill.warn { background: var(--status-warning); }
+.usage-popover .usage-bar-fill.danger { background: var(--status-danger); }
+.usage-provider-detail { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.usage-window { display: inline-flex; gap: 4px; align-items: baseline; color: var(--fg-muted); font-family: var(--font-mono); }
+.usage-window.warn { color: var(--status-warning); }
+.usage-window.danger { color: var(--status-danger); }
+.usage-window i,
+.usage-window em { font-style: normal; font-size: 10px; color: var(--fg-muted); }
+.usage-row-age { grid-column: 3; color: var(--fg-muted); font-size: 10px; }
+.usage-unavailable { color: var(--status-warning); }
+.usage-popover-footer { display: flex; flex-direction: column; gap: 8px; padding-top: 10px; }
+.usage-age { color: var(--fg-muted); font-size: 10px; }
+.usage-popover-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.usage-popover button {
+  padding: 5px 8px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  color: var(--fg-default);
+  background: transparent;
+  font: inherit;
+  cursor: pointer;
+  transition: background 150ms;
+}
+.usage-popover button:hover,
+.usage-popover button.active { background: var(--brand-tint); }
+.usage-popover button[aria-disabled='true'] { color: var(--fg-muted); cursor: wait; }
+.usage-refresh-notice { margin-top: 8px; color: var(--status-warning); font-size: 10px; overflow-wrap: anywhere; }
+@media (max-width: 460px) {
+  .usage-provider-row { grid-template-columns: minmax(70px, 1fr) 28px minmax(100px, 1.7fr); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .usage-popover button { transition: none; }
+}
+
+/* ---- 底部工具的基础尺寸，场景入口在下方单独排布 ---- */
+.scene-rail .btn-shell-nav,
+.scene-rail .btn-options,
+.scene-rail .btn-rail-theme {
+  width: 34px;
+  height: 34px;
+  flex: none;
+  padding: 0;
+  gap: 0;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--fg-muted);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  font: inherit;
+  transition: background 150ms ease, color 150ms ease, border-color 150ms ease;
+}
+
+/* Labels stay visible; hover text adds the full function description. */
+.scene-rail .btn-label { display: block; font-size: 11px; line-height: 15px; font-weight: 500; white-space: nowrap; }
+
+.scene-rail .btn-icon { width: 17px; height: 17px; }
+
+.scene-rail .btn-shell-nav:hover,
+.scene-rail .btn-options:hover,
+.scene-rail .btn-rail-theme:hover {
+  background: rgba(var(--rgb-overlay), 0.06);
+  border-color: transparent;
+  color: var(--fg-default);
+}
+
+.scene-rail .btn-shell-nav.active,
+.scene-rail .btn-shell-nav[aria-current='page'] {
+  background: var(--brand-tint);
+  border-color: transparent;
+  color: var(--brand);
+}
+
+.scene-rail .btn-shell-nav:focus-visible,
+.scene-rail .btn-options:focus-visible,
+.scene-rail .btn-rail-theme:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 1px;
+}
+
+/* ---- rail 底部的两个弹层：从按钮右侧、贴着底边弹出 ---- */
+.rail-theme-wrapper { position: relative; flex: none; }
+
+.scene-rail .theme-menu,
+.scene-rail .options-menu {
+  position: absolute;
+  top: auto;
+  right: auto;
+  bottom: 0;
+  left: calc(100% + 8px);
+  margin-top: 0;
+  min-width: 236px;
+  padding: 6px 0;
+  background: var(--surface-overlay);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  z-index: 1000;
+  animation: rail-popover-in 160ms ease-out;
+}
+
+@keyframes rail-popover-in {
+  from { opacity: 0; transform: translateX(-4px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+
+/* ---- 折叠态：只折侧栏，rail 永远在 ---- */
+/* 展开按钮原来贴在 app-body 左边 8px，那正好压在 rail 的 logo 上；挪到 rail 右侧。 */
+#app-body > .btn-expand-sidebar {
+  left: 108px;
+  border-radius: var(--radius-sm);
+}
+
+/* ---- 舞台环境光：只在冷杉下出现 ---- */
+[data-theme='frost'] #terminal-panel {
+  background-image: radial-gradient(900px 300px at 20% -10%, rgba(109, 141, 255, .16), transparent 60%);
+  background-repeat: no-repeat;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .scene-rail .theme-menu,
+  .scene-rail .options-menu { animation: none; }
+  .scene-rail .btn-shell-nav,
+  .scene-rail .btn-options,
+  .scene-rail .btn-rail-theme { transition: none; }
+}
+
+/* Selected line-sticker navigation: independent functional artwork, local assets. */
+.rail-logo { width: 38px; height: 38px; margin-bottom: 8px; border-radius: 12px; background: #6869ef; box-shadow: none; }
+.rail-logo svg { width: 25px; height: 25px; }
+.rail-navigation {
+  display: grid;
+  grid-template-rows: repeat(4, minmax(0, 1fr)) 10px repeat(4, minmax(0, 1fr));
+  gap: 2px;
+  flex: 0 1 514px;
+  min-height: 0;
+  width: 100%;
+  justify-items: center;
+  /* Rows shrink to the available height. This is never a scroll container. */
+  overflow: visible;
+}
+.rail-separator { width: 44px; height: 1px; align-self: center; background: var(--border-subtle); }
+.scene-rail .btn-shell-nav { position: relative; width: 82px; height: 100%; min-height: 0; flex-direction: column; gap: 2px; border-radius: 12px; }
+.scene-rail .btn-shell-nav .btn-icon {
+  display: block;
+  width: 37px;
+  height: 37px;
+  flex: none;
+  border-radius: 9px;
+  display: flex; align-items: center; justify-content: center;
+}
+.scene-rail .btn-label { font-weight: 600; }
+.scene-rail #btn-rail-capabilities { color: var(--fg-muted); }
+.scene-rail .btn-shell-nav.active { color: var(--fg-default); background: var(--brand-tint); }
+.scene-rail .btn-shell-nav.active::before { content: ''; position: absolute; left: -4px; top: calc(50% - 9px); width: 3px; height: 18px; border-radius: 3px; background: var(--brand); }
+.scene-rail #btn-rail-accounts > #accounts-attention { top: 2px; right: 6px; width: auto; min-width: 16px; height: 16px; padding: 0 4px; border-radius: 8px; background: #e5484d; color: #fff; font-size: 10px; font-weight: 600; text-align: center; line-height: 16px; }
+.rail-utilities { display: flex; flex: none; align-items: center; justify-content: center; gap: 1px; }
+.rail-utilities .btn-rail-theme, .rail-utilities .btn-options { width: 28px; height: 30px; }
+:root[data-theme='dark'] #scene-rail { background: #1c2028; }
+[data-theme='dark'] .scene-rail .btn-shell-nav.active { background: #373946; color: #e1e5ff; }
+/* Keep every destination visible even in short windows / enlarged UI. */
+@media (max-height: 620px) {
+  .scene-rail { gap: 4px; padding-block: 6px; }
+  .rail-logo { width: 30px; height: 30px; margin-bottom: 0; border-radius: 10px; }
+  .rail-logo svg { width: 21px; height: 21px; }
+  .rail-navigation { flex-basis: 330px; grid-template-rows: repeat(4, minmax(0, 1fr)) 6px repeat(4, minmax(0, 1fr)); }
+  .scene-rail .btn-shell-nav { flex-direction: row; justify-content: flex-start; width: 90px; gap: 0; border-radius: 8px; }
+  .scene-rail .btn-shell-nav .btn-icon { transform: scale(.76); margin: -5px -3px; }
+  .scene-rail .btn-label { font-size: 11px; }
+  .scene-rail #btn-rail-accounts > #accounts-attention { right: 0; top: 0; }
+}
+
+.scene-rail .rail-artwork { display: block; width: 100%; height: 100%; object-fit: contain; border-radius: 9px; }
+.scene-rail .rail-utilities .rail-artwork { width: 22px; height: 22px; flex: none; border-radius: 5px; }

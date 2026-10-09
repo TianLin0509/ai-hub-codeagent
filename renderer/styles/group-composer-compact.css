@@ -1,0 +1,52 @@
+/* One status line, two footer entry points; existing controls live in popovers. */
+:root body .mr-input-row.mr-group-composer {
+  height: auto; min-height: 0; max-height: none;
+  grid-template-rows: auto auto 32px; gap: 6px; padding: 8px 10px;
+}
+:root body .mr-group-composer .mr-composer-head {
+  flex-wrap: nowrap; align-items: flex-start; gap: 8px; overflow: visible;
+}
+:root body .mr-composer-head .mr-free-avatars-row { flex: 0 1 auto; max-width: 168px; min-width: 28px; }
+:root body .mr-composer-head .mr-free-avatar-chk { width: 24px; height: 24px; }
+:root body .mr-composer-head .mr-input-preflight { flex: 1 1 0; min-height: 32px; }
+:root body .mr-composer-head .mr-delivery-flow { display: flex; flex-wrap: wrap; gap: 4px 8px; }
+:root body .mr-composer-head .mr-delivery-flow > .mr-file-detail {
+  flex: 1 1 0; min-width: 0; line-height: 28px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+:root body .mr-composer-head .mr-delivery-flow > .mr-file-detail strong { font-size: 12px; }
+:root body .mr-composer-head .mr-delivery-flow > .mr-file-detail small { display: none; }
+:root body .mr-composer-head .mr-delivery-flow > .mr-file-actions { flex: none; flex-wrap: nowrap; gap: 4px; }
+:root body .mr-composer-head .mr-delivery-flow > .mr-file-actions button { padding: 4px 6px; font-size: 11px; }
+:root body .mr-composer-head .mr-delivery-recipients { display: none; }
+:root body .mr-delivery-details { max-height: 30vh; overflow-y: auto; }
+:root body .mr-composer-head .mr-delivery-flow > .mr-file-error { flex-basis: 100%; white-space: normal; overflow-wrap: anywhere; }
+:root body .mr-group-composer #mr-input-tuning { height: 32px; gap: 6px; overflow: visible; flex-wrap: nowrap; }
+.mr-group-models { display: flex; align-items: center; gap: 4px; flex: 1 1 0; min-width: 0; }
+:root body .mr-group-models .mr-group-model-chip {
+  flex: 1 1 0; min-width: 0; max-width: 150px; padding: 3px 6px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px;
+  background: var(--surface-hover); border: 1px solid var(--border-subtle); border-radius: 5px;
+}
+:root body .mr-group-composer:has(#mr-input-tuning.models-on-own-row) { grid-template-rows: auto auto 26px 32px; }
+:root body .mr-group-composer > .mr-group-models { grid-column: 1 / -1; grid-row: 3; }
+:root body .mr-group-composer #mr-input-tuning.models-on-own-row,
+:root body .mr-group-composer:has(#mr-input-tuning.models-on-own-row) :is(.mr-workflow-btn,.mr-send-btn,.voice-mic,.prompt-polish-tools) { grid-row: 4; }
+.mr-input-row:not(.mr-group-composer) > .mr-group-models { display: none; }
+.mr-composer-menu[hidden] { display: none; }
+.mr-composer-menu {
+  position: fixed; z-index: 1100; box-sizing: border-box; overflow-y: auto; overflow-x: hidden;
+  padding: 10px; border: 1px solid var(--border-subtle); border-radius: 10px;
+  background: var(--surface-card); color: var(--fg); box-shadow: var(--shadow-md); font-size: 12px;
+}
+.mr-composer-menu > header { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
+.mr-composer-menu > header button { border: 0; background: transparent; color: var(--fg-muted); font-size: 20px; cursor: pointer; }
+:root body .mr-group-composer .mr-composer-menu .mr-input-tuning-members { display: flex; flex-direction: column; gap: 8px; }
+:root body .mr-group-composer .mr-composer-menu .mr-input-member-tuning { flex: none; flex-wrap: wrap; gap: 4px; padding: 6px 0; border: 0; border-top: 1px solid var(--border-subtle); }
+:root body .mr-composer-menu .mr-input-member-label { width: 100%; max-width: none; font-weight: 600; }
+:root body .mr-composer-menu .fi-bridge-toolbar { display: flex; flex-wrap: wrap; gap: 6px; }
+:root body .mr-composer-menu .composer-model { max-width: 100%; }
+@media (max-width: 700px) {
+  :root body .mr-composer-head .mr-free-avatars-row { max-width: 144px; }
+  :root body .mr-composer-head .mr-free-avatar-chk { width: 20px; height: 20px; }
+  :root body .mr-composer-head .mr-delivery-flow > .mr-file-actions button { padding: 4px; }
+}

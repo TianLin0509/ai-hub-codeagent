@@ -1,0 +1,94 @@
+/* Chat 1 + the assistant's soft cards. Source, send and runtime owners stay put. */
+.turn-avatar.av-logo img { width: 100%; height: 100%; object-fit: contain; }
+:root[data-theme='codex'] .msg-overlay { background: #f7f9fc; }
+.msg-overlay .turn-card[data-chat-style='message'] {
+  width: min(100%, 920px); padding: 0; margin: 0 auto 26px; gap: 12px;
+  border: 0; border-radius: 0; background: transparent!important; box-shadow: none;
+  align-items: flex-start;
+}
+.msg-overlay .turn-card.user[data-chat-style='message'] { flex-direction: row-reverse; }
+.msg-overlay .turn-card[data-chat-style='message'] .turn-avatar {
+  width: 40px; height: 40px; min-width: 40px; border-radius: 50%; margin-top: 2px;
+  background: var(--brand-tint); color: var(--brand-text); font-size: 12px;
+  display: flex; align-items: center; justify-content: center; flex-shrink: 0; overflow: hidden;
+}
+.msg-overlay .turn-card[data-chat-style='message'] .turn-avatar.av-logo { background: transparent; }
+.msg-overlay .turn-card[data-chat-style='message'] .turn-avatar.av-logo img { width: 100%; height: 100%; object-fit: contain; }
+.turn-avatar.av-character img { border-radius: 50%; }
+.turn-avatar.av-user img { width: 30px; height: 30px; }
+.chat-process-warning { color: var(--status-danger); }
+.msg-overlay .turn-card[data-chat-style='message'] .turn-content {
+  flex: 0 1 auto; width: fit-content; max-width: calc(100% - 52px); min-width: 0;
+  align-items: stretch;
+}
+.msg-overlay .turn-card.user[data-chat-style='message'] .turn-content { margin-left: auto; max-width: min(80%, 730px); }
+.msg-overlay .turn-card[data-chat-style='message'] .turn-head {
+  margin: 0 4px 6px; gap: 8px; min-height: 19px; align-items: center; flex-wrap: wrap;
+}
+.msg-overlay .turn-card.user[data-chat-style='message'] .turn-head { justify-content: flex-end; }
+.msg-overlay .turn-card.user[data-chat-style='message'] .turn-actions { order: -1; margin: 0 auto 0 0; }
+.msg-overlay .turn-card[data-chat-style='message'] .turn-who { font-size: 12px; font-weight: 650; }
+.msg-overlay .turn-card[data-chat-style='message'] .turn-meta { font-size: 10px; color: var(--fg-muted); }
+.msg-overlay .turn-card[data-chat-style='message'] .conversation-phase { display: none; }
+.msg-overlay .turn-card[data-chat-style='message'] .chat-message-bubble {
+  min-width: 0; padding: 12px 16px; border: 1px solid var(--border-subtle);
+  border-radius: 18px; background: var(--surface-raised); color: var(--fg-default);
+  box-shadow: 0 2px 8px rgba(39, 67, 105, .035); overflow-wrap: anywhere;
+}
+.msg-overlay .turn-card.user[data-chat-style='message'] .chat-message-bubble {
+  background: var(--brand-tint); border-color: transparent; box-shadow: none;
+}
+.msg-overlay .turn-card[data-chat-style='message'] .turn-body {
+  width: 100%; max-width: none; padding: 0; margin: 0; border: 0;
+  border-radius: 0; background: transparent; color: var(--fg-default); line-height: 1.75;
+}
+.msg-overlay .turn-card[data-chat-style='message'] .turn-body > :first-child { margin-top: 0; }
+.msg-overlay .turn-card[data-chat-style='message'] .turn-body > :last-child { margin-bottom: 0; }
+.msg-overlay .turn-card[data-chat-style='message'] .turn-primary { width: 100%; }
+.msg-overlay .turn-card[data-chat-style='message'] .turn-body :is(h1,h2,h3) { font-size: 1.16em; line-height: 1.5; }
+.msg-overlay .turn-card[data-chat-style='message'] .turn-body pre { max-width: 100%; overflow-x: auto; }
+.msg-overlay .turn-card[data-chat-style='message'] .turn-prompt-receipt { font-size: 10px; margin-top: 7px; }
+.msg-overlay .turn-card[data-chat-style='message'] .turn-delivery-summary {
+  margin: 12px 0 0; width: 100%; border: 0; border-radius: 0; background: transparent;
+}
+.msg-overlay .turn-card[data-chat-style='message'] .turn-delivery-summary > summary {
+  padding: 3px 0; min-height: 0; font-size: 11px; gap: 8px; flex-wrap: wrap;
+}
+.msg-overlay .turn-card[data-chat-style='message'] .turn-delivery-summary > summary span { font-size: 11px; }
+.msg-overlay .turn-card[data-chat-style='message'] .turn-delivery-summary > summary small { font-size: 10px; }
+.msg-overlay .turn-card[data-chat-style='message'] .turn-delivery-body { padding: 8px 0 0; }
+.msg-overlay .turn-card[data-chat-style='message'] .turn-meta-pills { margin: 8px 0 0; }
+.chat-process { margin: 0; color: var(--fg-muted); font-size: 11px; min-width: 0; }
+.chat-process[open] { order: 10; flex-basis: 100%; }
+.chat-process-body { color: var(--fg-default); font-weight: normal; }
+.chat-process > summary { cursor: pointer; width: fit-content; padding: 3px 0; }
+.chat-process > summary:hover { color: var(--brand); }
+.chat-process > summary:focus-visible { outline: 2px solid var(--brand); outline-offset: 3px; border-radius: 4px; }
+.chat-process-body { margin-top: 8px; padding: 10px 12px; border-radius: 12px; background: var(--surface-sunken); }
+.chat-process-body .conversation-entry { margin: 0 0 10px; font-size: 12px; }
+.chat-process-body .conversation-progress-row { margin: 0 0 10px; }
+.chat-process-body .conversation-progress-content { font-size: 12px; }
+.chat-process-body .turn-activity-rail { margin: 0; max-width: 100%; }
+.msg-overlay .turn-card[data-chat-style='message'].conversation-response-continuation > .turn-avatar { visibility: visible; }
+.msg-overlay .turn-card[data-chat-style='message'].conversation-response-continuation .turn-who { display: inline; }
+.msg-overlay .turn-card[data-chat-style='message']:focus-within .turn-actions { opacity: 1; }
+@container hub-card-view (max-width: 520px) {
+  .msg-overlay .turn-card[data-chat-style='message'] { gap: 8px; margin-bottom: 20px; }
+  .msg-overlay .turn-card[data-chat-style='message'] .turn-avatar { width: 26px; height: 26px; min-width: 26px; }
+  .msg-overlay .turn-card[data-chat-style='message'] .turn-content { max-width: calc(100% - 34px); }
+  .msg-overlay .turn-card.user[data-chat-style='message'] .turn-content { max-width: calc(100% - 34px); }
+  .msg-overlay .turn-card[data-chat-style='message'] .chat-message-bubble { padding: 12px 14px; border-radius: 16px; }
+  .msg-overlay .turn-card[data-chat-style='message'] .turn-head { flex-wrap: wrap; }
+}
+
+.turn-speed, .session-turn-speed {
+  color: var(--fg-muted); font-size: 11px; font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.session-turn-speed { flex: 0 1 auto; max-width: 260px; overflow: hidden; text-overflow: ellipsis; -webkit-app-region: no-drag; }
+.session-turn-speed[hidden] { display: none; }
+.turn-speed { flex-shrink: 1; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+@container hub-card-view (max-width: 520px) {
+  .turn-speed-detail, .turn-speed-unit { display: none; }
+  .turn-speed { font-size: 10px; }
+}

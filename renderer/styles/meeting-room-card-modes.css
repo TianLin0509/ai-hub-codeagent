@@ -1,0 +1,466 @@
+/* === 模式切换按钮（群聊 / 投研）— 样式已移至 Free Mode 块（2026-05-04）=== */
+
+/* ========================================================================
+   Stage 2 容错升级（2026-05-01）—— 逃生工具栏 + 角标 + 软提醒 banner
+   ======================================================================== */
+
+/* 卡片右上角角标：手动提取（蓝）/ 缺席（灰） */
+.mr-ft { position: relative; }
+.mr-ft-corner-badge {
+  position: absolute;
+  top: 4px;
+  right: 28px; /* 给 .mr-ft-expand 让位（expand 在 right: 6px 左右） */
+  padding: 1px 6px;
+  font-size: 9px;
+  line-height: 1.4;
+  border-radius: var(--radius-md);
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  user-select: none;
+  z-index: 2;
+}
+.mr-ft-corner-badge.manual {
+  background: rgba(91, 141, 239, 0.18);
+  color: var(--mark-blue);
+  border: 1px solid rgba(91, 141, 239, 0.4);
+}
+.mr-ft-corner-badge.absent {
+  background: rgba(var(--rgb-neutral), 0.18);
+  color: var(--mark-slate);
+  border: 1px solid rgba(var(--rgb-neutral), 0.35);
+}
+
+/* 状态文本新值（待 statusLabel 渲染时 mr-ft-status.<class>） */
+.mr-ft-status.soft_alert {
+  color: var(--status-warning);
+  animation: ft-pulse 1.5s ease-in-out infinite;
+}
+.mr-ft-status.errored,
+.mr-ft-status.transport_lost { color: var(--mark-red-strong); }
+.mr-ft-status.manual_extracted { color: var(--mark-blue); }
+.mr-ft-status.absent,
+.mr-ft-status.interrupted { color: var(--mark-slate); }
+@keyframes ft-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
+}
+
+/* 卡片底部逃生工具栏 */
+.mr-ft-escape-bar {
+  display: flex;
+  gap: 4px;
+  padding: 6px 8px 8px;
+  margin-top: 4px;
+  border-top: 1px dashed rgba(var(--rgb-overlay), 0.06);
+}
+/* FIX-C（2026-05-01）：errored / absent 终态用红色描边的工具栏，与思考态区分 */
+.mr-ft-escape-bar-terminal {
+  border-top: 1px solid rgba(var(--rgb-danger), 0.25);
+  background: rgba(var(--rgb-danger), 0.05);
+}
+.mr-ft-escape-bar-terminal .mr-ft-escape-btn {
+  border-color: rgba(var(--rgb-danger), 0.35);
+  color: var(--turn-body-fg);
+}
+.mr-ft-escape-bar-terminal .mr-ft-escape-btn:hover {
+  background: rgba(var(--rgb-danger), 0.12);
+  border-color: rgba(255, 130, 130, 0.5);
+}
+.mr-ft-escape-btn {
+  flex: 1;
+  padding: 4px 6px;
+  font-size: 11px;
+  line-height: 1.3;
+  border: 1px solid rgba(var(--rgb-overlay), 0.12);
+  border-radius: var(--radius-xs);
+  background: rgba(var(--rgb-overlay), 0.03);
+  color: var(--text-secondary, var(--fg-muted));
+  cursor: pointer;
+  font-family: inherit;
+  white-space: nowrap;
+  transition: background 0.12s, color 0.12s, border-color 0.12s;
+}
+.mr-ft-escape-btn:hover:not([disabled]) {
+  background: rgba(91, 141, 239, 0.1);
+  color: var(--text-primary, var(--fg-default));
+  border-color: rgba(91, 141, 239, 0.3);
+}
+.mr-ft-escape-btn[disabled] {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* 软提醒 banner（黄底，非阻塞） */
+.mr-gc-soft-alert-banner {
+  display: none;
+  align-items: center;
+  gap: 12px;
+  margin: 6px 0 8px;
+  padding: 8px 12px;
+  background: rgba(var(--rgb-orange), 0.10);
+  border: 1px solid rgba(var(--rgb-orange), 0.35);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary, var(--fg-default));
+  font-size: 12px;
+  line-height: 1.5;
+}
+.mr-gc-soft-alert-banner.urgent {
+  background: rgba(var(--rgb-danger), 0.10);
+  border-color: rgba(var(--rgb-danger), 0.4);
+}
+.mr-gc-soft-alert-msg { flex: 1; }
+.mr-gc-soft-alert-msg strong { color: var(--status-warning); }
+.mr-gc-soft-alert-banner.urgent .mr-gc-soft-alert-msg strong { color: var(--mark-red-strong); }
+.mr-gc-soft-alert-hint {
+  margin-left: 6px;
+  color: var(--text-secondary, var(--fg-muted));
+  font-size: 11px;
+}
+.mr-gc-soft-alert-close {
+  flex-shrink: 0;
+  width: 22px; height: 22px;
+  border: 0;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--text-secondary, var(--fg-muted));
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0;
+}
+.mr-gc-soft-alert-close:hover {
+  background: rgba(var(--rgb-overlay), 0.08);
+  color: var(--text-primary, var(--fg-default));
+}
+
+/* ============================================================================
+   Resend & Auto-Recovery（2026-05-03）
+   ============================================================================ */
+
+/* send_stuck 状态：自动恢复失败 → 红边 + 按钮闪烁 + 状态条文案 */
+.mr-ft.send-stuck {
+  border-left: 4px solid var(--mark-red-strong);
+}
+.mr-ft.send-stuck button[data-gc-escape="resend-prompt"] {
+  background: #ffc107;
+  color: #000;
+  font-weight: 600;
+  animation: mr-ft-send-stuck-blink 1s ease-in-out infinite;
+}
+.mr-ft-status.send-stuck {
+  color: var(--mark-red-strong);
+  font-weight: 600;
+}
+/* 2026-05-05 maintainer P0 2B：stuck 时流光从 slot 配色统一改琥珀色，视觉一眼分辨"这家不正常" */
+.mr-ft.send-stuck .mr-ft-progress-bar,
+.mr-ft.send-stuck .mr-gc-think-bar {
+  background: linear-gradient(90deg, #f59e0b 0%, rgba(245,158,11,0.3) 50%, transparent 100%) !important;
+  background-size: 200% 100% !important;
+}
+@keyframes mr-ft-send-stuck-blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
+}
+
+/* auto_patched 角标：右上角浮"自动补全 +N 字" 3s fade-out */
+.mr-ft-auto-patched-badge {
+  position: absolute;
+  top: 4px;
+  right: 28px;
+  padding: 2px 8px;
+  font-size: 10px;
+  line-height: 1.4;
+  border-radius: var(--radius-md);
+  font-weight: 600;
+  background: rgba(var(--rgb-success), 0.18);
+  color: var(--mark-green-strong);
+  border: 1px solid rgba(var(--rgb-success), 0.4);
+  pointer-events: none;
+  z-index: 3;
+  opacity: 1;
+  transition: opacity 1s ease-out 2s;  /* 2s 实显 + 1s fade */
+}
+.mr-ft-auto-patched-badge.fade-out {
+  opacity: 0;
+}
+/* ========================================================================
+   IF-C3（2026-05-01）—— 软提醒 banner（输入区上方）
+   AI 启动中时提示用户哪几家未 ready，引导"等几秒再发送"避免输入丢失。
+   ======================================================================== */
+.mr-input-soft-alert {
+  display: none; /* JS 控制 display: flex 时显示 */
+  align-items: center;
+  gap: 10px;
+  margin: 4px 12px 0;
+  padding: 7px 12px;
+  background: rgba(99, 102, 241, 0.08);
+  border: 1px solid rgba(99, 102, 241, 0.28);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary, var(--fg-default));
+  font-size: 12px;
+  line-height: 1.5;
+  animation: mr-input-soft-alegc-pulse 2s ease-in-out infinite;
+}
+@keyframes mr-input-soft-alegc-pulse {
+  0%, 100% { border-color: rgba(99, 102, 241, 0.28); }
+  50%      { border-color: rgba(99, 102, 241, 0.6); }
+}
+.mr-input-soft-alert-icon { flex-shrink: 0; }
+.mr-input-soft-alert-msg { flex: 1; }
+.mr-input-soft-alert-msg strong { color: var(--brand-text); }
+.mr-input-soft-alert-close {
+  flex-shrink: 0;
+  width: 22px; height: 22px;
+  border: 0; border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--text-secondary, var(--fg-muted));
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0;
+}
+.mr-input-soft-alert-close:hover {
+  background: rgba(var(--rgb-overlay), 0.08);
+  color: var(--text-primary, var(--fg-default));
+}
+
+/* ========================================================================
+   Arch refactor 2026-05-02 —— AI 群聊界面去 shell + 删除沉浸/调试切换。
+   原沉浸模式（hide .mr-terminals + 让 .mr-gc-panel 抢空间）已变成"唯一视图"：
+   .mr-terminals 已删除，.mr-gc-panel 直接 flex:1 占主区。
+   保留以下规则把"原沉浸态布局"作为默认应用到 .mr-gc-panel 及其内部 strip/cards。
+   ======================================================================== */
+.mr-gc-panel {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+.mr-ft-strip {
+  flex: 1 1 auto;
+  min-height: 0;
+  height: 100%;
+  /* 2026-06-21 maintainer：基础 display:grid 此前丢失（疑历史重构），导致并列模式 N 张 AI 卡
+     竖叠、被 .mr-gc-panel overflow:hidden 裁到只剩第 1 张可见（tab 模式因只显 1 张而掩盖）。
+     card-modes.css 下方 tab 规则给本元素设 grid-template-columns 已证本意为 grid。恢复
+     grid + 自动列，让并列模式 N 张卡横向等宽并排（真机 harness 已验证 strip.png）。 */
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(0, 1fr);
+  gap: 8px;
+  grid-auto-rows: 1fr;
+  align-items: stretch;
+  transition: flex 240ms ease-out;
+}
+.mr-ft {
+  /* 取消调试模式的 min-height:220px 强制让卡片填满 grid 行高 */
+  min-height: 0;
+  height: 100%;
+}
+.mr-ft-preview {
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.mr-card-view-tabs {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 6px;
+  margin: 8px 0 10px;
+  padding: 3px;
+  border: 1px solid rgba(var(--rgb-overlay), 0.08);
+  border-radius: var(--radius-sm);
+  background: rgba(var(--rgb-overlay), 0.04);
+}
+.mr-card-view-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 5px 10px;
+  border: 0;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--text-secondary, var(--fg-muted));
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.mr-card-view-tab:hover {
+  background: rgba(var(--rgb-overlay), 0.06);
+  color: var(--text-primary, var(--fg-default));
+}
+.mr-card-view-tab.active {
+  background: rgba(var(--rgb-info), 0.18);
+  color: var(--text-primary, var(--fg-default));
+}
+.mr-card-view-tab-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.7;
+}
+.mr-card-view-tab-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+body.mr-card-tab-mode .mr-ft-strip {
+  grid-template-columns: minmax(0, 1fr);
+}
+body.mr-card-tab-mode .mr-ft-strip .mr-ft:not(.active) {
+  display: none;
+}
+body.mr-card-tab-mode .mr-ft-head,
+body.mr-card-tab-mode .mr-ft-escape-bar {
+  display: none;
+}
+body.mr-card-tab-mode .mr-ft-bottom {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  border-top: 0;
+}
+body.mr-card-tab-mode .mr-gc-timetravel-banner,
+body.mr-card-tab-mode .mr-gc-userq {
+  display: none;
+}
+
+/* Arch refactor 2026-05-02 (Task 6): 截断提示链接（卡片摘要超长时附加） */
+.mr-truncated-hint {
+  display: block;
+  margin-top: 8px;
+  padding-top: 6px;
+  border-top: 1px dashed var(--border, var(--border-mid));
+  color: var(--accent, var(--link));
+  font-size: 11.5px;
+  cursor: pointer;
+  user-select: none;
+}
+.mr-truncated-hint:hover {
+  text-decoration: underline;
+  filter: brightness(1.15);
+}
+
+/* ========================================================================
+   Card optimization Task 10（2026-05-01）—— 防溢出三件套
+   ResizeObserver 在 _relayoutMeetingRoom 里调 fit；CSS 这里给 grid + flex
+   父子链补关键属性，否则 preview / 卡片仍可能被超长 markdown 撑爆。
+   ======================================================================== */
+.mr-ft-strip {
+  /* 已有 grid + minmax(0,1fr)；补 min-height:0 让 grid 在 flex parent 中可缩 */
+  min-height: 0;
+}
+.mr-ft {
+  /* 已在 line 525 区块定义 display:flex+flex-direction:column 等；这里追加防溢出 */
+  overflow: hidden;
+  min-height: 220px;
+}
+
+/* pilot-mode Task 3（2026-05-01）— 主驾按钮 + dropdown + 卡片视觉 */
+.mr-gc-tb-pilot-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+/* ============================================================
+   Free Mode (2026-05-04) — AI 群聊自由模式样式
+   ============================================================ */
+
+/* mode toggle segmented control（顶部） */
+.mr-mode-toggle {
+  display: inline-flex;
+  gap: 4px;
+  margin: 8px 0 4px 0;
+  padding: 3px;
+  background: rgba(var(--rgb-overlay), 0.04);
+  border-radius: var(--radius-sm);
+  border: 1px solid rgba(var(--rgb-overlay), 0.08);
+}
+.mr-mode-toggle-btn {
+  padding: 4px 10px;
+  font-size: 12px;
+  background: transparent;
+  border: none;
+  color: var(--fg-default);
+  cursor: pointer;
+  border-radius: var(--radius-xs);
+  transition: all .15s;
+}
+.mr-mode-toggle-btn:hover:not([disabled]) {
+  background: rgba(var(--rgb-overlay), 0.06);
+}
+.mr-mode-toggle-btn.active {
+  background: #1f6feb;
+  color: white;
+  font-weight: 600;
+}
+.mr-mode-toggle-btn[disabled] {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* free 模式头像勾选区 */
+.mr-free-participants {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  background: rgba(var(--rgb-overlay), 0.03);
+  border-radius: var(--radius-sm);
+  border: 1px solid rgba(var(--rgb-overlay), 0.06);
+}
+.mr-free-participants-title {
+  font-size: 12px;
+  color: var(--fg-muted);
+  margin-right: 4px;
+  user-select: none;
+}
+.mr-free-slot {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 6px;
+  background: rgba(var(--rgb-overlay), 0.03);
+  border-radius: var(--radius-xs);
+  border: 1.5px solid transparent;
+  cursor: pointer;
+  opacity: 0.4;
+  transition: all .15s;
+}
+.mr-free-slot.checked {
+  opacity: 1;
+  border-color: #1f6feb;
+  background: rgba(31,111,235,0.08);
+}
+.mr-free-slot:hover:not(.disabled) {
+  background: rgba(var(--rgb-overlay), 0.06);
+}
+.mr-free-slot.disabled {
+  cursor: not-allowed;
+  opacity: 0.3 !important;
+}
+.mr-free-slot-cb {
+  margin: 0;
+  cursor: pointer;
+}
+.mr-free-slot img {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  object-fit: cover;
+}
+.mr-free-slot-label {
+  font-size: 12px;
+  color: var(--fg-default);
+  user-select: none;
+}
+
+/* 输入框 0 人灰态 */
+.mr-gc-input.mr-gc-input-disabled {
+  background: rgba(var(--rgb-overlay), 0.02);
+  color: var(--turn-meta-fg);
+  cursor: not-allowed;
+}

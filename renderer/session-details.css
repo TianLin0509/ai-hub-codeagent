@@ -1,0 +1,37 @@
+.session-detail-bar { padding: 5px 12px; flex: 0 0 auto; display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.session-model-filter { display: flex; align-items: center; gap: 4px; color: var(--text-secondary); font-size: 11px; }
+.session-model-filter select { max-width: 85px; color: var(--text-primary); background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: 4px; font: inherit; padding: 3px; }
+#btn-session-details { display: flex; align-items: center; gap: 7px; border: 1px solid var(--border-color); border-radius: 5px; background: transparent; color: var(--text-secondary); padding: 3px 7px; font-family: inherit; font-size: 11px; line-height: 1.4; cursor: pointer; }
+#btn-session-details[aria-pressed="true"] { color: var(--accent-blue); border-color: var(--accent-blue); background: rgba(var(--rgb-info), .08); }
+#btn-session-details:focus-visible { outline: 2px solid var(--accent-blue); outline-offset: 2px; }
+#session-list .session-item.slim.has-details { display: block; height: auto; max-height: none; padding-top: 5px; padding-bottom: 5px; }
+#session-list .session-item.slim.has-details > .sl-line1 { display: grid; grid-template-columns: 8px minmax(0, 1fr) auto auto; gap: 6px; min-height: 19px; }
+.sl-details { display: flex; align-items: center; gap: 7px; min-width: 0; margin: 3px 0 0 22px; color: var(--text-secondary); font-size: 10px; line-height: 17px; }
+.sl-usage { flex: 0 0 auto; padding: 0; border: none; border-radius: 2px; background: transparent; color: var(--text-primary); font: 10.5px/17px Consolas, "Microsoft YaHei", monospace; white-space: nowrap; cursor: help; }
+.sl-usage:hover { color: var(--accent-blue); }
+.sl-detail-model { flex: 1 1 auto; min-width: 20px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 9.5px; }
+.sl-detail-context { flex: 0 0 auto; white-space: nowrap; font-size: 9px; color: var(--text-muted); }
+#session-list .sidebar-group .session-item.slim.child { margin-left: 18px; padding-left: 8px; border-left: 1px solid var(--border-color); border-radius: 0 5px 5px 0; grid-template-columns: 8px minmax(0, 1fr) auto auto; }
+.sidebar-group.compact-group:not(.hover-open):not(.has-active-member):not(:focus-within) > .sidebar-group-children { display: none; }
+#session-list .sidebar-group .session-item.slim.meeting.gc { padding-top: 0; padding-bottom: 0; }
+#session-list .sidebar-group .session-item.slim.meeting.gc .sl-line1:not(.with-arrow) { grid-template-columns: minmax(0, 1fr) auto auto; }
+#session-list .sidebar-group .session-item.slim.meeting.gc .sl-group-progress { display: none; }
+.sl-group-icon { width: 15px; height: 15px; stroke: var(--text-muted); stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; fill: none; }
+.sl-group-icon.idle { stroke: #3b82f6; }
+.sl-group-icon.run { stroke: var(--accent-green); animation: sidebar-group-pulse 1.5s ease-in-out infinite; }
+@keyframes sidebar-group-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .4; } }
+@media (prefers-reduced-motion: reduce) { .sl-group-icon.run { animation: none; } }
+.sl-group-icon.wait { stroke: var(--accent-orange); }
+.sl-group-icon.error, .sl-group-icon.unread { stroke: var(--accent-red); }
+#session-list .session-item.slim.meeting.has-session-details .sl-line1.with-arrow { grid-template-columns: 10px minmax(0, 1fr) auto auto; }
+#session-list .session-item.slim.meeting.has-session-details .sl-line1.with-arrow .expand-arrow { display: inline-block; transform: rotate(0); }
+#session-list .session-item.slim.meeting.has-session-details.expanded .sl-line1.with-arrow .expand-arrow { transform: rotate(90deg); }
+
+/* Keep both filters beside details within the default narrow sidebar. */
+.session-detail-bar { gap: 5px; padding-inline: 8px; }
+.session-model-filter, .session-project-filter { white-space: nowrap; }
+.session-project-filter { display: flex; align-items: center; gap: 4px; flex: 1; min-width: 74px; color: var(--text-secondary); font-size: 11px; }
+.session-project-filter select { width: 100%; min-width: 0; max-width: 110px; color: var(--text-primary); background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: 4px; font: inherit; padding: 3px; text-overflow: ellipsis; }
+.session-model-filter select { max-width: 65px; }
+#btn-session-details { gap: 4px; padding-inline: 4px; }
+.session-project-filter-note { padding: 3px 8px; color: var(--accent-orange); font-size: 11px; }

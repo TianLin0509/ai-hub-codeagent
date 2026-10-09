@@ -1,0 +1,55 @@
+/* CLI surfaces share the cool-white canvas. Code blocks using Prism retain
+   their separate machine tokens; no terminal bytes or dimensions are changed. */
+:root[data-theme='codex'] :is(.terminal-container,.assistant-cli-host) {
+  background:#fbfcfd; box-shadow:none; border-color:var(--border-subtle);
+}
+/* CLI 2: one uninterrupted canvas; no added terminal output or dimension hooks. */
+:root[data-theme='codex'] .terminal-container.pty-surface { border:0; border-radius:0; box-shadow:none; }
+:root[data-theme='codex'] .cb-toolbar { background:#fbfcfd; min-height:38px; }
+:root[data-theme='codex'] .cb-tabs button[aria-pressed='true'] { background:transparent; box-shadow:inset 0 -2px var(--brand); border-radius:0; }
+:root[data-theme='codex'] .cb-entry:not(.cb-failed) { border-left-color:transparent; }
+:root[data-theme='codex'] :is(.pty-welcome-mark,.pty-welcome-compose span) { color:var(--brand); }
+:root[data-theme='codex'] .pty-welcome { background:#fbfcfd; color:var(--fg-strong); }
+:root[data-theme='codex'] .pty-welcome-mark { background:var(--brand-tint); border-color:var(--brand-tint-border); box-shadow:none; }
+:root[data-theme='codex'] :is(.pty-welcome-eyebrow,.pty-welcome p,.pty-welcome-hint) { color:var(--fg-muted); }
+:root[data-theme='codex'] .pty-welcome-compose { background:var(--surface-raised); color:var(--brand); border-color:var(--brand-tint-border); }
+:root[data-theme='codex'] .pty-welcome-compose:hover { background:var(--brand-tint); }
+:root[data-theme='codex'] .pty-surface .prompt-nav-btn { background:var(--surface-raised); color:var(--fg-muted); border-color:var(--border-mid); }
+:root[data-theme='codex'] :is(.codex-backstage,.cb-detail-dialog) {
+  --cb-bg:#fbfcfd; --cb-text:#303b4b; --cb-muted:#637084; --cb-line:#e5e9ee; --cb-green:#18704a;
+  background:var(--cb-bg); color:var(--cb-text);
+}
+:root[data-theme='codex'] .codex-backstage[data-view='legacy'] { background:#fbfcfd; }
+:root[data-theme='codex'] :is(.cb-toolbar,.cb-status,.cb-detail-dialog,.cb-detail-dialog header,.cb-detail-dialog footer) { border-color:var(--border-subtle); }
+:root[data-theme='codex'] :is(.cb-heading,.cb-tool:not([open]) .cb-title::after,.cb-prose .cb-meta,.cb-length,.cb-raw-source,.cb-empty,.cb-notice,.cb-detail-dialog footer span) { color:var(--fg-muted); }
+:root[data-theme='codex'] :is(.codex-backstage button,.codex-backstage select,.cb-detail-dialog button) { color:var(--fg-default); }
+:root[data-theme='codex'] :is(.codex-backstage button:hover,.cb-detail-dialog button:hover) { background:var(--surface-hover); color:var(--fg-strong); }
+:root[data-theme='codex'] .cb-tabs button[aria-pressed='true'] { color:var(--brand); }
+:root[data-theme='codex'] .codex-backstage select { background:var(--surface-raised); border-color:var(--border-mid); }
+:root[data-theme='codex'] :is(.cb-viewport,.cb-output) { scrollbar-color:#b0bccd transparent; }
+:root[data-theme='codex'] :is(.cb-title,.cb-command,.cb-output,.cb-raw-text,.cb-prose .cb-output,.cb-empty h2) { color:var(--fg-default); }
+:root[data-theme='codex'] .cb-command { color:var(--brand); }
+:root[data-theme='codex'] :is(.cb-output,.cb-markdown pre,.cb-markdown code) { background:var(--surface-sunken); }
+:root[data-theme='codex'] .cb-prose .cb-output { background:transparent; }
+:root[data-theme='codex'] .cb-prose[data-type='userMessage'] .cb-output { background:var(--surface-sunken); border-left-color:var(--border-mid); }
+:root[data-theme='codex'] :is(.cb-prose .cb-title,.cb-entry[data-type='turn'] .cb-title,.cb-empty-mark,.cb-heading.cb-live) { color:#18704a; }
+:root[data-theme='codex'] :is(.cb-failed .cb-mark,.cb-failed .cb-meta,.cb-live[data-state='failed'],.cb-status[data-state='failed'] .cb-state,.cb-entry[data-type='diagnostic'].cb-failed .cb-output) { color:var(--status-danger); }
+:root[data-theme='codex'] :is(.cb-live[data-state='waiting'],.cb-live[data-state='stopping'],.cb-live[data-state='unknown'],.cb-status[data-state='unknown'] .cb-state,.cb-entry[data-type='diagnostic'] .cb-output) { color:#856000; }
+:root[data-theme='codex'] .cb-older { color:var(--fg-muted)!important; }
+:root[data-theme='codex'] .codex-backstage .cb-full { color:var(--brand); }
+:root[data-theme='codex'] .codex-backstage .cb-follow { background:var(--brand-tint); color:var(--brand); border-color:var(--brand-tint-border); box-shadow:none; }
+:root[data-theme='codex'] .cb-empty button { color:var(--brand); border-color:var(--border-mid); }
+:root[data-theme='codex'] :is(.cb-notice.cb-error,.cb-inline-error) { background:#fbecef; color:#b42335; border-color:#d5a3ad; }
+:root[data-theme='codex'] .cb-markdown a { color:var(--link); }
+:root[data-theme='codex'] .cb-markdown blockquote { color:var(--fg-muted); border-color:var(--border-mid); }
+:root[data-theme='codex'] .cb-markdown pre code { background:transparent; }
+:root[data-theme='codex'] .cb-markdown :is(pre,code) { color:var(--fg-default); text-shadow:none; }
+:root[data-theme='codex'] .cb-markdown :is(.token.comment,.token.prolog,.token.doctype,.token.cdata) { color:#637084; }
+:root[data-theme='codex'] .cb-markdown :is(.token.punctuation,.token.operator,.token.variable) { color:#303b4b; }
+:root[data-theme='codex'] .cb-markdown :is(.token.keyword,.token.atrule,.token.selector) { color:#7944a1; }
+:root[data-theme='codex'] .cb-markdown :is(.token.string,.token.char,.token.inserted,.token.attr-value) { color:#18704a; }
+:root[data-theme='codex'] .cb-markdown :is(.token.number,.token.boolean,.token.constant,.token.symbol) { color:#856000; }
+:root[data-theme='codex'] .cb-markdown :is(.token.function,.token.class-name,.token.property,.token.tag,.token.attr-name) { color:#3065bd; }
+:root[data-theme='codex'] .cb-markdown .token.deleted { color:#b42335; }
+:root[data-theme='codex'] .cb-classic .cb-output { background:transparent; }
+:root[data-theme='codex'] .cb-detail-dialog { box-shadow:var(--shadow-lg); }

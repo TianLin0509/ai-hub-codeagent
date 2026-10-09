@@ -1,0 +1,49 @@
+/* Stay in the same DOM location: moving a webview destroys its live page. */
+body.preview-immersive-active #preview-panel {
+  position: fixed !important;
+  inset: 0 !important;
+  width: 100vw !important;
+  height: 100vh !important;
+  min-width: 0 !important;
+  max-width: none !important;
+  margin: 0 !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  z-index: 2147483000 !important;
+  container-type: normal;
+  -webkit-app-region: no-drag;
+}
+body.preview-immersive-active #preview-panel > .preview-tabs-row,
+body.preview-immersive-active #preview-panel > .preview-header,
+body.preview-immersive-active #preview-outline {
+  display: none !important;
+}
+.preview-immersive-exit-zone { display: none; }
+body.preview-immersive-active .preview-immersive-exit-zone {
+  display: block;
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 180px;
+  height: 60px;
+  z-index: 10;
+}
+#preview-immersive-exit {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  opacity: 0;
+  padding: 9px 14px;
+  border: 1px solid #ffffff50;
+  border-radius: 8px;
+  background: #202630e8;
+  color: #fff;
+  box-shadow: 0 3px 14px #0003;
+  cursor: pointer;
+  font-size: 13px;
+  transition: opacity .15s;
+}
+.preview-immersive-exit-zone:hover #preview-immersive-exit,
+.preview-immersive-exit-zone:focus-within #preview-immersive-exit {
+  opacity: 1;
+}

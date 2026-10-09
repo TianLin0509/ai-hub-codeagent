@@ -1,0 +1,12 @@
+{
+  "provider": "codex-imagegen",
+  "imageModelVerified": false,
+  "jobId": "20261001-4a04d7721ff1",
+  "requestId": "20261001-hub-coldwhite-nav-atlas-codex1-v1",
+  "generatedAt": "2026-10-01",
+  "sha256": "a3e11b60f094e12f6d4a51ab22b2fce6a0f4c783e3a1286835b9bbf34c768b5e",
+  "dimensions": [1254,1254],
+  "layout": "3x3: home, assistant, research, study, development, review, resources, accounts, writing",
+  "display": "CSS viewports of the original atlas, 28px; original SVG fallback outside cold-white theme or on image error",
+  "promptFile": "coldwhite-enamel-v1.prompt.txt"
+}

@@ -1,0 +1,79 @@
+[
+    {
+        "name":  "codex",
+        "file":  "codex.png",
+        "provider":  "codex-imagegen",
+        "jobId":  "20261001-91aae774ea18",
+        "sha256":  "9f17fba392eeb6a75ef804a38c9f4620ef4274db00c2ec6e6fd63787c89b05f0",
+        "width":  1254,
+        "height":  1254,
+        "originalArtwork":  true,
+        "created":  "2026-10-01"
+    },
+    {
+        "name":  "claude",
+        "file":  "claude.png",
+        "provider":  "codex-imagegen",
+        "jobId":  "20261001-4d0f85bf37c2",
+        "sha256":  "720e25dfbf7fcdf265e8f6289d916ce514b109cd756890ff1de75b5bf878ce50",
+        "width":  1254,
+        "height":  1254,
+        "originalArtwork":  true,
+        "created":  "2026-10-01"
+    },
+    {
+        "name":  "gemini",
+        "file":  "gemini.png",
+        "provider":  "codex-imagegen",
+        "jobId":  "20261001-966fb314178c",
+        "sha256":  "71e352aac316e0a375be6b29d786d8082725997da5350a881d8f04db17b9cadf",
+        "width":  1254,
+        "height":  1254,
+        "originalArtwork":  true,
+        "created":  "2026-10-01"
+    },
+    {
+        "name":  "deepseek",
+        "file":  "deepseek.png",
+        "provider":  "codex-imagegen",
+        "jobId":  "20261001-50f4bb3ff325",
+        "sha256":  "315739c51a57e5e413031e898a5e47c855b445585aa1ab3659cb05bbc03779e6",
+        "width":  1254,
+        "height":  1254,
+        "originalArtwork":  true,
+        "created":  "2026-10-01"
+    },
+    {
+        "name":  "kimi",
+        "file":  "kimi.png",
+        "provider":  "codex-imagegen",
+        "jobId":  "20261001-8cf264c51cdb",
+        "sha256":  "0e60c9dfa382e4a81459f2b4bb6694836c9e048b50b0ad5f1f6c0422efdb491e",
+        "width":  1254,
+        "height":  1254,
+        "originalArtwork":  true,
+        "created":  "2026-10-01"
+    },
+    {
+        "name":  "qwen",
+        "file":  "qwen.png",
+        "provider":  "codex-imagegen",
+        "jobId":  "20261001-4fa54efbcb89",
+        "sha256":  "564fd05c0b206fca00fd3b7fe72ad92c1f450d6659294206ff2fe3281467d3a9",
+        "width":  1254,
+        "height":  1254,
+        "originalArtwork":  true,
+        "created":  "2026-10-01"
+    },
+    {
+        "name":  "glm",
+        "file":  "glm.png",
+        "provider":  "codex-imagegen",
+        "jobId":  "20261001-254bdc0c4a6e",
+        "sha256":  "905092ea919847889f1dfcd07b328e9a16f4ccabe5b352e5610c0a0ac515e9c8",
+        "width":  1254,
+        "height":  1254,
+        "originalArtwork":  true,
+        "created":  "2026-10-01"
+    }
+]

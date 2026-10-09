@@ -1,0 +1,348 @@
+/* ── T6 冷杉 v2 · 统一工具栏 ────────────────────────────────────────────────
+   T2 把舞台头部压成了一行 44px；T6 把这一行从舞台内部提到窗口最顶上，
+   变成 #app-toolbar：原生标题栏隐掉之后，它同时是标题栏和头部。
+   舞台从此没有头部，终端直接顶到卡片顶边。
+
+   本文件只用 base.css 已有的 token，不新增调色板：皮肤切换时工具栏要跟着走，
+   而 base.css 本轮属于另一条车道，不能改。 */
+
+:root {
+  --app-toolbar-h: 44px;
+  /* Windows 自己画的最小化 / 最大化 / 关闭要占的宽度。默认是实测的 138px；
+     WCO 报得出真实宽度时由渲染层覆盖成真值（见 syncWindowControlsWidth）。
+     刻意不写成纯 CSS 的 calc(100vw - env(titlebar-area-width))：env() 描述的是
+     **真实窗口**，而 100vw 在 CDP 改过设备尺寸时描述的是模拟视口，两者一混
+     就会算出 376px 这种离谱值 —— 也就是说，那种写法在测试里量到的布局
+     和用户看到的不是同一个。 */
+  --app-window-controls-w: 138px;
+}
+
+.app-toolbar {
+  position: relative;
+  z-index: 120;
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: var(--app-toolbar-h);
+  min-height: var(--app-toolbar-h);
+  box-sizing: border-box;
+  padding: 0 10px 0 10px;
+  background: var(--surface-raised, var(--bg-secondary));
+  border-bottom: 1px solid var(--border);
+  /* 整条可拖窗口；下面逐个把可点的东西标回 no-drag。
+     顺序不能反 —— 在 drag 区里，没标 no-drag 的元素连 click 都收不到。 */
+  -webkit-app-region: drag;
+  user-select: none;
+}
+
+.app-toolbar button,
+.app-toolbar a,
+.app-toolbar input,
+.app-toolbar select,
+.app-toolbar .view-toggle,
+.app-toolbar .header-overflow-menu,
+/* 会话标题是个可点击的 <span>（点它进重命名），不是 button —— 只按标签名列
+   no-drag 就会把它漏在拖动区里，Windows 于是把这块判成标题栏（HTCAPTION=2），
+   真鼠标点下去是「按住标题栏拖窗口」，重命名永远打不开。
+   而 DOM 的 .click() 不走命中测试，照样能把重命名打开，所以这个洞在只用
+   dispatchEvent 的测试里是隐形的（2026-09-08 评审用原生命中测试逮到）。
+   判据不是「它是不是 button」，是「它看起来可不可点」。 */
+.app-toolbar .terminal-title {
+  -webkit-app-region: no-drag;
+}
+
+.hub-new-instance {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 28px;
+  width: 28px;
+  height: 28px;
+  padding: 2px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  cursor: pointer;
+}
+.hub-new-instance:hover { background: var(--bg-hover, rgba(128, 128, 128, 0.15)); }
+.hub-new-instance:focus-visible { outline: 2px solid var(--accent, #7185ff); outline-offset: 2px; }
+.hub-new-instance:disabled { opacity: 0.5; cursor: wait; }
+
+/* 系统窗口按钮的留位。WCO 可用时按它给的真实宽度走：用户改过系统缩放、
+   或者将来按钮数量变了，都不用回来改这个常量。 */
+.toolbar-window-controls {
+  flex: 0 0 auto;
+  width: var(--app-window-controls-w);
+  height: 100%;
+  pointer-events: none;
+}
+/* 原生标题栏模式（CLAUDE_HUB_NATIVE_TITLEBAR=1）：系统按钮在真标题栏里，
+   顶栏右端不需要留位，也不需要拖动区 —— 拖动交给真标题栏。 */
+.app-container.native-titlebar .app-toolbar { -webkit-app-region: no-drag; }
+.app-container.native-titlebar .toolbar-window-controls { display: none; }
+
+/* Windows 把一个隐藏标题栏的窗口最大化时，窗口会比工作区大出一圈不可见边框，
+   顶部那几像素被切在屏幕外。补偿量在这里，默认 0：**先量再补**，量不出空隙
+   就一分不补。凭「Windows 大概会多 8px」直接写死，是在赌一个跟 DPI、
+   Windows 版本、是否多显示器都相关的数。 */
+.app-container { --app-toolbar-maximize-pad: 0px; }
+.app-container.window-maximized .app-toolbar {
+  padding-top: var(--app-toolbar-maximize-pad);
+  height: calc(var(--app-toolbar-h) + var(--app-toolbar-maximize-pad));
+  min-height: calc(var(--app-toolbar-h) + var(--app-toolbar-maximize-pad));
+}
+
+/* 侧栏开关进工具栏后常驻，两个方向都点得动（原来只在折叠态才出现）。
+   position/top/left 那几条是它当浮动箭头时留下的，必须一起清掉。 */
+.app-toolbar .btn-expand-sidebar {
+  display: flex;
+  position: static;
+  top: auto;
+  left: auto;
+  flex: 0 0 auto;
+  width: 28px;
+  height: 28px;
+  background: transparent;
+  border-color: transparent;
+}
+.app-toolbar .btn-expand-sidebar:hover {
+  background: rgba(var(--rgb-info), 0.08);
+  border-color: rgba(var(--rgb-info), 0.2);
+}
+
+/* 非会话视图（主页 / 投研 / 学习 / 开发 / 群聊）：面包屑只写视图名。 */
+.crumb-view-name {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text-primary);
+  white-space: nowrap;
+}
+
+.terminal-header-actions[hidden] { display: none; }
+
+/* ── 舞台卡：T6 之后它没有头部了 ────────────────────────────────────── */
+.terminal-panel {
+  --stage-card-inset-top: 10px;
+  --stage-card-inset-right: 12px;
+  --stage-card-radius: 12px;
+}
+
+/* 卡外距必须是 margin，不能是 padding —— 绝对定位元素的包含块是**padding box**，
+   padding 不会把 #msg-overlay / #card-session-status / #card-question-nav 这些
+   浮层推进卡内，只有整块挪位（margin）才能让它们跟着走。 */
+.terminal-panel:not(.home-active) {
+  margin: var(--stage-card-inset-top) var(--stage-card-inset-right) 0 0;
+  border-radius: var(--stage-card-radius) var(--stage-card-radius) 0 0;
+}
+
+/* 终端体现在自己就是整张卡：上下两端都圆。深色岛的 inset 在这里让位给舞台卡，
+   卡里再套一层内缩的岛，边框会变成两层，读起来就不是「一张卡」了。 */
+.terminal-panel:not(.home-active) .terminal-container {
+  margin: 0;
+  border-radius: var(--stage-card-radius) var(--stage-card-radius) 0 0;
+}
+
+/* ── 左：面包屑 ─────────────────────────────────────────────────────── */
+.terminal-crumb {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  /* 不许 grow：面包屑要按内容宽，撑满会一路顶到居中的视图切换底下去。
+     右侧的留白由动作区那条 margin-left:auto 负责。 */
+  flex: 0 1 auto;
+  /* 视图切换按工具栏中线绝对定位，所以面包屑必须在够到中线之前就先省略号。
+     60px 是分段控件半宽 + 一点余量：宁可标题截短，也不让两者叠在一起。 */
+  max-width: calc(50% - 60px);
+  /* 把剩余空间全给面包屑右边：它后面的动作区和系统按钮留位因此一起靠右。
+     这条 auto 必须挂在**始终存在**的元素上 —— 挂在动作区上的话，主页那种
+     动作区 hidden 的视图里就没人推了，系统按钮留位会飘到工具栏左边去。 */
+  margin-right: auto;
+  overflow: hidden;
+  font-size: 12.5px;
+}
+
+.crumb-workspace {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: min(220px, 22vw);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  background: transparent;
+  border: none;
+  padding: 2px 4px;
+  margin: 0;
+  border-radius: var(--radius-xs, 4px);
+  color: var(--text-secondary);
+  font: inherit;
+  cursor: pointer;
+}
+.crumb-workspace:hover:not(:disabled) {
+  color: var(--text-primary);
+  background: rgba(var(--rgb-info), 0.08);
+}
+.crumb-workspace:disabled { cursor: default; opacity: .6; }
+.crumb-workspace:focus-visible { outline: 1px solid var(--link); outline-offset: 1px; }
+/* 归档提示态。视觉沿用原来挂在 metrics 目录 chip 上的那一套（和群聊的
+   .mr-workspace-chip.has-archive-hint 同一组琥珀色），只是底座换成了面包屑第一段。
+   末尾的小圆点用 radial-gradient 画在 padding 里而不是 ::after —— 否则会被
+   .crumb-workspace 自己的 text-overflow: ellipsis 一起省略掉。
+   刻意保持静态：不闪烁、不动画、不遮挡。 */
+.crumb-workspace.has-archive-hint {
+  padding: 1px 16px 1px 6px;
+  border: 1px solid rgba(var(--rgb-warning), .55);
+  border-radius: var(--radius-sm);
+  background-color: rgba(var(--rgb-warning), .10);
+  background-image: radial-gradient(circle at calc(100% - 8px) 50%, #d29922 0 2.5px, transparent 2.6px);
+  color: var(--text-primary);
+}
+.crumb-workspace.has-archive-hint:hover {
+  border-color: rgba(var(--rgb-warning), .85);
+  background-color: rgba(var(--rgb-warning), .16);
+}
+
+.crumb-sep {
+  flex: 0 0 auto;
+  color: var(--text-muted);
+  opacity: .65;
+}
+
+.app-toolbar .terminal-title {
+  flex: 0 1 auto;
+  min-width: 40px;
+  max-width: min(320px, 32vw);
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.terminal-title.is-readonly { cursor: default; }
+.terminal-title.is-readonly:hover { text-decoration: none; }
+
+/* 状态点：runtime truth 的四色。绿=在跑，琥珀=在等你，红=断了/失败，灰=其它。 */
+.terminal-crumb-dot {
+  flex: 0 0 auto;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--fg-muted);
+  opacity: .55;
+}
+.terminal-crumb-dot.running,
+.terminal-crumb-dot.starting {
+  background: var(--mark-green, #3fb950);
+  opacity: 1;
+}
+.terminal-crumb-dot.running { animation: crumb-dot-pulse 1.6s ease-in-out infinite; }
+.terminal-crumb-dot.waiting {
+  background: var(--mark-amber, #d29922);
+  opacity: 1;
+}
+.terminal-crumb-dot.failed {
+  background: var(--mark-red, #f85149);
+  opacity: 1;
+}
+@keyframes crumb-dot-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: .35; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .terminal-crumb-dot.running { animation: none; }
+}
+
+/* Application identity stays in the normal flow so it cannot cover controls. */
+.hub-identity { display: flex; align-items: center; justify-content: center; gap: 7px; flex: 1 0 auto; white-space: nowrap; color: var(--fg-default); }
+.hub-identity img { width: 24px; height: 24px; object-fit: contain; }
+.hub-identity strong { font-size: 14px; letter-spacing: .02em; font-weight: 650; }
+#hub-version { font-size: 11px; color: var(--fg-muted); padding: 2px 6px; border: 1px solid var(--border-subtle); border-radius: 5px; }
+.hub-pid { font: 10px/1.4 Consolas, monospace; color: var(--fg-muted); }
+.app-toolbar .terminal-crumb { flex: 1 1 180px; max-width: 28%; margin-right: 0; }
+.app-toolbar .terminal-header-actions { flex: 0 0 auto; }
+.backstage-toggle { flex: none; border: 1px solid var(--border-mid); background: transparent; color: var(--fg-default); border-radius: 7px; padding: 5px 10px; white-space: nowrap; font: inherit; font-size: 12px; cursor: pointer; }
+.backstage-toggle[hidden] { display: none; }
+.backstage-toggle[aria-pressed="true"] { color: var(--accent-blue); background: rgba(var(--rgb-info), .1); border-color: var(--accent-blue); }
+.backstage-toggle:focus-visible { outline: 2px solid var(--accent-blue); outline-offset: 2px; }
+@media (max-width: 900px) {
+  .app-toolbar { gap: 6px; }
+  .hub-identity { gap: 5px; }
+  .hub-identity img { width: 20px; height: 20px; }
+  .hub-identity strong { font-size: 12px; }
+  .app-toolbar .terminal-crumb { max-width: 15%; }
+  .app-toolbar .terminal-header-actions .header-overflow-wrap { margin-left: 0; }
+}
+
+/* 「复制对话」原来靠 right: 414px 挤在那排浮层（视图切换 220 / 通知 312）的左边。
+   那两个浮层进头部之后，这个偏移量指向的是一片空地，而它自己仍然压在 44px 的
+   头部band 里 —— 头部就不再是「只有面包屑 + 视图切换 + 四个动作」了。
+   这里把它挪到头部**下面**的卡片左上角：它本来就是卡片视图的工具，
+   不属于「我在哪 / 看什么 / 能做什么」这三问。 */
+.terminal-panel.card-view-active .recent-turn-copy {
+  top: calc(var(--term-header-h, 0px) + 6px);
+  left: 14px;
+  right: auto;
+}
+
+/* 完成通知浮层：节点留着（开关逻辑仍由 completion-notification-toggle.js 独占），
+   但舞台上不再露面 —— 它变成 ⋯ 菜单里的一项。选择器刻意只匹配「直接挂在
+   terminal-panel 下」的那一个：主页把同一个节点搬进 #home-notification-slot，
+   那里必须照常显示。 */
+.terminal-panel:not(.home-active) > .completion-notification-toggle { display: none; }
+
+/* ── 右：动作区 ─────────────────────────────────────────────────────── */
+.app-toolbar .terminal-header-actions {
+  gap: 4px;
+}
+.app-toolbar .terminal-header-actions .btn-zoom,
+.app-toolbar .terminal-header-actions .btn-close-session {
+  width: 28px;
+  min-width: 28px;
+  height: 28px;
+  padding: 0;
+}
+/* 文件 / 记忆 是「对这个会话做点什么」，⋯ 和 × 是「对这个窗口做点什么」，
+   中间空 8px 把两组分开。 */
+.app-toolbar .terminal-header-actions .header-overflow-wrap {
+  margin-left: 8px;
+}
+.header-overflow-menu .ho-notify[data-state="enabled"] .ho-key { color: var(--mark-green, #3fb950); }
+.header-overflow-menu .ho-notify[data-state="unconfigured"] .ho-key,
+.header-overflow-menu .ho-notify[data-state="unavailable"] .ho-key { opacity: .6; }
+
+/* ── 终端卡右上角的实时量覆盖层 ───────────────────────────────────────
+   ctx% · N tok · ⏱ Ns。等宽 + tabular 数字，数字跳动时不会左右晃。
+   z-index 要压过 #msg-overlay(50) 与 #card-session-status(59)，否则卡片视图下
+   它会被整片盖住 —— 而这一层的意义正是「两种视图里都看得见」。 */
+.terminal-metrics {
+  position: absolute;
+  top: calc(var(--term-header-h, 0px) + 6px);
+  right: 10px;
+  z-index: 66;
+  pointer-events: none;
+  font: 500 10px/1.4 "Cascadia Code", Consolas, ui-monospace, monospace;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: .02em;
+  color: var(--fg-muted);
+  opacity: .78;
+  white-space: nowrap;
+}
+.terminal-metrics[hidden] { display: none; }
+
+/* 普通会话不再显示重复用量覆盖层，问题目录贴近内容顶部。 */
+.terminal-panel.card-view-active .card-question-nav {
+  top: calc(var(--term-header-h, 0px) + 10px);
+}
+
+@media (max-width: 900px) {
+  /* 窄面板：面包屑先让路，视图切换与动作按钮是硬需求。 */
+  .crumb-workspace { max-width: 96px; }
+  .app-toolbar .terminal-title { max-width: 34vw; }
+  .app-toolbar { padding-left: 6px; }
+  /* card-view.css 在这个断点给卡片视图的 header 加了 42px 顶部内距，给的是
+     原来那排绝对定位浮层（复制对话 / 通知 / 视图切换）让位。头部整个上移到
+     工具栏之后连头部都不存在了，这条内距只会在卡片顶上留一段空白。 */
+  .terminal-panel.card-view-active .terminal-header { padding-top: 0; }
+}
+@media (max-width: 620px) {
+  .terminal-metrics { display: none; }
+}

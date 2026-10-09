@@ -1,0 +1,255 @@
+/* =========================================================================
+   controls.css · 控件状态层（2026-09-19）
+   =========================================================================
+   把散落在十几个 CSS 文件里的按钮状态收成一套。
+
+   —— 为什么需要这一层 ——
+   在 renderer 下全量 grep 数出来的现状：
+
+   ① focus 环有 8 种颜色：var(--accent-blue) 19 处、var(--brand) 11 处、
+      var(--link) 5 处，外加 #fff / #829eff / #a2dabb / #8eb7ed 等硬编码。
+      同一个键盘焦点，走到不同角落换一种颜色。
+   ② disabled 用了 10 个不同的 opacity：.45 / .5 / .55 / .58 / .6 / .65 …
+      而且只降透明度，"不能点"和"还没加载完"长得一模一样。
+   ③ 整个 renderer 只有 9 条 :active 规则，写法还互不相同（composer 是
+      scale(.95)，别处没有）。点下去大多没有任何反馈 —— 在 CLI 回话之前
+      用户不知道这一下点上没有，这正是提交可靠性那条铁律最怕的"静默"。
+
+   —— 这一层只写什么 ——
+   outline / box-shadow / transform / filter / cursor / opacity /
+   font-variant-numeric / position:relative + ::after。
+   **没有一条落在 width · height · padding · margin · border-width ·
+   font-size · gap 上**，所以任何控件的 boundingRect 都不变。
+   tests/unit-controls-layer.test.js 用源码断言守这一条。
+
+   —— 加载顺序：必须是最后一张样式表 ——
+   本文件由 index.html 用独立 <link id="controls-layer"> 挂在所有样式表之后。
+
+   **不能改回 styles.css 里的 @import**。@import 进来的表排在宿主表自己的位置
+   （styles.css 是 index.html 第 10 行），而 memory-panel.css（第 26 行）、
+   file-manager-panel.css（第 27 行）里各自写着 .mp-btn:disabled、
+   .btn-header-tool:disabled —— 同 specificity 时它们在后面，本层会被压掉。
+   2026-09-19 第一版就是这么写的，CDP 实测才发现整层对那几个控件无效。
+
+   顺带一个副作用也很重要：@import 进来的 CSSStyleSheet 设 disabled=true
+   在 Chromium 里不起作用，独立 <link> 才能开关 —— 没有这个开关，
+   controls-layer-cdp-e2e.js 的「开/关两次测量」根本没法做。
+
+   —— 名单怎么维护 ——
+   下面每个规则块都重复同一份控件名单。CSS 没有选择器变量，重复是故意的：
+   新增控件时在每块里各加一行，比抽象成 :where() 更好读也更好 grep。
+   ========================================================================= */
+
+:root {
+  /* 一个禁用不透明度，取代原来的十个 */
+  --ctl-disabled-opacity: 0.45;
+  /* 焦点环：默认走品牌色 */
+  --ctl-focus-ring: var(--brand);
+  /* 落在品牌色实底上的控件（发送键等），环要用高对比的前景色，否则同色隐身 */
+  --ctl-focus-ring-on-fill: var(--fg-strong);
+}
+
+/* -------------------------------------------------------------------------
+   1 · 命中区：视觉盒子不变，可点范围各方向外扩 3px
+   -------------------------------------------------------------------------
+   顶栏和工具条上那些 26–28px 的图标键贴着窗口边缘，点起来要瞄。
+   用伪元素外扩，::after 不参与布局，视觉与排版一个像素不动。
+   3px 而不是 4px：rail 与各工具条的按钮间距是 6px，两侧各 3px 刚好相接不重叠。
+   **名单的准入条件**：这个类在全仓不能有任何 position 声明，也不能已有
+   ::after / ::before 规则。否则 position:relative 要么把别人的定位改掉，
+   要么被更高 specificity 压成 static —— 后者更糟：::after 会去挂最近的
+   定位祖先，变成一大块看不见的点击遮罩盖在界面上。
+
+   .btn-expand-sidebar 就是被这条挡在名单外的：shell-sidebar-terminal.css
+   给它 position:absolute，toolbar.css 又用 .app-toolbar .btn-expand-sidebar
+   (0,2,0) 压成 static。2026-09-19 首版把它放进了名单，CDP 实测
+   computed position 仍是 static 才发现。它的 :active / :focus-visible /
+   :disabled 仍然归本层管，只是不做命中区外扩。
+
+   发送按钮在可滚动的 composer 里，不能外扩：绝对定位的伪元素虽不影响
+   boundingRect，却会扩大 scrollWidth/scrollHeight，挤出两根滚动条。
+   发送按钮沿用原本的 32px 命中区；状态样式仍由本层统一。
+   tests/unit-controls-layer.test.js 有一条守卫自动跑这个准入条件，
+   以后往名单里加控件时会被它拦住。
+   ------------------------------------------------------------------------- */
+.btn-options,
+.btn-rail-theme,
+.btn-collapse-sidebar,
+.btn-zoom,
+.btn-close-session,
+.btn-header-tool,
+.btn-caret,
+.btn-theme,
+.hub-new-instance {
+  position: relative;
+}
+
+.btn-options::after,
+.btn-rail-theme::after,
+.btn-collapse-sidebar::after,
+.btn-zoom::after,
+.btn-close-session::after,
+.btn-header-tool::after,
+.btn-caret::after,
+.btn-theme::after,
+.hub-new-instance::after {
+  content: "";
+  position: absolute;
+  inset: -3px;
+}
+
+/* -------------------------------------------------------------------------
+   2 · 按下：统一下沉 1px
+   -------------------------------------------------------------------------
+   transform 不进布局，也不改变盒子尺寸。
+   :not(:disabled) 是必须的 —— 禁用的键按下去不该有反馈。
+   ------------------------------------------------------------------------- */
+.btn-shell-nav:not(:disabled):active,
+.btn-options:not(:disabled):active,
+.btn-rail-theme:not(:disabled):active,
+.btn-expand-sidebar:not(:disabled):active,
+.btn-collapse-sidebar:not(:disabled):active,
+.btn-zoom:not(:disabled):active,
+.btn-close-session:not(:disabled):active,
+.btn-header-tool:not(:disabled):active,
+.btn-caret:not(:disabled):active,
+.btn-theme:not(:disabled):active,
+.hub-new-instance:not(:disabled):active,
+.rail-usage-button:not(:disabled):active,
+.mp-btn:not(:disabled):active,
+.mp-tab:not(:disabled):active,
+.fi-stuck-resend:not(:disabled):active,
+.fi-stuck-dismiss:not(:disabled):active {
+  transform: translateY(1px);
+}
+
+/* 发送键原来是 scale(.95)，和别处不是一种语言；统一成同样的下沉。
+   composer.css 的 .composer-rail .floating-input-send:active 是 (0,2,0)，
+   这里也必须带一层祖先类才压得住。 */
+.composer-rail .floating-input-send:not(:disabled):active,
+.floating-input-send:not(:disabled):active,
+.mr-send-btn:not(:disabled):active {
+  transform: translateY(1px);
+}
+
+/* -------------------------------------------------------------------------
+   3 · 焦点：一种颜色、一种几何
+   -------------------------------------------------------------------------
+   原来 8 种颜色统一成 --ctl-focus-ring，offset 统一 2px。
+   发送键这类本身就是品牌色实底的控件单列一条，改用高对比前景色 ——
+   品牌色的环压在品牌色的底上等于没有。
+   这里不动 .launch-split 的白色内环：那处已经专门解决过同一个问题
+   （outline-offset:-3px 的内嵌白环），再覆盖只会打架。
+   ------------------------------------------------------------------------- */
+.btn-shell-nav:focus-visible,
+.btn-options:focus-visible,
+.btn-rail-theme:focus-visible,
+.btn-expand-sidebar:focus-visible,
+.btn-collapse-sidebar:focus-visible,
+.btn-zoom:focus-visible,
+.btn-close-session:focus-visible,
+.btn-header-tool:focus-visible,
+.btn-caret:focus-visible,
+.btn-theme:focus-visible,
+.hub-new-instance:focus-visible,
+.rail-usage-button:focus-visible,
+.mp-btn:focus-visible,
+.mp-tab:focus-visible,
+.fi-stuck-resend:focus-visible,
+.fi-stuck-dismiss:focus-visible {
+  outline: 2px solid var(--ctl-focus-ring);
+  outline-offset: 2px;
+}
+
+.composer-rail .floating-input-send:focus-visible,
+.floating-input-send:focus-visible,
+.mr-send-btn:focus-visible {
+  outline: 2px solid var(--ctl-focus-ring-on-fill);
+  outline-offset: 2px;
+}
+
+/* -------------------------------------------------------------------------
+   4 · 禁用：一个不透明度 + 明确的光标
+   -------------------------------------------------------------------------
+   十个 opacity 收成一个变量。更要紧的是补上 cursor:not-allowed ——
+   光有半透明，"不能点"和"没加载完"无从分辨；光标是最省地方的区分。
+   :disabled 之外也认 [aria-disabled='true']：Hub 里有一批用 div/span
+   扮演按钮的地方走的是后者。
+   ------------------------------------------------------------------------- */
+.btn-shell-nav:disabled,
+.btn-options:disabled,
+.btn-rail-theme:disabled,
+.btn-expand-sidebar:disabled,
+.btn-collapse-sidebar:disabled,
+.btn-zoom:disabled,
+.btn-close-session:disabled,
+.btn-header-tool:disabled,
+.btn-caret:disabled,
+.btn-theme:disabled,
+.hub-new-instance:disabled,
+.rail-usage-button:disabled,
+.mp-btn:disabled,
+.mp-tab:disabled,
+.floating-input-send:disabled,
+.mr-send-btn:disabled,
+.btn-shell-nav[aria-disabled='true'],
+.btn-options[aria-disabled='true'],
+.btn-header-tool[aria-disabled='true'],
+.mp-btn[aria-disabled='true'],
+.mp-tab[aria-disabled='true'] {
+  opacity: var(--ctl-disabled-opacity);
+  cursor: not-allowed;
+  transform: none;
+}
+
+/* 注：仓库里没有任何地方写 data-busy，所以"正在办"用 cursor:wait 这条留给
+   真有状态源的时候再加。现有的两处（.fi-stuck-resend:disabled 与
+   .launch-split #btn-new:disabled）本来就是 wait，不在本层管辖范围，保持原样。 */
+
+/* -------------------------------------------------------------------------
+   5 · 数字：等宽数字位
+   -------------------------------------------------------------------------
+   用量百分比、时长、PID、CPU / 内存这几行一直在轻微横向抖动 ——
+   48% 掉到 9% 时数字宽度变了。
+   这些位置本来就走 --font-mono，tabular-nums 在等宽字体上不改变字形宽度
+   （隔离实测：同一串 v1.6.187 开与不开都是 60.88px），
+   所以是纯收益，不会挪动排版。
+   ------------------------------------------------------------------------- */
+.rail-usage-button,
+.usage-popover,
+.sidebar-account-usage,
+#hub-version,
+.hub-pid,
+.session-item .sl-time,
+.turn-meta {
+  font-variant-numeric: tabular-nums;
+}
+
+/* -------------------------------------------------------------------------
+   6 · 减少动态偏好
+   -------------------------------------------------------------------------
+   按下位移属于"非必要动效"，关掉。焦点环和禁用态必须保留 —— 那是可用性，
+   不是装饰。
+   ------------------------------------------------------------------------- */
+@media (prefers-reduced-motion: reduce) {
+  .btn-shell-nav:not(:disabled):active,
+  .btn-options:not(:disabled):active,
+  .btn-rail-theme:not(:disabled):active,
+  .btn-expand-sidebar:not(:disabled):active,
+  .btn-collapse-sidebar:not(:disabled):active,
+  .btn-zoom:not(:disabled):active,
+  .btn-close-session:not(:disabled):active,
+  .btn-header-tool:not(:disabled):active,
+  .btn-caret:not(:disabled):active,
+  .btn-theme:not(:disabled):active,
+  .rail-usage-button:not(:disabled):active,
+  .mp-btn:not(:disabled):active,
+  .mp-tab:not(:disabled):active,
+  .fi-stuck-resend:not(:disabled):active,
+  .fi-stuck-dismiss:not(:disabled):active,
+  .composer-rail .floating-input-send:not(:disabled):active,
+  .floating-input-send:not(:disabled):active,
+  .mr-send-btn:not(:disabled):active {
+    transform: none;
+  }
+}

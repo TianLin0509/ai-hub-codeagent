@@ -1,0 +1,1917 @@
+/* Layout */
+.app-container {
+  display: flex;
+  height: 100%;
+  width: 100%;
+  position: relative;
+}
+
+/* Session list sidebar */
+.session-sidebar {
+  width: 280px;
+  min-width: 280px;
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-primary);
+  transition: width 180ms ease, min-width 180ms ease;
+  overflow: hidden;
+}
+
+.app-container.sidebar-collapsed .session-sidebar {
+  width: 0;
+  min-width: 0;
+  border-right: none;
+}
+
+.btn-collapse-sidebar {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+  border-radius: var(--radius-xs);
+  width: 24px;
+  height: 24px;
+  cursor: pointer;
+  font-size: 11px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  transition: color 120ms, border-color 120ms;
+}
+.btn-collapse-sidebar:hover {
+  color: var(--text-primary);
+  border-color: var(--text-secondary);
+}
+
+.btn-expand-sidebar {
+  display: none;
+  position: absolute;
+  top: 10px;
+  left: 8px;
+  z-index: 50;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+  border-radius: var(--radius-xs);
+  width: 26px;
+  height: 26px;
+  cursor: pointer;
+  font-size: 12px;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+}
+.btn-expand-sidebar:hover {
+  color: var(--text-primary);
+  border-color: var(--text-secondary);
+}
+.app-container.sidebar-collapsed .btn-expand-sidebar {
+  display: flex;
+}
+
+.sidebar-header {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  /* 2026-09-04：侧栏固定 280px 且 overflow:hidden，这排按钮实测需要 387px，
+     加 RAN 之前「学习」就已经压线、⚙ 已被裁到框外。改成允许换行，
+     少一个都不会丢。放不下才换行，宽度够时外观不变。 */
+  flex-wrap: wrap;
+  row-gap: 6px;
+}
+
+/* ===== 4 按钮 · GitHub Primer 风格(v0.8.4) ===== */
+.btn-icon {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+}
+.btn-caret {
+  width: 10px;
+  height: 10px;
+  opacity: 0.7;
+  flex-shrink: 0;
+}
+.btn-label {
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0.2px;
+}
+
+.btn-new-session {
+  height: 28px;
+  padding: 0 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid rgba(var(--rgb-overlay), 0.1);
+  background: #238636;
+  color: white;
+  font-weight: 500;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+  font-family: inherit;
+  font-size: 12px;
+  transition: background 0.12s;
+}
+.btn-new-session:hover {
+  background: #2ea043;
+}
+
+.btn-options {
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-sm);
+  background: rgba(var(--rgb-overlay), 0.06);
+  border: 1px solid rgba(var(--rgb-overlay), 0.1);
+  color: var(--text-primary);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  font-family: inherit;
+  transition: background 0.12s, border-color 0.12s;
+}
+.btn-options:hover {
+  background: rgba(var(--rgb-overlay), 0.1);
+  border-color: rgba(var(--rgb-overlay), 0.2);
+}
+
+.options-wrapper {
+  position: relative;
+}
+.options-menu {
+  position: absolute;
+  top: 100%;
+  right: -4px;
+  margin-top: 6px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 6px 0;
+  min-width: 150px;
+  z-index: 1000;
+  box-shadow: 0 8px 24px rgba(var(--rgb-shadow), 0.45), 0 0 0 1px rgba(var(--rgb-overlay), 0.04);
+  animation: dropdown-in 120ms ease-out;
+}
+@keyframes dropdown-in {
+  from { opacity: 0; transform: translateY(-4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.options-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 14px;
+  color: var(--text-secondary);
+  font-size: 13px;
+  cursor: pointer;
+  transition: background 100ms, color 100ms;
+  line-height: 1.3;
+}
+.options-item:hover {
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+}
+/* —— 选项菜单里的主题选择器（2026-08-26） ——
+   选项菜单本身是居中弹窗（min-width 320px），放得下带色板的整行条目。 */
+.options-section-label {
+  padding: 8px 14px 4px;
+  color: var(--fg-faint);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+.options-theme-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 0 6px;
+}
+.options-theme-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 8px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--fg-muted);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+  transition: background 100ms, border-color 100ms, color 100ms;
+}
+.options-theme-item:hover {
+  background: var(--surface-hover);
+  color: var(--fg-strong);
+}
+.options-theme-item.selected {
+  background: var(--brand-tint);
+  border-color: var(--brand-tint-border);
+  color: var(--fg-strong);
+}
+.options-theme-swatch {
+  display: flex;
+  flex: none;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid var(--border-mid);
+  border-radius: var(--radius-xs);
+  background: var(--surface-canvas);
+}
+.options-theme-swatch i {
+  display: block;
+  width: 11px;
+  height: 16px;
+  border-radius: 2px;
+}
+.options-theme-copy {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  line-height: 1.3;
+}
+.options-theme-copy strong {
+  font-weight: 600;
+  font-size: 13px;
+  color: inherit;
+}
+.options-theme-copy small {
+  color: var(--fg-faint);
+  font-size: 11px;
+  margin-top: 2px;
+}
+.options-theme-check {
+  margin-left: auto;
+  flex: none;
+  color: var(--brand);
+  font-weight: 700;
+  opacity: 0;
+}
+.options-theme-item.selected .options-theme-check { opacity: 1; }
+.options-theme-note {
+  padding: 6px 14px 2px;
+  color: var(--fg-faint);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.options-divider {
+  height: 1px;
+  background: var(--border);
+  margin: 4px 0;
+}
+
+.btn-zoom {
+  background: rgba(var(--rgb-overlay), 0.03);
+  border: 1px solid rgba(var(--rgb-overlay), 0.06);
+  color: var(--text-muted);
+  border-radius: var(--radius-sm);
+  height: 26px;
+  min-width: 30px;
+  padding: 0 6px;
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 600;
+  font-family: inherit;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  letter-spacing: 0.5px;
+}
+.btn-zoom:hover {
+  color: var(--text-primary);
+  background: rgba(var(--rgb-info), 0.08);
+  border-color: rgba(var(--rgb-info), 0.2);
+  box-shadow: 0 0 8px rgba(var(--rgb-info), 0.06);
+}
+
+/* Resume / search modal */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(var(--rgb-scrim), 0.55);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  z-index: 200;
+  padding-top: 8vh;
+}
+.modal {
+  width: min(760px, 90vw);
+  max-height: 78vh;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  box-shadow: var(--shadow-lg);
+}
+.modal-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-tertiary);
+}
+.modal-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  white-space: nowrap;
+}
+.modal-filter {
+  flex: 1;
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  color: var(--text-primary);
+  border-radius: var(--radius-xs);
+  padding: 5px 8px;
+  font-size: 12px;
+  outline: none;
+}
+.modal-filter:focus {
+  border-color: var(--accent-green, var(--mark-green-strong));
+}
+.modal-close {
+  background: transparent;
+  border: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 14px;
+  padding: 2px 6px;
+}
+.modal-close:hover { color: var(--text-primary); }
+
+.modal-body {
+  overflow-y: auto;
+  flex: 1;
+}
+.modal-empty {
+  padding: 24px;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+.modal-row {
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.modal-row:hover {
+  background: var(--session-active, rgba(var(--rgb-overlay), 0.04));
+}
+.modal-row-main {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.modal-row-preview {
+  color: var(--text-primary);
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.modal-row-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 10px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+.modal-meta-time { color: var(--text-secondary); white-space: nowrap; }
+.modal-meta-chip {
+  padding: 1px 6px;
+  border-radius: var(--radius-md);
+  background: rgba(var(--rgb-neutral), 0.15);
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+.modal-meta-cwd {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 320px;
+}
+.modal-row mark {
+  background: rgba(var(--rgb-warning), 0.35);
+  color: var(--text-primary);
+  padding: 0 1px;
+  border-radius: var(--radius-xs);
+}
+
+.burn-badge {
+  margin-left: 4px;
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: var(--radius-md);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.burn-badge.ok     { background: rgba(var(--rgb-success), 0.16);  color: var(--mark-green); }
+.burn-badge.warn   { background: rgba(var(--rgb-warning), 0.18); color: var(--mark-amber-soft); }
+.burn-badge.danger { background: rgba(var(--rgb-danger), 0.20);  color: var(--mark-red); }
+
+.session-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 4px;
+}
+
+/* Session item */
+.session-item {
+  padding: 12px 14px;
+  margin: 4px 4px;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  position: relative;
+  transition: transform 0.2s ease, box-shadow 0.25s ease, border-color 0.25s ease, background 0.2s ease;
+  border-left: 3px solid transparent;
+  border: 1px solid transparent;
+  overflow: hidden;
+}
+.session-item::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: var(--radius-md);
+  opacity: 0;
+  background: radial-gradient(circle at var(--mx, 50%) var(--my, 50%), rgba(var(--rgb-info), 0.07), transparent 60%);
+  transition: opacity 0.3s;
+  pointer-events: none;
+}
+.session-item:hover::before { opacity: 1; }
+.session-item .ripple-fx {
+  position: absolute;
+  border-radius: 50%;
+  background: rgba(var(--rgb-info), 0.12);
+  transform: scale(0);
+  animation: ripple-expand 0.45s ease-out forwards;
+  pointer-events: none;
+}
+@keyframes ripple-expand { to { transform: scale(4); opacity: 0; } }
+
+.session-item:hover {
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-md);
+  border-color: rgba(var(--rgb-info), 0.12);
+  background: var(--bg-tertiary);
+}
+.session-item:active {
+  transform: translateY(0) scale(0.99);
+}
+
+.session-item.selected {
+  background: var(--session-selected);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent-blue);
+  box-shadow: 0 0 10px rgba(var(--rgb-info), 0.06);
+}
+
+.session-item.has-unread {
+  border-left: 3px solid var(--accent-red);
+  box-shadow: 0 0 8px rgba(var(--rgb-danger), 0.10);
+}
+
+.session-item-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+/* 2026-06-28 maintainer：session 标题统一 10px（普通 + 群聊一致），同 150px 宽容纳约 1.5× 文字、省空间。 */
+.session-title {
+  font-size: 10px;
+  color: var(--text-primary);
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 150px;
+}
+
+.session-header-right {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+/* v0.13 · B2 unified "等你" pill — 红色普通新消息 / 橙色 waiting-badge 紧急（互斥显示） */
+.unread-badge {
+  background: var(--accent-red);
+  color: var(--fg-inverse);
+  font-size: 10px;
+  padding: 2px 7px;
+  border-radius: var(--radius-md);
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  box-shadow: 0 0 0 0 rgba(var(--rgb-danger), 0.55);
+  animation: unread-pulse 1.8s cubic-bezier(0.66, 0, 0, 1) infinite;
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+@keyframes unread-pulse {
+  0%   { box-shadow: 0 0 0 0 rgba(var(--rgb-danger), 0.55); }
+  70%  { box-shadow: 0 0 0 6px rgba(var(--rgb-danger), 0); }
+  100% { box-shadow: 0 0 0 0 rgba(var(--rgb-danger), 0); }
+}
+
+.waiting-badge {
+  background: var(--accent-orange, var(--mark-amber));
+  color: #0d1117;
+  font-size: 10px;
+  padding: 2px 6px;
+  border-radius: var(--radius-md);
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
+.dormant-badge {
+  background: rgba(var(--rgb-neutral), 0.18);
+  color: var(--text-secondary);
+  border: 1px solid rgba(var(--rgb-neutral), 0.36);
+  font-size: 10px;
+  padding: 2px 6px;
+  border-radius: var(--radius-md);
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
+.session-item.is-waiting {
+  background: rgba(var(--rgb-warning), 0.10);
+  border-left: 3px solid var(--accent-orange, var(--mark-amber));
+}
+
+.session-item.is-waiting.has-unread {
+  border-left-color: var(--accent-orange, var(--mark-amber));
+}
+
+.session-time {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--fg-strong);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.session-preview {
+  font-size: 13px;
+  color: var(--text-secondary);
+  margin-top: 5px;
+  white-space: pre-line;
+  /* 2026-06-21 maintainer：原 max-height:4.2em + overflow:hidden 把预览硬切 3 行、无任何
+     省略号，看着像缺字。改用 line-clamp，超 3 行结尾显示 … 提示"还有更多"。 */
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+  overflow: hidden;
+  line-height: 1.4;
+}
+
+.session-status {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  margin-right: 6px;
+  vertical-align: middle;
+  position: relative;
+}
+
+.session-status.running {
+  background: var(--accent-green);
+  box-shadow: 0 0 4px rgba(var(--rgb-success), 0.5);
+  animation: status-glow 1.8s ease-in-out infinite;
+}
+.session-status.running::before {
+  content: '';
+  position: absolute;
+  inset: -3px;
+  border-radius: 50%;
+  border: 1.5px solid var(--accent-green);
+  animation: status-ring 1.8s ease-in-out infinite;
+}
+@keyframes status-ring {
+  0%, 100% { transform: scale(1); opacity: 0.5; }
+  50% { transform: scale(1.7); opacity: 0; }
+}
+@keyframes status-glow {
+  0%, 100% { box-shadow: 0 0 4px rgba(var(--rgb-success), 0.4); }
+  50% { box-shadow: 0 0 8px rgba(var(--rgb-success), 0.7); }
+}
+
+.session-status.idle {
+  background: transparent;
+  border: 1.5px solid var(--text-muted);
+}
+
+.session-status.dormant {
+  width: 8px;
+  height: 8px;
+  border-radius: var(--radius-xs);
+  background: rgba(var(--rgb-neutral), 0.18);
+  border: 1px solid var(--text-muted);
+  transform: translateY(-1px);
+}
+
+/* Dormant session: persisted from last run, PTY not yet spawned. Faded look +
+   a subtle ▶ glyph on the preview line to signal "click to resume". */
+.session-item.dormant {
+  background: rgba(var(--rgb-neutral), 0.055);
+  border-left: 3px solid var(--text-muted);
+  box-shadow: inset 0 0 0 1px rgba(var(--rgb-neutral), 0.12);
+}
+.session-item.dormant.has-unread,
+.session-item.dormant.is-waiting {
+  border-left-color: var(--text-muted);
+  box-shadow: inset 0 0 0 1px rgba(var(--rgb-neutral), 0.12);
+}
+.session-item.dormant .session-title,
+.session-item.dormant .session-preview {
+  opacity: 0.72;
+}
+.session-item.dormant .session-preview::before {
+  content: '▶ ';
+  color: var(--accent-blue);
+  opacity: 0.7;
+  font-size: 10px;
+}
+.session-item.dormant:hover {
+  background: var(--bg-tertiary);
+}
+.session-item.dormant:hover .session-title,
+.session-item.dormant:hover .session-preview {
+  opacity: 0.85;
+}
+
+.session-item.dormant .session-preview::before {
+  content: '休眠 · ';
+  color: var(--text-muted);
+  font-weight: 700;
+  opacity: 0.95;
+  font-size: 12px;
+}
+.session-item.dormant:hover {
+  border-left-color: var(--accent-blue);
+}
+.session-item.dormant:hover .session-title,
+.session-item.dormant:hover .session-preview {
+  opacity: 0.92;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+/* Terminal panel */
+.terminal-panel {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-primary);
+  min-width: 0;
+  position: relative;  /* anchor for .terminal-search overlay */
+}
+
+.session-resume-pending {
+  flex: 1;
+  min-height: 220px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  color: var(--text-secondary);
+}
+.session-resume-pending > div {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.session-resume-pending strong { color: var(--text-primary); font-size: 16px; }
+.session-resume-pending span:not(.session-resume-spinner) { font-size: 12px; }
+.session-resume-pending.failed strong { color: var(--accent-red); }
+.session-resume-spinner {
+  width: 22px;
+  height: 22px;
+  border: 2px solid rgba(var(--rgb-info), .25);
+  border-top-color: var(--accent-blue);
+  border-radius: 50%;
+  animation: session-resume-spin .8s linear infinite;
+}
+.session-resume-pending.failed .session-resume-spinner {
+  animation: none;
+  border-color: var(--accent-red);
+}
+@keyframes session-resume-spin { to { transform: rotate(360deg); } }
+
+.terminal-header {
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  background: var(--bg-secondary);
+}
+
+.terminal-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-width: 0;
+  gap: 8px;
+}
+
+.terminal-header-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 6px;
+}
+
+.terminal-metrics-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 11px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  min-height: 14px;
+}
+
+/* Inline variant: metrics sit on the same row as the title (no wrap below). */
+.terminal-metrics-row.inline {
+  margin-left: 12px;
+  padding-left: 12px;
+  border-left: 1px solid var(--border);
+  min-width: 0;          /* allow cwd ellipsis inside flex */
+  flex: 1 1 auto;
+  overflow: hidden;
+}
+.terminal-metrics-row.inline:empty {
+  border-left: none;
+  margin-left: 0;
+  padding-left: 0;
+}
+
+.terminal-metrics-row:empty {
+  display: none;
+}
+
+.terminal-metrics-row .metric-sep {
+  opacity: 0.35;
+}
+
+.terminal-metrics-row .metric-cwd {
+  cursor: pointer;
+  color: var(--text-secondary);
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  padding: 2px 4px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  font: inherit;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 480px;
+}
+
+.terminal-metrics-row .metric-cwd > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.terminal-metrics-row .metric-cwd > svg {
+  flex: 0 0 auto;
+  color: var(--mark-amber-soft);
+}
+
+.terminal-metrics-row .metric-cwd:hover {
+  color: var(--text-primary);
+  border-color: var(--border);
+  background: var(--bg-tertiary);
+  text-decoration: none;
+}
+
+.terminal-metrics-row .metric-cwd:focus-visible {
+  outline: 2px solid rgba(var(--rgb-info), .72);
+  outline-offset: 1px;
+}
+
+/* 归档提示态。视觉与 AI 群聊 header 的 .mr-workspace-chip.has-archive-hint 保持一致
+   （同一个 class 名、同一组琥珀色），只是底座不同：那边是 chip，这边是一行纯文本。
+   行为由 WorkspaceController.attachArchiveHint 统一提供，两处共用。
+   末尾的小圆点用 radial-gradient 画在 padding 里，而不是 ::after —— 否则会被
+   .metric-cwd 自己的 text-overflow: ellipsis 一起省略掉。
+   刻意保持静态：不闪烁、不动画、不遮挡。 */
+.terminal-metrics-row .metric-cwd.has-archive-hint {
+  padding: 1px 16px 1px 6px;
+  border: 1px solid rgba(var(--rgb-warning), .55);
+  border-radius: var(--radius-sm);
+  background-color: rgba(var(--rgb-warning), .10);
+  background-image: radial-gradient(circle at calc(100% - 8px) 50%, #d29922 0 2.5px, transparent 2.6px);
+  color: var(--text-primary);
+}
+
+.terminal-metrics-row .metric-cwd.has-archive-hint:hover {
+  border-color: rgba(var(--rgb-warning), .85);
+  text-decoration: none;
+}
+
+.terminal-metrics-row .metric-diff-add {
+  color: var(--accent-green, var(--mark-green-strong));
+}
+
+.terminal-metrics-row .metric-diff-rem {
+  color: var(--accent-red, var(--mark-red-strong));
+}
+
+.usage-meta {
+  margin-top: 3px;
+  font-size: 10px;
+  color: var(--text-muted);
+  text-align: right;
+}
+
+.usage-meta.warn { color: var(--accent-orange, var(--mark-amber)); }
+.usage-meta.danger { color: var(--accent-red, var(--mark-red-strong)); }
+
+.terminal-title-section {
+  display: flex;
+  min-width: 0;
+  flex: 1 1 auto;
+  align-items: center;
+  gap: 10px;
+  overflow: hidden;
+}
+
+.terminal-title {
+  min-width: 64px;
+  max-width: min(280px, 28vw);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+.terminal-title {
+  cursor: pointer;
+}
+
+.terminal-title:hover {
+  text-decoration: underline;
+  text-decoration-style: dashed;
+  text-underline-offset: 3px;
+}
+
+.terminal-title-input {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-primary);
+  background: var(--bg-tertiary);
+  border: 1px solid var(--accent-blue);
+  border-radius: var(--radius-xs);
+  padding: 2px 6px;
+  outline: none;
+  width: 160px;
+}
+
+.terminal-status {
+  min-height: 22px;
+  box-sizing: border-box;
+  display: inline-flex;
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: min(300px, 32vw);
+  align-items: center;
+  gap: 5px;
+  padding: 2px 8px;
+  border: 1px solid rgba(var(--rgb-neutral), .26);
+  border-radius: var(--radius-pill);
+  background: rgba(var(--rgb-neutral), .07);
+  color: var(--text-muted);
+  font-size: 10.5px;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  transition: color 160ms ease, border-color 160ms ease, background 160ms ease;
+}
+
+.terminal-status-dot {
+  width: 6px;
+  height: 6px;
+  flex: 0 0 6px;
+  border: 1px solid currentColor;
+  border-radius: var(--radius-pill);
+  background: transparent;
+}
+
+.terminal-status-label { letter-spacing: .01em; }
+.terminal-status-meta {
+  padding-left: 5px;
+  border-left: 1px solid currentColor;
+  opacity: .74;
+  font-family: "Cascadia Code", Consolas, monospace;
+  font-size: 9.5px;
+  font-weight: 600;
+}
+.terminal-status-meta[hidden] { display: none; }
+.terminal-status-detail {
+  min-width: 0;
+  flex: 1 1 auto;
+  padding-left: 5px;
+  border-left: 1px solid currentColor;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  opacity: .86;
+  font-size: 9.5px;
+}
+.terminal-status-detail[hidden] { display: none; }
+
+.terminal-status.running {
+  border-color: rgba(var(--rgb-success), .42);
+  background: rgba(35, 134, 54, .13);
+  color: var(--mark-green);
+}
+.terminal-status.running .terminal-status-dot {
+  border-color: var(--mark-green-strong);
+  background: var(--mark-green-strong);
+  box-shadow: 0 0 0 3px rgba(var(--rgb-success), .12), 0 0 9px rgba(var(--rgb-success), .48);
+  animation: terminal-runtime-pulse 1.8s ease-in-out infinite;
+}
+.terminal-status.starting {
+  border-color: rgba(var(--rgb-info), .38);
+  background: rgba(56, 139, 253, .10);
+  color: var(--mark-blue);
+}
+.terminal-status.starting .terminal-status-dot {
+  border-color: var(--mark-blue);
+  background: var(--mark-blue);
+  animation: terminal-runtime-pulse 1.8s ease-in-out infinite;
+}
+
+.terminal-status.idle {
+  color: var(--text-muted);
+}
+.terminal-status.waiting {
+  border-color: rgba(var(--rgb-warning), .48);
+  background: rgba(var(--rgb-warning), .12);
+  color: var(--mark-amber-soft);
+}
+.terminal-status.waiting .terminal-status-dot {
+  border-color: #e8b95f;
+  background: #e8b95f;
+}
+.terminal-status.completed {
+  border-color: rgba(var(--rgb-info), .38);
+  background: rgba(56, 139, 253, .11);
+  color: var(--mark-blue);
+}
+.terminal-status.completed .terminal-status-dot {
+  border-color: #75b6ff;
+  background: #75b6ff;
+}
+.terminal-status.failed {
+  border-color: rgba(var(--rgb-danger), .42);
+  background: rgba(var(--rgb-danger), .11);
+  color: var(--mark-red);
+}
+.terminal-status.failed .terminal-status-dot {
+  border-color: #ff8b84;
+  background: #ff8b84;
+}
+.terminal-status.dormant { opacity: .72; }
+.terminal-status.unknown {
+  border-style: dashed;
+  color: var(--mark-slate);
+}
+
+@keyframes terminal-runtime-pulse {
+  0%, 100% { transform: scale(.92); opacity: .72; }
+  50% { transform: scale(1.08); opacity: 1; }
+}
+
+@media (max-width: 900px) {
+  .terminal-title-section { gap: 7px; }
+  .terminal-title { max-width: 120px; }
+  .terminal-status { padding-inline: 6px; }
+  .terminal-status-meta { display: none; }
+  .terminal-status-detail { max-width: min(28vw, 180px); }
+  .terminal-model-badge {
+    min-width: 0;
+    max-width: 88px;
+    margin-left: 0;
+    padding-inline: 6px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .terminal-metrics-row.inline {
+    margin-left: 0;
+    padding-left: 0;
+    border-left: 0;
+  }
+  .terminal-metrics-row.inline > :not(.metric-cwd) { display: none; }
+}
+
+@media (max-width: 680px) {
+  .terminal-status-detail { display: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .terminal-status,
+  .terminal-status.running .terminal-status-dot,
+  .terminal-status.starting .terminal-status-dot { animation: none; transition: none; }
+}
+
+.terminal-cwd {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.btn-close-session {
+  background: rgba(var(--rgb-overlay), 0.03);
+  border: 1px solid rgba(var(--rgb-overlay), 0.06);
+  color: var(--text-muted);
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  width: 26px;
+  height: 26px;
+  border-radius: var(--radius-sm);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  transition: background 0.15s ease, color 0.15s ease, transform 0.12s ease;
+}
+
+.btn-close-session:hover {
+  color: var(--mark-red);
+  background: rgba(var(--rgb-danger), 0.1);
+  border-color: rgba(var(--rgb-danger), 0.25);
+  box-shadow: 0 0 8px rgba(var(--rgb-danger), 0.08);
+}
+
+.btn-close-session:active {
+  transform: scale(0.9);
+}
+
+.btn-close-session svg {
+  display: block;
+}
+
+.terminal-container {
+  flex: 1;
+  padding: 4px;
+  min-height: 0;
+  position: relative;
+
+  /* 方案 T1「深色终端岛」：xterm 在两个主题下都是深色（CLI 的 TUI 按深底画的，
+     反色读不清）。浅色主题下不硬切窗口，而是把这块恒深区域内缩 + 圆角 + 细环，
+     做成嵌入式终端控件 —— VS Code 浅色主题配深色集成终端是同一套心智。
+     深色下 inset/radius 为 0、ring 为 none，与从前逐像素相同。 */
+  margin: var(--machine-island-inset);
+  border-radius: var(--machine-island-radius);
+  overflow: hidden;
+  background: var(--machine-bg);
+  box-shadow: var(--machine-island-ring);
+}
+
+/* --- Sleek xterm scrollbar --- */
+.xterm-viewport::-webkit-scrollbar { width: 6px; }
+.xterm-viewport::-webkit-scrollbar-track { background: transparent; }
+.xterm-viewport::-webkit-scrollbar-thumb {
+  background: rgba(139, 148, 158, 0.15);
+  border-radius: 3px;
+}
+.xterm-viewport:hover::-webkit-scrollbar-thumb { background: rgba(139, 148, 158, 0.3); }
+.xterm-viewport::-webkit-scrollbar-thumb:hover { background: rgba(139, 148, 158, 0.45); }
+
+.terminal-minimap {
+  display: none;
+}
+
+.minimap-ticks {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;  /* let strip handle clicks except on individual ticks */
+}
+
+.minimap-tick {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 6px;
+  background: #ffb84d;
+  pointer-events: auto;
+  cursor: pointer;
+  opacity: 1;
+  box-shadow: 0 0 4px rgba(255, 184, 77, 0.7);
+}
+.minimap-tick:hover { height: 8px; opacity: 1; background: #ffc869; }
+
+.minimap-viewport {
+  position: absolute;
+  left: 0;
+  right: 0;
+  background: rgba(88, 166, 255, 0.20);
+  border-top: 1px solid rgba(88, 166, 255, 0.55);
+  border-bottom: 1px solid rgba(88, 166, 255, 0.55);
+  pointer-events: none;
+}
+
+.prompt-marker-layer {
+  position: absolute;
+  top: 4px;
+  left: 0;
+  right: 0;
+  bottom: 4px;
+  pointer-events: none;
+  z-index: 3;
+}
+
+.prompt-line-marker {
+  display: none;
+}
+
+.prompt-line-marker-active {
+  display: none;
+}
+
+.prompt-highlight {
+  position: absolute;
+  left: 0;
+  right: 12px;
+  background: rgba(var(--rgb-warning), 0.25);
+  pointer-events: none;
+  z-index: 4;
+  display: none;
+}
+
+@keyframes prompt-flash {
+  0% { opacity: 1; }
+  100% { opacity: 0; }
+}
+
+/* Empty state — 启动面板(0.8.2) */
+.empty-state {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+  padding: 40px 24px;
+  overflow: auto;
+}
+
+/* legacy hooks 保留(向后兼容,现版不再渲染) */
+.empty-state-icon { font-size: 48px; opacity: 0.3; }
+.empty-state-text { font-size: 14px; }
+.empty-state-hint { font-size: 12px; color: var(--text-muted); }
+
+/* Launcher — 三精灵海报(Option B,v0.8.3) */
+.launcher {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 18px;
+  width: 100%;
+  max-width: 560px;
+}
+
+.launcher-title {
+  font-size: 24px;
+  font-weight: 700;
+  color: var(--text-primary);
+  letter-spacing: 0.5px;
+  line-height: 1.2;
+}
+.launcher-subtitle {
+  font-size: 13px;
+  color: var(--text-muted);
+  max-width: 460px;
+  line-height: 1.6;
+  margin: 0 auto;
+}
+
+.launcher-cta {
+  margin-top: 4px;
+  background: var(--accent-blue);
+  color: var(--fg-inverse);
+  border: none;
+  padding: 12px 28px;
+  border-radius: var(--radius-md);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  font-family: inherit;
+  box-shadow: var(--shadow-md);
+  transition: transform 0.12s, box-shadow 0.12s;
+}
+.launcher-cta:hover {
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-md);
+}
+.launcher-cta:active {
+  transform: translateY(0);
+}
+
+.launcher-secondary {
+  font-size: 12px;
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+.launcher-link {
+  color: var(--text-secondary);
+  cursor: pointer;
+  padding: 1px 2px;
+  border-bottom: 1px dashed var(--border);
+  transition: color 0.12s, border-color 0.12s;
+  text-decoration: none;
+  margin: 0 2px;
+}
+.launcher-link:hover {
+  color: var(--accent-blue);
+  border-bottom-color: var(--accent-blue);
+}
+.launcher-sep {
+  color: var(--text-muted);
+  opacity: 0.5;
+}
+
+.launcher-kbd-row {
+  display: flex;
+  gap: 16px;
+  font-size: 10px;
+  color: var(--text-muted);
+  margin-top: 4px;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+}
+.launcher-version {
+  margin-left: auto;
+  opacity: 0.6;
+  font-family: ui-monospace, "SF Mono", monospace;
+  font-size: 10px;
+  color: var(--text-muted);
+}
+.launcher-kbd-row kbd {
+  display: inline-block;
+  padding: 1px 5px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xs);
+  font-family: ui-monospace, "SF Mono", monospace;
+  font-size: 10px;
+  color: var(--text-secondary);
+  margin: 0 1px;
+}
+
+/* New session dropdown */
+.new-session-wrapper {
+  position: relative;
+}
+
+.new-session-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 4px;
+  min-width: 200px;
+  z-index: 1000;
+  box-shadow: var(--shadow-md);
+}
+
+.menu-group-label {
+  font-size: 10px;
+  color: var(--text-muted);
+  padding: 8px 12px 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  font-weight: 600;
+  user-select: none;
+}
+
+.new-session-option {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  padding: 8px 12px;
+  background: none;
+  border: none;
+  color: var(--text-primary);
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+  border-radius: var(--radius-xs);
+  transition: background 0.15s;
+}
+
+.new-session-option:hover {
+  background: var(--bg-secondary);
+}
+
+.new-session-option .hint {
+  margin-left: auto;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.new-session-divider {
+  height: 1px;
+  background: var(--border);
+  margin: 4px 0;
+}
+
+/* Theme toggle button */
+.btn-theme {
+  background: none;
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+  width: 24px; height: 24px;
+  border-radius: var(--radius-xs);
+  cursor: pointer;
+  font-size: 12px;
+  padding: 0;
+  transition: all 0.15s;
+}
+.btn-theme:hover { color: var(--accent-blue); border-color: var(--accent-blue); }
+
+/* Right-click context menu */
+.context-menu {
+  position: fixed;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 4px;
+  min-width: 160px;
+  z-index: 200;
+  box-shadow: var(--shadow-md);
+}
+.context-menu-item {
+  display: block;
+  width: 100%;
+  padding: 8px 12px;
+  background: none;
+  border: none;
+  color: var(--text-primary);
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+  border-radius: var(--radius-xs);
+  transition: background 0.15s;
+}
+.context-menu-item:hover { background: var(--bg-secondary); }
+.context-menu-item:disabled {
+  color: var(--text-muted);
+  cursor: default;
+  opacity: .48;
+}
+.context-menu-item:disabled:hover { background: none; }
+.context-menu-item.danger { color: var(--accent-red); }
+.context-menu-item.danger:hover { background: rgba(var(--rgb-danger), 0.12); }
+.context-menu-separator {
+  height: 1px;
+  background: var(--border-color, rgba(var(--rgb-overlay), 0.10));
+  margin: 4px 0;
+}
+
+/* ════════════════════════════════════════════════════════════════
+   v1.5.1 (2026-06-13)：侧栏顶部弹出菜单升级为页面居中模态弹窗
+   起因：原 absolute 锚定按钮下方，被 .session-sidebar overflow:hidden
+        裁掉或被主面板覆盖。
+   方案：fixed 居中 + 全屏半透明遮罩 + 弹入动画；对齐 meeting-create-modal。
+   覆盖：.new-session-menu / .options-menu。
+   DOM 结构与外点关闭逻辑均不变；JS 仅增加遮罩点击关闭。
+   ════════════════════════════════════════════════════════════════ */
+.new-session-menu,
+.options-menu {
+  position: fixed !important;
+  top: 50% !important;
+  left: 50% !important;
+  right: auto !important;
+  margin: 0 !important;
+  transform: translate(-50%, -50%);
+  z-index: 10000;
+  min-width: 320px;
+  max-width: min(92vw, 480px);
+  max-height: 82vh;
+  overflow-y: auto;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border);
+  background: var(--bg-secondary);
+  box-shadow:
+    0 32px 96px rgba(var(--rgb-shadow), 0.55),
+    0 0 0 1px rgba(var(--rgb-overlay), 0.04),
+    0 2px 8px rgba(var(--rgb-shadow), 0.3);
+  animation: hub-modal-pop 200ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* 全屏 scrim。
+ *
+ * 2026-08-27 血泪：这里原本是 `background: rgba(scrim,.55)` + `z-index: -1` 的伪元素。
+ * `z-index:-1` 的子元素画在**父元素自己的背景之上、内容之下**，所以那层 55% 的遮罩
+ * 会把面板底色一起压暗；深色主题下遮罩和面板同色，看不出来，一换浅色主题启动中心
+ * 的标题栏和右侧面板就变成一片灰（有自己背景的子元素——左侧导航、白卡片、页脚——
+ * 反而正常，于是灰得很没道理）。
+ *
+ * 现在拆成两件事：
+ *   ::before 只留**透明**的命中区（配合 backdrop-filter 做背景虚化），负责接收
+ *            面板外的点击交给 JS 关闭；不带颜色就不会压暗任何东西。
+ *   变暗改用超大 spread 的 box-shadow —— 它永远画在元素**之外**，天然不覆盖面板。
+ *
+ * 改这里之前先在浅色主题下开一次启动中心看效果。 */
+.new-session-menu::before,
+.options-menu::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  background: transparent;
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  z-index: -1;
+  animation: hub-modal-scrim-fade 200ms ease-out;
+}
+.new-session-menu,
+.options-menu {
+  box-shadow:
+    0 32px 96px rgba(var(--rgb-shadow), 0.35),
+    0 0 0 1px var(--border-mid),
+    0 0 0 100vmax rgba(var(--rgb-scrim), 0.55);
+}
+
+@keyframes hub-modal-pop {
+  from { opacity: 0; transform: translate(-50%, -48%) scale(0.94); }
+  to   { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+}
+@keyframes hub-modal-scrim-fade {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+/* —— 各弹窗的尺寸/留白微调（仍可被滚动条兜底） —— */
+.new-session-menu {
+  min-width: 360px;
+  padding: 14px 10px;
+}
+.options-menu {
+  min-width: 260px;
+  padding: 10px 0;
+}
+
+/* —— 列表型弹窗顶部 group label 紧凑一点 —— */
+.new-session-menu .menu-group-label:first-child {
+  font-size: 11px;
+  padding-top: 4px;
+}
+
+/* —— options-menu 项目加圆角呼吸感 —— */
+.options-menu .options-item {
+  margin: 0 8px;
+  border-radius: var(--radius-sm);
+  padding: 10px 14px;
+}
+.options-menu .options-divider {
+  margin: 6px 12px;
+}
+
+/* —— new-session / resume 选项条更舒服的 hover —— */
+.new-session-menu .new-session-option {
+  border-radius: var(--radius-sm);
+  margin: 0 4px;
+}
+
+/* Keep the hit area transparent on hover too; dimming belongs outside the panel. */
+
+
+/* =========================================================================
+   2026-07-19 maintainer · 方案C：顶部配额 ticker + 侧栏密排行/分区 + 底部聚合条
+   ========================================================================= */
+.app-container { flex-direction: column; }
+.app-body { display: flex; flex: 1; min-height: 0; width: 100%; position: relative; }
+
+/* --- 顶部全局配额 ticker（原侧栏 account-usage 面板迁移） --- */
+.quota-ticker {
+  display: flex; align-items: center; gap: 12px;
+  height: 30px; padding: 0 12px; flex: none;
+  background: var(--surface-raised);
+  border-bottom: 1px solid var(--border-subtle);
+  font-size: 11px; color: var(--fg-muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap; overflow: hidden;
+  user-select: none;
+}
+/* 2026-08-27：顶栏只留 Claude 用量 / Codex 用量 / DeepSeek 余额三段。
+   每段是「名字 + 若干枚药丸」，药丸自带极淡的状态底色——原来是一串裸文字加
+   ↻—，一行里全是噪声，扫一眼抓不到重点。 */
+.qt-cap {
+  color: var(--fg-faint); font-size: 9.5px; flex: none;
+  letter-spacing: .06em; text-transform: uppercase;
+}
+.qt-seg { display: inline-flex; align-items: center; gap: 6px; flex: none; }
+.qt-name { color: var(--fg-default); font-weight: 600; font-size: 11px; }
+.qt-win {
+  display: inline-flex; align-items: baseline; gap: 4px;
+  padding: 2px 7px; border-radius: var(--radius-pill);
+  border: 1px solid transparent;
+  font-family: var(--font-mono);
+  line-height: 1.25;
+}
+.qt-win i { font-style: normal; color: var(--fg-faint); font-size: 9px; }
+.qt-win b { font-size: 11px; font-weight: 700; }
+.qt-win em { font-style: normal; color: var(--fg-faint); font-size: 9px; }
+.qt-win.ok      { background: rgba(var(--rgb-success), .10); border-color: rgba(var(--rgb-success), .22); }
+.qt-win.ok b    { color: var(--status-success); }
+.qt-win.warn    { background: rgba(var(--rgb-warning), .12); border-color: rgba(var(--rgb-warning), .26); }
+.qt-win.warn b  { color: var(--status-warning); }
+.qt-win.danger  { background: rgba(var(--rgb-danger), .12); border-color: rgba(var(--rgb-danger), .28); }
+.qt-win.danger b{ color: var(--status-danger); }
+.qt-win.dim     { background: rgba(var(--rgb-neutral), .10); }
+.qt-win.dim b   { color: var(--fg-faint); font-weight: 500; }
+.qt-balance .qt-win b { letter-spacing: -.01em; }
+.qt-div { width: 1px; height: 13px; background: var(--border-subtle); flex: none; }
+.qt-right { margin-left: auto; display: inline-flex; align-items: center; gap: 7px; flex: none; }
+.qt-fresh { width: 6px; height: 6px; border-radius: 50%; }
+.qt-fresh.fresh { background: var(--status-success); }
+.qt-fresh.stale { background: var(--status-warning); }
+.qt-fresh.unknown { background: var(--fg-faint); }
+.qt-age { color: var(--fg-faint); font-size: 9.5px; font-family: var(--font-mono); }
+.qt-refresh { border: 1px solid transparent; background: transparent; color: var(--text-muted); font-size: 10px; cursor: pointer; border-radius: var(--radius-xs); padding: 1px 6px; font-family: inherit; }
+.qt-refresh:hover { border-color: var(--border); background: var(--bg-tertiary); color: var(--text-secondary); }
+.qt-refresh.loading { cursor: wait; opacity: .6; pointer-events: none; }
+
+/* --- 侧栏 AI 家族筛选页签（全部 / Claude / Codex / 其他） --- */
+.session-filter-tabs {
+  display: flex; align-items: center; gap: 2px;
+  padding: 5px 8px; flex: none;
+  border-bottom: 1px solid var(--border);
+  user-select: none;
+}
+.session-filter-tab {
+  flex: 1 1 0; min-width: 0;
+  display: inline-flex; align-items: center; justify-content: center; gap: 4px;
+  height: 24px; padding: 0 4px;
+  border: 1px solid transparent; border-radius: var(--radius-sm);
+  background: transparent; color: var(--text-secondary);
+  font-family: inherit; font-size: 11px; font-weight: 500;
+  white-space: nowrap; cursor: pointer;
+  transition: background 0.12s, color 0.12s, border-color 0.12s;
+}
+.session-filter-tab:hover { background: var(--bg-tertiary); color: var(--text-primary); }
+.session-filter-tab.selected {
+  background: var(--bg-tertiary);
+  border-color: var(--border);
+  color: var(--text-primary);
+  font-weight: 600;
+}
+.session-filter-tab .sft-count {
+  background: rgba(var(--rgb-neutral), 0.22); border-radius: var(--radius-md);
+  padding: 0 5px; font-size: 9.5px; font-weight: 600;
+  color: var(--text-secondary); font-variant-numeric: tabular-nums;
+}
+.session-filter-tab.selected .sft-count {
+  background: rgba(var(--rgb-info), 0.22); color: var(--accent-blue, var(--link));
+}
+.session-filter-empty {
+  padding: 14px 12px; text-align: center;
+  font-size: 11px; color: var(--text-muted); line-height: 1.6;
+}
+
+/* --- 侧栏分区头（等你响应 / 运行中 / 已完成未读 / 最近） --- */
+.session-sec-header {
+  display: flex; align-items: center; gap: 6px;
+  padding: 7px 10px 3px;
+  font-size: 10px; font-weight: 700; letter-spacing: .03em;
+  color: var(--text-muted); user-select: none;
+}
+.session-sec-header .sec-count {
+  background: rgba(var(--rgb-neutral), .22); border-radius: var(--radius-md);
+  padding: 0 6px; font-size: 9.5px; font-weight: 600; color: var(--text-secondary);
+}
+.session-sec-header.sec-respond { color: var(--mark-amber-soft); }
+.session-sec-header.sec-respond .sec-count { background: rgba(var(--rgb-danger), .22); color: var(--mark-red); }
+.session-sec-header.sec-completed { color: var(--link); }
+.session-sec-header.sec-completed .sec-count { background: rgba(var(--rgb-info), .18); color: var(--link-hover); }
+.session-sec-header.sec-bottom { color: var(--text-muted); opacity: .82; }
+/* 「已完成未读」组头右端的一键已读。靠 margin-left:auto 顶到行尾，不占标题位置。 */
+.session-sec-header .sec-mark-all-read {
+  margin-left: auto; border: 1px solid rgba(var(--rgb-info), .32);
+  background: rgba(var(--rgb-info), .12); color: var(--link);
+  border-radius: var(--radius-md); padding: 1px 7px;
+  font-size: 9.5px; font-weight: 600; line-height: 1.5;
+  cursor: pointer; transition: background .12s ease, border-color .12s ease;
+}
+.session-sec-header .sec-mark-all-read:hover {
+  background: rgba(var(--rgb-info), .24); border-color: rgba(var(--rgb-info), .5); color: var(--link-hover);
+}
+
+/* --- 普通 session：单行密排 --- */
+.session-item.slim {
+  display: grid;
+  grid-template-columns: 9px minmax(0,1fr) auto auto auto;
+  align-items: center; gap: 7px;
+  padding: 5px 9px; margin: 2px 4px; border-radius: var(--radius-sm);
+}
+.session-item.slim:hover { transform: none; box-shadow: none; }
+.sl-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--text-muted); justify-self: center; }
+.sl-dot.run { background: var(--accent-green); box-shadow: 0 0 4px rgba(var(--rgb-success), .5); }
+.sl-dot.wait { background: var(--accent-orange, var(--mark-amber)); animation: sl-pulse 1.6s ease-in-out infinite; }
+.sl-dot.unread { background: var(--accent-red); }
+.sl-dot.dorm { background: #6b7280; }
+.sl-dot.idle { background: transparent; border: 1.5px solid var(--text-muted); width: 5px; height: 5px; }
+@keyframes sl-pulse { 0%,100% { opacity: 1; } 50% { opacity: .35; } }
+.sl-title {
+  font-size: 11px; color: var(--text-primary); font-weight: 500;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0;
+}
+.sl-title .sl-pin { font-size: 9px; margin-right: 2px; }
+.sl-title .sl-un,
+.child-title .sl-un { color: var(--mark-red); font-weight: 700; font-size: 10px; margin-left: 4px; }
+.session-item.slim.dormant .sl-title { color: var(--text-muted); }
+.sl-model { font-size: 9.5px; color: var(--text-secondary); font-family: ui-monospace, Consolas, monospace; white-space: nowrap; }
+/* 2026-09-01 · 侧栏瘦身：时间左侧的模型字串换成品牌小图标。
+   原来 "Opus 5" / "gpt-5.6-sol" 要占 40-70px，现在 13px 固定宽，省下的全部还给标题；
+   哪家 CLI 靠品牌色一眼分辨（Claude 橙 / Codex 绿 / DeepSeek 蓝 / Gemini 蓝 / Kimi 黄），
+   具体型号进 tooltip。.ai-logo 自带 margin-right: 8px，这里必须清掉，否则和时间列打架。 */
+.sl-kind { width: 13px; height: 13px; margin-right: 0; justify-self: center; }
+/* 2026-09-06：普通会话运行中，logo 呼吸。
+   群聊行早就用「黄点脉冲」表示有人在干活，普通会话只有一个 4.4px 的绿点，扫一眼很容易
+   漏掉。logo 是这一行最大的图形，让它承担同一个语义，两种行的"运行中"就读得一样快。
+   只动 logo，绿点保持常亮 —— 一行里两个东西同时闪会互相抢注意力。 */
+.session-item.slim.running .sl-kind { animation: sl-logo-breathe 1.6s ease-in-out infinite; }
+@keyframes sl-logo-breathe {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: .42; transform: scale(.86); }
+}
+.sl-ctx { font-size: 10px; font-weight: 700; font-family: ui-monospace, Consolas, monospace; white-space: nowrap; }
+.sl-ctx.ok { color: var(--accent-green); }
+.sl-ctx.warn { color: var(--accent-orange); }
+.sl-ctx.danger { color: var(--accent-red); }
+.sl-ctx.dim { color: var(--text-muted); font-weight: 500; }
+.sl-time { font-size: 9.5px; color: var(--text-muted); font-family: ui-monospace, Consolas, monospace; white-space: nowrap; }
+/* 注意态行底色：等待输入=琥珀，完成未读=蓝（不再把普通完成画成告警红） */
+.session-item.slim.need-wait { background: rgba(var(--rgb-warning), .09); }
+.session-item.slim.need-unread { background: rgba(var(--rgb-info), .08); }
+.session-item.slim.need-wait:hover,
+.session-item.slim.need-unread:hover { background: var(--bg-tertiary); }
+
+/* --- 群聊/meeting：两行卡 --- */
+.session-item.slim.meeting { display: block; padding: 5px 9px 6px; }
+.sl-line1 { display: grid; grid-template-columns: auto 9px minmax(0,1fr) auto auto; align-items: center; gap: 6px; }
+.sl-line1 .expand-arrow { width: 10px; margin-right: 0; font-size: 8px; }
+.sl-state { font-size: 9.5px; font-weight: 700; white-space: nowrap; }
+.sl-state.wait { color: var(--accent-orange, var(--mark-amber)); }
+.sl-state.unread { color: var(--mark-red); }
+.sl-state.error { color: var(--mark-red); }
+.sl-state.dorm { color: var(--text-muted); font-weight: 500; }
+.session-item.slim .session-mini-jumps {
+  flex-wrap: nowrap; overflow: hidden;
+  margin-top: 3px; padding-left: 25px; gap: 5px;
+}
+.session-item.slim .mini-jump-btn.group { padding: 0 5px; }
+.session-item.slim .mini-jump-text { font-size: 9.5px; }
+.session-item.slim .mini-jump-ctx { font-size: 9px; }
+.sl-members-hint { margin-left: auto; font-size: 9px; color: var(--text-muted); white-space: nowrap; flex: none; }
+
+/* --- 展开态子会话行（跟随密排风格） --- */
+.session-item.slim.child { grid-template-columns: 16px minmax(0,1fr) auto; padding-left: 25px; }
+.session-item.slim.child .child-title { font-size: 10.5px; color: var(--text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* --- 侧栏底部聚合条 --- */
+.sidebar-strip {
+  flex: none;
+  display: flex; flex-direction: column; gap: 3px;
+  padding: 6px 8px;
+  border-top: 1px solid var(--border);
+  font-size: 10px; color: var(--text-muted);
+  font-family: ui-monospace, Consolas, monospace;
+  white-space: nowrap; overflow: hidden;
+  user-select: none;
+}
+.strip-route-row {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center; gap: 7px; min-width: 0;
+  min-height: 18px; padding: 1px 4px; border-radius: var(--radius-xs);
+  border: 1px solid transparent;
+}
+.strip-route-main { display: flex; align-items: center; gap: 5px; min-width: 0; }
+.strip-route-label {
+  flex: none; min-width: 24px; font-size: 9.5px; letter-spacing: .04em;
+  color: var(--text-secondary); font-weight: 800;
+}
+.strip-route-value { min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--text-secondary); }
+.strip-route-value i { color: var(--text-muted); font-style: normal; }
+.strip-route-foreign .strip-route-value { color: var(--mark-teal); }
+.strip-route-domestic .strip-route-value { color: var(--mark-blue); }
+.strip-compact-metric { flex: none; color: var(--text-muted); font-size: 9px; }
+.strip-compact-metric b { color: var(--text-secondary); font-weight: 700; }
+.sidebar-strip .strip-active b { color: var(--mark-blue); }
+.sidebar-strip .strip-resource-high,
+.sidebar-strip .strip-resource-high b { color: var(--accent-orange); }
+.strip-route-badge {
+  flex: none; padding: 0 4px; border-radius: var(--radius-xs);
+  font-size: 8.5px; font-weight: 800;
+}
+.strip-route-warning {
+  color: var(--mark-amber-soft); border-color: rgba(240,173,78,.45); background: rgba(var(--rgb-warning), .10);
+}
+.strip-route-warning .strip-route-badge { color: var(--mark-yellow); background: rgba(var(--rgb-warning), .22); }
+.strip-route-critical {
+  color: var(--mark-red); border-color: rgba(var(--rgb-danger), .62); background: rgba(var(--rgb-danger), .13);
+  animation: strip-route-alert-pulse 1.6s ease-in-out infinite;
+}
+.strip-route-critical .strip-route-value { color: var(--mark-red); }
+.strip-route-critical .strip-route-badge { color: var(--turn-body-fg); background: rgba(var(--rgb-danger), .26); }
+.strip-route-row[data-egress-ack="true"] { cursor: pointer; }
+.strip-route-row[data-egress-ack="true"]:hover { border-color: rgba(240,173,78,.75); background: rgba(var(--rgb-warning), .17); }
+.strip-route-row.acknowledging { opacity: .62; pointer-events: none; }
+@keyframes strip-route-alert-pulse {
+  0%, 100% { box-shadow: 0 0 0 rgba(var(--rgb-danger), 0); }
+  50% { box-shadow: 0 0 7px rgba(var(--rgb-danger), .38); }
+}
+
+/* --- 浮动输入栏：ctx chip + 中断钮 --- */
+.fi-ctx {
+  flex: none; align-self: center;
+  font-size: 10px; font-weight: 700;
+  font-family: ui-monospace, Consolas, monospace;
+  padding: 2px 7px; border-radius: var(--radius-md);
+  border: 1px solid var(--border); color: var(--text-secondary);
+  white-space: nowrap; user-select: none;
+}
+.fi-ctx.ok { color: var(--accent-green); }
+.fi-ctx.warn { color: var(--accent-orange); }
+.fi-ctx.danger { color: var(--accent-red); }
+.floating-input-stop {
+  width: 36px; height: 36px; flex-shrink: 0;
+  border: none; border-radius: var(--radius-sm);
+  background: var(--accent-red, var(--status-danger)); color: var(--fg-inverse);
+  cursor: pointer; display: none;
+  align-items: center; justify-content: center;
+  transition: filter .15s ease, transform .1s ease;
+}
+.floating-input-stop.visible { display: flex; }
+.floating-input-stop:hover { filter: brightness(1.15); transform: scale(1.05); }
+.floating-input-stop:active { transform: scale(.95); }
+
+/* --- header ⋯ 溢出菜单（A−/A+/1:1 折叠） --- */
+.header-overflow-wrap { position: relative; }
+.header-overflow-menu {
+  position: absolute; top: calc(100% + 6px); right: 0; z-index: 120;
+  min-width: 132px; padding: 4px;
+  background: var(--bg-secondary); border: 1px solid var(--border); border-radius: var(--radius-md);
+  box-shadow: var(--shadow-md);
+}
+.header-overflow-menu button {
+  display: flex; align-items: center; gap: 8px; width: 100%;
+  padding: 6px 10px; border: 0; border-radius: var(--radius-sm);
+  background: transparent; color: var(--text-primary);
+  font: inherit; font-size: 12px; cursor: pointer; text-align: left;
+}
+.header-overflow-menu button:hover { background: var(--bg-hover, rgba(110,118,129,.16)); }
+.header-overflow-menu .ho-key { margin-left: auto; color: var(--text-muted); font-size: 10px; font-family: ui-monospace, Consolas, monospace; }
+
+/* =========================================================================
+   2026-07-19 maintainer · 方案4(ctx 圆环)：sl-dot 退役，15px 圆环一图双关
+   环=ctx 占用（ok/warn/danger 配色同 pctClass），圆心点=会话状态。
+   同时清除旧版视觉：群聊紫竖线、休眠灰竖线+卡片底、selected 蓝竖线。
+   ========================================================================= */
+/* --- 清除旧竖线与卡片底（高 specificity 覆盖旧规则） --- */
+.session-item.slim { border: none; background: transparent; box-shadow: none; }
+.session-item.slim.meeting { border-left-color: transparent; }
+/* 休眠以月牙和分区识别，避免大量历史会话形成一排灰框。 */
+.session-item.slim.dormant {
+  background: transparent;
+  border-left-color: transparent;
+  box-shadow: none;
+}
+.session-item.slim.dormant.need-unread { background: rgba(var(--rgb-info), .08); }
+.session-item.slim.dormant:hover { background: rgba(var(--rgb-neutral), .14); }
+.session-item.slim.dormant .sl-title { color: var(--fg-default); font-weight: 560; }
+.session-item.slim.dormant .sl-model,
+.session-item.slim.dormant .sl-time { color: var(--mark-slate); }
+/* 休眠行的 logo 保留原色（否则占多数的休眠行反而认不出是哪家），只压一档亮度。 */
+.session-item.slim.dormant .sl-kind { opacity: .74; }
+/* 时间为次级信息，标题保持原有可读性。 */
+.session-item.slim .sl-time.dormant-time { color: var(--text-secondary); font-weight: 400; }
+.session-item.slim.resuming {
+  background: rgba(var(--rgb-info), .11);
+  box-shadow: inset 2px 0 0 rgba(var(--rgb-info), .78);
+}
+/* "唤醒中…"同理：时间列此刻承载的是进度而不是时刻，和标题一起亮。 */
+.session-item.slim.resuming .sl-time,
+.session-item.slim.resuming .sl-title { color: var(--accent-blue); font-weight: 560; }
+.session-item.slim.disconnected {
+  background: rgba(248, 113, 113, .075);
+  box-shadow: inset 2px 0 0 rgba(248, 113, 113, .70);
+}
+.session-item.slim.disconnected:hover { background: rgba(248, 113, 113, .115); }
+.session-item.slim .sl-time.disconnected-time { color: var(--mark-red); font-weight: 700; }
+.sl-disconnect-label {
+  display: inline-block;
+  margin-right: 5px;
+  color: var(--mark-red);
+  font-size: 9px;
+  font-weight: 750;
+  letter-spacing: .02em;
+}
+.session-item.slim.selected { background: rgba(var(--rgb-info), .10); border: none; box-shadow: none; }
+.session-item.slim.selected:hover { background: rgba(var(--rgb-info), .14); }
+
+/* --- 圆环本体 --- */
+.sl-ring { width: 15px; height: 15px; justify-self: center; display: block; flex: none; }
+.sl-ring-track { fill: none; stroke: var(--fg-faint); stroke-width: 2.5; }
+.sl-ring-arc { fill: none; stroke-width: 2.5; }
+.sl-ring-arc.ok { stroke: var(--accent-green); }
+.sl-ring-arc.warn { stroke: var(--accent-orange); }
+.sl-ring-arc.danger { stroke: var(--accent-red); }
+.sl-ring-dot.wait { fill: var(--accent-orange, var(--mark-amber)); }
+.sl-ring-dot.unread { fill: var(--accent-red); }
+.sl-ring-dot.start { fill: var(--mark-blue); }
+.sl-ring-dot.run { fill: var(--accent-green); }
+.sl-ring-dot.error { fill: #f87171; }
+.sl-ring-dot.unknown { fill: transparent; stroke: var(--mark-slate); stroke-width: 1.4; }
+.sl-ring-dot.dorm { fill: var(--mark-slate); }
+.sl-ring-dot.idle { fill: #666d78; }
+
+/* --- 行网格：环 | 标题 | 模型 | 时间（ctx 数字让位给环，精确值在 tooltip） --- */
+.session-item.slim { grid-template-columns: 15px minmax(0,1fr) auto auto; }
+.sl-line1 { grid-template-columns: auto 15px minmax(0,1fr) auto auto; }
+
+/* =========================================================================
+   2026-07-20 maintainer：running 语义化 + 群聊运行中/去展开箭头 配套样式
+   ========================================================================= */
+/* 群聊行1 状态词：运行中（任一成员运行） */
+.sl-state.run { color: var(--accent-green); }
+/* 群聊运行态跟成员“思考中”统一为黄色脉冲；普通 session 仍沿用绿色 running。 */
+.session-item.slim.meeting.gc .sl-ring-dot.run {
+  fill: #f5d76e;
+  animation: sl-pulse 1.5s ease-in-out infinite;
+}
+.session-item.slim.meeting.gc .sl-state.run { color: var(--mark-yellow); }
+/* 行1 无箭头（群聊默认）vs 有箭头（老式 meeting） */
+.sl-line1 { grid-template-columns: 15px minmax(0,1fr) auto auto; }
+.sl-line1.with-arrow { grid-template-columns: auto 15px minmax(0,1fr) auto auto; }
+/* 群聊无箭头后行2 与标题左对齐 */
+.session-item.slim.meeting.gc .session-mini-jumps { padding-left: 21px; }
+
+/* 休眠群聊：默认单行；悬停、键盘聚焦或选中时展示克制的成员次行。
+   保留原 data-sub-id 入口与 tooltip；百分比/已选数仍可在成员提示中查看。 */
+.sl-moon { width: 14px; height: 14px; flex: none; color: var(--text-secondary); vertical-align: middle; }
+.sl-time .sl-moon { width: 11px; height: 11px; margin-right: 4px; }
+.session-item.slim.meeting.gc.dormant .sl-line1 { grid-template-columns: minmax(0, 1fr) auto auto; }
+.session-item.slim.meeting.gc.dormant .session-mini-jumps { display: none; padding-left: 0; }
+.session-item.slim.meeting.gc.dormant:hover .session-mini-jumps,
+.session-item.slim.meeting.gc.dormant:focus-within .session-mini-jumps,
+.session-item.slim.meeting.gc.dormant.selected .session-mini-jumps {
+  display: flex; flex-wrap: wrap; overflow: visible; gap: 4px 8px; margin-top: 5px;
+}
+.session-item.slim.meeting.gc.dormant .mini-jump-ctx,
+.session-item.slim.meeting.gc.dormant .sl-members-hint,
+.session-item.slim.meeting.gc.dormant .mini-jump-status-dot { display: none; }
+.session-item.slim.meeting.gc.dormant .mini-jump-btn { max-width: 100%; }
+.session-item.slim.meeting.gc.dormant:focus-visible,
+.session-dormant-header:focus-visible { outline: 2px solid var(--accent-blue); outline-offset: -2px; }
+button.session-dormant-header { width: 100%; background: transparent; border: 0; text-align: left; font-family: inherit; }

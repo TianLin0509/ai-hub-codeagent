@@ -1,0 +1,278 @@
+/* Normal-session task presets: compact, reversible, and visually subordinate
+   to the user's draft. Loaded last so the composer can grow from one row to a
+   small stack without rewriting the existing floating-input styles. */
+.floating-input-bar.visible {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+}
+
+.fi-content-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.fi-bridge-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 26px;
+  padding: 0 1px;
+}
+.fi-bridge-pull {
+  min-height: 24px;
+  padding: 3px 13px;
+  border: 1px solid rgba(var(--rgb-info), .42);
+  border-radius: var(--radius-pill);
+  background: rgba(var(--rgb-info), .10);
+  color: var(--accent-blue, var(--link));
+  font: inherit;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+  transition: color .15s ease, border-color .15s ease, background .15s ease, opacity .15s ease;
+}
+.fi-bridge-pull:hover,
+.fi-bridge-pull:focus-visible {
+  color: var(--text-primary, var(--fg-strong));
+  border-color: var(--accent-blue, var(--link));
+  background: rgba(var(--rgb-info), .17);
+  outline: none;
+}
+.fi-bridge-pull:disabled { cursor: wait; opacity: .58; }
+
+.fi-bridge-fork,
+.fi-bridge-reference {
+  min-height: 24px;
+  padding: 3px 11px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 11px;
+  font-weight: 650;
+  line-height: 1;
+  cursor: pointer;
+  transition: color .15s ease, border-color .15s ease, background .15s ease;
+}
+.fi-bridge-fork:hover,
+.fi-bridge-fork:focus-visible,
+.fi-bridge-reference:hover,
+.fi-bridge-reference:focus-visible {
+  color: var(--text-primary);
+  border-color: var(--text-secondary);
+  background: var(--bg-tertiary);
+  outline: none;
+}
+.fi-bridge-reference:disabled { cursor: wait; opacity: .58; }
+
+/* Keep the CLI terminal geometry independent from the external composer.
+   The collapsed bar keeps a stable flex footprint; multiline drafts and task
+   preset details grow upward without changing xterm rows / sending SIGWINCH. */
+.floating-input-bar.visible.geometry-locked {
+  box-sizing: border-box;
+  flex: 0 0 var(--fi-layout-h);
+  height: var(--fi-layout-h);
+  min-height: var(--fi-layout-h);
+  max-height: var(--fi-layout-h);
+  overflow: visible;
+}
+.floating-input-bar.geometry-locked > .fi-content-stack {
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  bottom: 8px;
+  z-index: 1;
+  background: var(--bg-secondary);
+}
+
+.fi-preset-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: thin;
+  padding: 0 1px;
+}
+.fi-preset-toolbar[hidden] { display: none; }
+.fi-preset-label {
+  flex: 0 0 auto;
+  color: var(--text-secondary, var(--fg-muted));
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .04em;
+  user-select: none;
+}
+.fi-preset-chip {
+  flex: 0 0 auto;
+  min-height: 24px;
+  padding: 3px 9px;
+  border: 1px solid var(--border, var(--border-mid));
+  border-radius: var(--radius-pill);
+  background: rgba(var(--rgb-neutral), .08);
+  color: var(--text-secondary, var(--fg-muted));
+  font: inherit;
+  font-size: 10.5px;
+  font-weight: 650;
+  line-height: 1;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: color .15s ease, border-color .15s ease, background .15s ease;
+}
+.fi-preset-chip:hover,
+.fi-preset-chip:focus-visible {
+  color: var(--text-primary, var(--fg-strong));
+  border-color: var(--accent-blue, var(--link));
+  outline: none;
+}
+.fi-preset-chip[aria-pressed="true"] {
+  color: var(--accent-blue, var(--link));
+  border-color: var(--accent-blue, var(--link));
+  background: rgba(var(--rgb-info), .12);
+}
+
+.fi-composer-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  min-width: 0;
+}
+.fi-composer-row .floating-input-box { min-width: 0; }
+
+.fi-preset-preview {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 7px;
+  padding: 6px 8px;
+  border: 1px solid rgba(var(--rgb-info), .32);
+  border-radius: var(--radius-sm);
+  background: rgba(var(--rgb-info), .07);
+  color: var(--text-secondary, var(--fg-muted));
+  font-size: 10.5px;
+  line-height: 1.45;
+}
+.fi-preset-preview[hidden] { display: none; }
+.fi-preset-preview strong {
+  color: var(--accent-blue, var(--link));
+  font-size: 10.5px;
+  white-space: nowrap;
+}
+.fi-preset-preview-text {
+  min-width: 0;
+  max-height: 48px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  outline: none;
+}
+.fi-preset-preview-text:focus {
+  color: var(--text-primary, var(--fg-strong));
+  box-shadow: inset 0 -1px 0 var(--accent-blue, var(--link));
+}
+.fi-preset-remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary, var(--fg-muted));
+  cursor: pointer;
+  transition: color .15s ease, background .15s ease;
+}
+.fi-preset-remove:hover,
+.fi-preset-remove:focus-visible {
+  color: var(--text-primary, var(--fg-strong));
+  background: rgba(var(--rgb-neutral), .16);
+  outline: none;
+}
+
+@media (max-width: 680px) {
+  .fi-preset-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+  .fi-preset-toolbar { gap: 5px; }
+  .fi-preset-chip { padding-inline: 8px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .fi-preset-chip,
+  .fi-preset-remove { transition: none; }
+}
+
+/* 「消息可能没提交」提示条（2026-09-03）。
+   闭环发送后这条应该极少出现；它存在的意义是把残余失败从"静默卡死"
+   变成"看得见、点一下能救"。用 warning 而不是 danger：消息通常还在
+   CLI 输入框里，没有丢，只是没提交。 */
+.fi-stuck {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 26px;
+  padding: 4px 9px;
+  border: 1px solid rgba(var(--rgb-warning), .45);
+  border-radius: var(--radius-md, 7px);
+  background: var(--status-warning-tint, rgba(var(--rgb-warning), .13));
+}
+.fi-stuck-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  color: var(--text-primary);
+  font-size: 11px;
+  font-weight: 650;
+  line-height: 1.35;
+}
+.fi-stuck-resend,
+.fi-stuck-dismiss {
+  flex: 0 0 auto;
+  min-height: 22px;
+  padding: 2px 11px;
+  border-radius: var(--radius-pill);
+  font: inherit;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+  transition: color .15s ease, border-color .15s ease, background .15s ease, opacity .15s ease;
+}
+.fi-stuck-resend {
+  border: 1px solid rgba(var(--rgb-warning), .62);
+  background: rgba(var(--rgb-warning), .18);
+  color: var(--text-primary);
+}
+.fi-stuck-resend:hover,
+.fi-stuck-resend:focus-visible {
+  background: rgba(var(--rgb-warning), .28);
+  border-color: rgba(var(--rgb-warning), .85);
+  outline: none;
+}
+.fi-stuck-resend:disabled { cursor: wait; opacity: .6; }
+.fi-stuck-dismiss {
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-secondary);
+  font-weight: 600;
+}
+.fi-stuck-dismiss:hover,
+.fi-stuck-dismiss:focus-visible {
+  color: var(--text-primary);
+  border-color: var(--text-secondary);
+  background: var(--bg-tertiary);
+  outline: none;
+}
+
+/* Command replies are local feedback, never optimistic conversation messages. */
+.codex-command-feedback { position: absolute; left: 0; right: 0; bottom: calc(100% + 8px); z-index: 100; padding: 12px 14px; border: 1px solid var(--border-mid); border-radius: 12px; background: var(--surface-raised); box-shadow: var(--shadow-lg); color: var(--fg-default); }
+.codex-command-feedback[hidden] { display: none; }
+.codex-command-feedback > div { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 12px; }
+.codex-command-feedback button { border: 0; background: transparent; color: var(--fg-muted); font-size: 18px; cursor: pointer; padding: 0 4px; }
+.codex-command-feedback pre { max-height: min(38vh, 320px); overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; margin: 8px 0 0; font: 12px/1.65 Consolas, "Microsoft YaHei", monospace; user-select: text; }
+.codex-command-feedback.failed { border-color: var(--accent-orange); }

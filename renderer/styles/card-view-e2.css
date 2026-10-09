@@ -1,0 +1,161 @@
+/* E2: readable conversation cards with a factual result glance. */
+.msg-overlay {
+  container-name: hub-card-view;
+  container-type: inline-size;
+  padding: 22px clamp(16px, 2.2vw, 36px) 28px;
+}
+.msg-overlay .turn-card {
+  box-sizing: border-box;
+  width: min(100%, 900px);
+  margin: 0 auto 20px;
+  padding: 18px 8px;
+  gap: 18px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+.msg-overlay .turn-card.user {
+  flex-direction: row;
+  border-left: 0;
+  background: var(--surface-sunken);
+  padding: 18px;
+  border-radius: 8px;
+}
+.msg-overlay .turn-card.assistant[data-phase='commentary'],
+.msg-overlay .turn-card.assistant[data-phase='activity'] {
+  padding-block: 13px;
+  background: var(--surface-raised);
+  box-shadow: none;
+}
+.msg-overlay .turn-avatar {
+  width: 28px;
+  height: 28px;
+  border-radius: 7px;
+  font-size: 14px;
+}
+.msg-overlay .turn-avatar.av-letter { font-size: 13px; }
+.msg-overlay .turn-content,
+.msg-overlay .turn-card.user .turn-content,
+.msg-overlay .turn-card:not(.user) .turn-content {
+  width: auto;
+  align-items: stretch;
+}
+.msg-overlay .turn-head,
+.msg-overlay .turn-card.user .turn-head {
+  flex-direction: row;
+  align-items: center;
+  gap: 10px;
+  margin: 0 0 16px;
+}
+.msg-overlay .turn-who { font-size: 14px; font-weight: 700; }
+.msg-overlay .turn-meta { font-size: 11px; }
+.msg-overlay .turn-primary { min-width: 0; width: 100%; }
+.msg-overlay .turn-primary.has-glance {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  align-items: start;
+}
+.msg-overlay .turn-primary-copy { min-width: 0; }
+.msg-overlay .turn-body,
+.msg-overlay .turn-card.user .turn-body {
+  width: 100%;
+  max-width: none;
+  padding: 0;
+  margin: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--fg-strong);
+  font-size: var(--card-content-font-size, 15px);
+  line-height: 1.78;
+}
+.msg-overlay .turn-body > :first-child { margin-top: 0; }
+.msg-overlay .turn-body > :last-child { margin-bottom: 0; }
+.msg-overlay .turn-card.user .turn-body { color: var(--fg-default); }
+.msg-overlay .turn-result-glance {
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 18px;
+  padding: 0;
+  border-left: 0;
+  color: var(--fg-muted);
+}
+.msg-overlay .turn-result-glance-title {
+  display: block;
+  margin-bottom: 0;
+  color: var(--fg-muted);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .08em;
+}
+.msg-overlay .turn-result-glance-row {
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+  padding: 0;
+  border-bottom: 0;
+}
+.msg-overlay .turn-result-glance-row:last-child { border-bottom: 0; }
+.msg-overlay .turn-result-glance-row strong {
+  min-width: 2ch;
+  color: var(--mark-blue);
+  font-size: 13px;
+  font-weight: 720;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.1;
+}
+.msg-overlay .turn-result-glance-row:nth-of-type(2) strong { color: var(--mark-green); }
+.msg-overlay .turn-result-glance-row:nth-of-type(3) strong { color: var(--mark-amber-soft); }
+.msg-overlay .turn-result-glance-row span { color: var(--fg-default); font-size: 13px; }
+.msg-overlay .turn-content > .turn-delivery-summary,
+.msg-overlay .turn-content > .tc-cluster,
+.msg-overlay .turn-content > .turn-meta-pills,
+.msg-overlay .turn-content > .turn-thinking {
+  align-self: stretch;
+  max-width: none;
+}
+.msg-overlay .turn-content > .turn-delivery-summary {
+  width: 100%;
+  margin-top: 20px;
+  border: 0;
+  border-top: 1px solid var(--border-mid);
+  border-radius: 0;
+  background: transparent;
+}
+.msg-overlay .turn-delivery-summary > summary {
+  min-height: 46px;
+  gap: 14px;
+  padding: 10px 3px;
+}
+.msg-overlay .turn-delivery-summary > summary > span:first-of-type { font-size: 13px; }
+.msg-overlay .turn-delivery-summary > summary small { font-size: 11px; }
+.msg-overlay .turn-delivery-body { padding: 0 0 12px; }
+.msg-overlay.multi-select-active .turn-card.user::before { order: initial; }
+
+@container hub-card-view (max-width: 620px) {
+  .msg-overlay .turn-card { padding: 17px 18px; gap: 12px; }
+  .msg-overlay .turn-primary.has-glance { grid-template-columns: minmax(0, 1fr); gap: 16px; }
+  .msg-overlay .turn-result-glance {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px 20px;
+    padding: 12px 0 0;
+    border-left: 0;
+    border-top: 1px solid var(--border-mid);
+  }
+  .msg-overlay .turn-result-glance-title { margin: 0; }
+  .msg-overlay .turn-result-glance-row { border: 0; padding: 0; }
+  .msg-overlay .turn-result-glance-row strong { font-size: 13px; }
+}
+@container hub-card-view (max-width: 460px) {
+  .msg-overlay .turn-avatar { width: 28px; height: 28px; }
+  .msg-overlay .turn-card { padding: 14px; gap: 10px; }
+  .msg-overlay .turn-head { flex-wrap: wrap; }
+  .msg-overlay .turn-result-glance { display: flex; }
+  .msg-overlay .turn-result-glance-row { justify-content: flex-start; }
+  .msg-overlay .turn-delivery-summary > summary { flex-wrap: wrap; }
+}

@@ -1,0 +1,11 @@
+'use strict';
+const APP_LINK='<p>本版不附带手机 App 与中转服务；需要时自建中转，并设置环境变量 AI_HUB_PHONE_RELAY。</p>';
+async function openPhone({document,ipcRenderer}){
+ if(document.querySelector('.assistant-phone-dialog'))return;
+ const dialog=document.createElement('dialog');dialog.className='assistant-phone-dialog';dialog.style.cssText='max-width:520px;width:90%;padding:28px;border:1px solid #dedee2;border-radius:18px;background:#fff;color:#1d1d1f';
+ dialog.innerHTML='<h2 style="margin-top:0">手机助理</h2><p>安卓 App 与电脑的同一个助理交流。文字、图片与语音录音通过加密连接传递。</p>'+APP_LINK+'<p class="phone-state" role="status">正在读取状态…</p><textarea class="phone-code" readonly aria-label="手机连接码" style="display:none;width:100%;height:95px;font:12px/1.6 monospace;overflow-wrap:anywhere"></textarea><p class="phone-instruction" hidden>把连接码复制到手机 App 的“连接电脑”。连接码只交给你自己的手机；电脑需保持 Hub 开启。手机与电脑共用同一个助理设置，在任一端切换模型都会同步；切换模型和覆盖升级均无需重新配对。</p><div style="display:flex;gap:10px;flex-wrap:wrap"><button data-phone="pair">生成／显示连接码</button><button data-phone="pause">暂停连接</button><button data-phone="resume">恢复连接</button><button data-phone="close">关闭</button></div><p style="font-size:12px;color:#69746f">语音复用电脑现有的百炼语音设置。手机按住说话、松手即发，电脑识别后直接交给助理；助理听不明白时会自己追问。手机可切换助理的模型与思考深度。</p>';
+ const paint=r=>{dialog.querySelector('.phone-state').textContent=r.ok?(r.connected?'电脑已连接消息服务':r.enabled?'正在连接手机服务…':'手机通道尚未开启')+(r.issue?' · '+r.issue:''):(r.error||'连接失败');if(r.code){const field=dialog.querySelector('.phone-code');field.style.display='block';field.value=r.code;dialog.querySelector('.phone-instruction').hidden=false;}};
+ dialog.addEventListener('click',async e=>{const action=e.target.closest('[data-phone]')?.dataset.phone;if(!action)return;if(action==='close'){dialog.close();dialog.remove();return;}e.target.disabled=true;dialog.querySelector('.phone-state').textContent='正在处理…';try{paint(await ipcRenderer.invoke('assistant:phone-'+action));}finally{e.target.disabled=false;}});
+ let timer=null;dialog.addEventListener('close',()=>{clearInterval(timer);dialog.remove();});document.body.append(dialog);dialog.showModal();paint(await ipcRenderer.invoke('assistant:phone-status'));if(dialog.open)timer=setInterval(async()=>{if(dialog.open)paint(await ipcRenderer.invoke('assistant:phone-status'));},3000);
+}
+module.exports={openPhone};

@@ -1,0 +1,56 @@
+/* 底部状态条 CPU/内存/硬盘区点开的「内存与进程」弹层（renderer/memory-release-panel.js）。 */
+.memory-release-panel {
+  position: fixed; z-index: 10030; width: 460px; max-width: calc(100vw - 16px);
+  max-height: min(78vh, 720px); display: flex; flex-direction: column;
+  box-sizing: border-box; border: 1px solid var(--border-subtle); border-radius: 12px;
+  background: var(--surface-overlay); color: var(--fg-default);
+  box-shadow: var(--shadow-lg, 0 8px 28px #0004); font-size: 13px;
+}
+.memory-release-panel[hidden] { display: none; }
+.mr-head { display: flex; align-items: center; justify-content: space-between; padding: 14px 16px 8px; }
+.mr-head strong { font-size: 14px; font-weight: 600; }
+.mr-head-actions { display: flex; align-items: center; gap: 6px; }
+.mr-link { border: 0; background: transparent; color: var(--brand-text, var(--brand)); font: inherit; font-size: 12px; cursor: pointer; }
+.mr-close { width: 24px; height: 24px; border: 0; border-radius: 6px; background: transparent; color: var(--fg-muted); font-size: 18px; line-height: 1; cursor: pointer; }
+.mr-close:hover { background: var(--surface-hover); color: var(--fg-default); }
+.mr-scroll { overflow-y: auto; padding: 0 16px 8px; }
+.mr-memory { margin-bottom: 12px; }
+.mr-memory-line { display: flex; justify-content: space-between; color: var(--fg-muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+.mr-memory-line b { color: var(--fg-default); font-size: 18px; font-weight: 700; }
+.mr-meter { height: 6px; margin-top: 6px; border-radius: 3px; background: var(--border-subtle); overflow: hidden; }
+.mr-meter i { display: block; height: 100%; border-radius: 3px; background: var(--brand); }
+.mr-memory.high .mr-meter i { background: var(--status-warning); }
+.mr-memory.critical .mr-meter i { background: var(--status-danger); }
+.mr-warn { margin-bottom: 10px; padding: 7px 10px; border: 1px solid var(--status-warning); border-radius: 8px; font-size: 12px; }
+.mr-section { margin-bottom: 12px; }
+.mr-section h4 { display: flex; align-items: baseline; gap: 8px; margin: 0 0 2px; font-size: 12px; font-weight: 600; }
+.mr-section h4 span { overflow: hidden; color: var(--fg-muted); font-size: 11px; font-weight: 400; text-overflow: ellipsis; white-space: nowrap; }
+.mr-row { display: flex; align-items: flex-start; gap: 10px; padding: 8px 0; border-top: 1px solid var(--border-subtle); cursor: pointer; }
+.mr-row.mr-readonly { cursor: default; }
+.mr-check { flex: none; width: 16px; height: 16px; margin: 2px 0 0; accent-color: var(--brand); cursor: pointer; }
+.mr-check-spacer { flex: none; width: 16px; }
+.mr-main { flex: 1; min-width: 0; }
+.mr-main strong { display: block; overflow: hidden; font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
+.mr-main small { display: block; margin-top: 3px; overflow: hidden; color: var(--fg-muted); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.mr-main small.mr-note { white-space: normal; }
+.mr-main small.mr-parts { white-space: normal; }
+.mr-badge { margin-left: 6px; padding: 0 5px; border-radius: 4px; background: var(--brand-tint); color: var(--brand-text); font-size: 10px; font-style: normal; font-weight: 500; }
+.mr-size { flex: none; min-width: 64px; text-align: right; font-variant-numeric: tabular-nums; }
+.mr-tier-info .mr-main strong, .mr-tier-info .mr-size { color: var(--fg-muted); font-weight: 400; }
+.mr-empty { padding: 10px 0; border-top: 1px solid var(--border-subtle); color: var(--fg-muted); font-size: 12px; }
+.memory-release-panel > .mr-empty { padding: 18px 16px; border: 0; }
+.mr-footer { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 16px 14px; border-top: 1px solid var(--border-subtle); color: var(--fg-muted); font-size: 12px; }
+.mr-primary { height: 30px; padding: 0 14px; border: 0; border-radius: 7px; background: var(--brand); color: #fff; font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; }
+.mr-primary:disabled { opacity: .45; cursor: default; }
+.mr-secondary { height: 30px; padding: 0 12px; border: 1px solid var(--border-subtle); border-radius: 7px; background: transparent; color: var(--fg-default); font: inherit; cursor: pointer; }
+.mr-lead { margin: 4px 0 10px; color: var(--fg-muted); font-size: 12px; line-height: 1.55; }
+.mr-confirm-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; padding: 6px 0; border-top: 1px solid var(--border-subtle); }
+.mr-confirm-row small { display: block; color: var(--fg-muted); font-size: 11px; }
+.mr-confirm-row b { flex: none; font-weight: 500; font-variant-numeric: tabular-nums; }
+.mr-confirm-row.fail span, .mr-confirm-row.fail b { color: var(--fg-muted); }
+.mr-result { display: flex; flex-direction: column; gap: 4px; margin: 4px 0 12px; color: var(--fg-muted); font-size: 12px; }
+.mr-result-big { color: var(--fg-default); font-size: 24px; font-weight: 700; }
+.mr-busy { display: flex; align-items: center; gap: 10px; padding: 22px 16px; color: var(--fg-muted); }
+.mr-spinner { width: 14px; height: 14px; border: 2px solid var(--border-subtle); border-top-color: var(--brand); border-radius: 50%; animation: mr-spin .8s linear infinite; }
+@keyframes mr-spin { to { transform: rotate(360deg); } }
+#sidebar-strip .strip-resources { cursor: pointer; }

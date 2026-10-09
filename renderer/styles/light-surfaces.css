@@ -1,0 +1,87 @@
+/* Light dialog surfaces share the app palette; dark theme keeps its own tokens.
+   Older modules use bg-card aliases. Define them once rather than dark fallbacks. */
+:root:is([data-theme='codex'],[data-theme='claude']) {
+  --bg-card: var(--surface-raised);
+  --bg-card-2: var(--surface-sunken);
+  --bg-panel: var(--surface-raised);
+  --bg-input: var(--surface-raised);
+  --bg-hover: var(--surface-hover);
+  --hub-dialog-scrim: rgba(var(--rgb-scrim), .26);
+}
+.hub-new-instance img { width: 26px; height: 26px; object-fit: contain; pointer-events: none; }
+:root:is([data-theme='codex'],[data-theme='claude']) .new-session-menu {
+  background: var(--surface-raised)!important;
+  box-shadow: 0 16px 48px rgba(var(--rgb-shadow), .15), 0 0 0 100vmax var(--hub-dialog-scrim)!important;
+}
+:root:is([data-theme='codex'],[data-theme='claude']) .new-session-menu .session-create-head {
+  background: var(--surface-raised); border-color: var(--border-subtle);
+}
+:root:is([data-theme='codex'],[data-theme='claude']) .launch-center-intents {
+  background: var(--surface-sunken); border-color: var(--border-subtle);
+}
+:root:is([data-theme='codex'],[data-theme='claude']) .launch-center-intent.active {
+  background: var(--brand-tint); color: var(--brand-text);
+}
+:root:is([data-theme='codex'],[data-theme='claude']) .new-session-menu :is(.new-session-option.selected,.session-workspace-choice.selected,.session-recommended-item.selected,.session-recent-item.selected) {
+  background: var(--brand-tint); border-color: var(--brand-tint-border); box-shadow: none;
+}
+:root:is([data-theme='codex'],[data-theme='claude']) :is(.session-create-submit,.mcm-primary) {
+  background: var(--cta-bg); border-color: var(--cta-border); color: var(--cta-fg);
+}
+:root:is([data-theme='codex'],[data-theme='claude']) .session-create-submit:hover:not(:disabled) {
+  background: var(--cta-bg-hover); border-color: var(--cta-bg-hover);
+}
+:root:is([data-theme='codex'],[data-theme='claude']) :is(.mcm-overlay:not(.mcm-embedded),.pi-modal-overlay,.mr-gc-prompt-modal-overlay,.modal-overlay) {
+  background: var(--hub-dialog-scrim);
+}
+:root:is([data-theme='codex'],[data-theme='claude']) #workflow-config-modal {
+  background: var(--hub-dialog-scrim);
+}
+:root:is([data-theme='codex'],[data-theme='claude']) #workflow-config-modal .wf-dialog {
+  --wf-bg: var(--surface-raised); --wf-card: var(--surface-sunken);
+  --wf-field: var(--surface-raised); --wf-line: var(--border-mid);
+  --wf-muted: var(--fg-muted); --wf-text: var(--fg-strong); --wf-accent: var(--brand);
+  color-scheme: light; box-shadow: var(--shadow-lg);
+}
+:root:is([data-theme='codex'],[data-theme='claude']) #workflow-config-modal :is(.wf-mark,.wf-tag,.wf-preset.selected,.wf-member-chip.selected) {
+  background: var(--brand-tint); color: var(--brand-text); border-color: var(--brand-tint-border);
+}
+:root:is([data-theme='codex'],[data-theme='claude']) #workflow-config-modal .wf-summary em { color: var(--status-warning); }
+:root:is([data-theme='codex'],[data-theme='claude']) #workflow-config-modal #wf-error { color: var(--status-warning); }
+:root:is([data-theme='codex'],[data-theme='claude']) #workflow-config-modal .wf-save { color: var(--cta-fg); }
+:root:is([data-theme='codex'],[data-theme='claude']) .card-detail-dialog {
+  margin: auto; box-sizing: border-box; background: var(--surface-raised);
+  border-color: var(--border-mid); border-radius: 14px; box-shadow: var(--shadow-lg);
+}
+:root:is([data-theme='codex'],[data-theme='claude']) :is(.card-detail-dialog,.fm-dialog,.hub-dialog)::backdrop {
+  background: var(--hub-dialog-scrim);
+}
+:root:is([data-theme='codex'],[data-theme='claude']) .card-detail-dialog textarea {
+  background: var(--surface-sunken); color: var(--fg-default); border-color: var(--border-mid);
+}
+:root:is([data-theme='codex'],[data-theme='claude']) :is(.tc-result,.tc-result-wrap,.card-detail-dialog pre) {
+  background: var(--surface-sunken); color: var(--fg-default); text-shadow: none;
+}
+/* A fenced block is rendered by Hub, not by the model. Pair its light
+   background and text colors; override card-view's legacy !important dark fill
+   and global dark syntax colors. Unclassified tokens use the readable base. */
+:root:is([data-theme='codex'],[data-theme='claude'],[data-theme='hub'],[data-theme='slate']) :is(.turn-body,.mr-gc-md) pre {
+  background: var(--surface-sunken) !important;
+  color: var(--fg-default);
+  border-color: var(--border-subtle);
+  text-shadow: none;
+}
+:root:is([data-theme='codex'],[data-theme='claude'],[data-theme='hub'],[data-theme='slate']) :is(.turn-body,.mr-gc-md) pre code { background: transparent; color: var(--fg-default); text-shadow: none; }
+:root:is([data-theme='codex'],[data-theme='claude'],[data-theme='hub'],[data-theme='slate']) .code-block-wrap :is(.code-toggle,.code-copy) {
+  background: var(--surface-sunken); color: var(--brand-text); border-color: var(--border-subtle);
+}
+:root:is([data-theme='codex'],[data-theme='claude'],[data-theme='hub'],[data-theme='slate']) .code-block-wrap :is(.code-toggle,.code-copy):hover { background: var(--surface-hover); }
+:root:is([data-theme='codex'],[data-theme='claude'],[data-theme='hub'],[data-theme='slate']) :is(.turn-body,.mr-gc-md) .token { color: var(--fg-default) !important; text-shadow: none; }
+:root:is([data-theme='codex'],[data-theme='claude'],[data-theme='hub'],[data-theme='slate']) :is(.turn-body,.mr-gc-md) :is(.token.comment,.token.prolog,.token.doctype,.token.cdata) { color: #596579 !important; }
+:root:is([data-theme='codex'],[data-theme='claude'],[data-theme='hub'],[data-theme='slate']) :is(.turn-body,.mr-gc-md) :is(.token.punctuation,.token.operator) { color: var(--fg-default) !important; }
+:root:is([data-theme='codex'],[data-theme='claude'],[data-theme='hub'],[data-theme='slate']) :is(.turn-body,.mr-gc-md) :is(.token.keyword,.token.atrule,.token.selector) { color: #7944a1 !important; }
+:root:is([data-theme='codex'],[data-theme='claude'],[data-theme='hub'],[data-theme='slate']) :is(.turn-body,.mr-gc-md) :is(.token.string,.token.char,.token.inserted,.token.attr-value) { color: #18704a !important; }
+:root:is([data-theme='codex'],[data-theme='claude'],[data-theme='hub'],[data-theme='slate']) :is(.turn-body,.mr-gc-md) :is(.token.number,.token.boolean,.token.constant,.token.symbol) { color: #856000 !important; }
+:root:is([data-theme='codex'],[data-theme='claude'],[data-theme='hub'],[data-theme='slate']) :is(.turn-body,.mr-gc-md) :is(.token.function,.token.class-name,.token.property,.token.tag,.token.attr-name) { color: var(--brand-text) !important; }
+:root:is([data-theme='codex'],[data-theme='claude'],[data-theme='hub'],[data-theme='slate']) :is(.turn-body,.mr-gc-md) .token.deleted { color: var(--status-danger) !important; }
+:root:is([data-theme='codex'],[data-theme='claude']) .tc-result-err { color: var(--status-danger); }

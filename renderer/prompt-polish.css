@@ -1,0 +1,13 @@
+.prompt-polish-tools{display:inline-flex;align-items:center;gap:5px;flex:none;min-width:0}
+.prompt-polish-button,.prompt-polish-undo{display:inline-flex;align-items:center;justify-content:center;flex:none;height:30px;padding:4px 7px;border:1px solid var(--border,#475569);border-radius:7px;background:transparent;color:var(--fg-muted,#94a3b8);font:inherit;font-size:12px;cursor:pointer;white-space:nowrap}
+.prompt-polish-button{min-width:30px}
+.prompt-polish-button svg{width:17px;height:17px}
+.prompt-polish-button:hover,.prompt-polish-undo:hover{color:var(--fg-primary,#e2e8f0);background:var(--bg-hover,#ffffff0c)}
+.prompt-polish-button:focus-visible,.prompt-polish-undo:focus-visible{outline:2px solid var(--accent,#55b7d7);outline-offset:2px}
+.prompt-polish-status{font-size:11px;color:var(--fg-muted,#94a3b8);max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.prompt-polish-tools [hidden]{display:none!important}
+.mr-input-row>.prompt-polish-tools{align-self:end;margin-bottom:2px}
+.mr-input-row.mr-group-composer.voice-enabled:has(.prompt-polish-tools){grid-template-columns:minmax(0,1fr) auto auto auto auto}
+.mr-group-composer.voice-enabled>.prompt-polish-tools{grid-column:4;grid-row:3}
+.mr-group-composer.voice-enabled:has(.prompt-polish-tools)>.mr-send-btn{grid-column:5}
+@media(max-width:1000px){.prompt-polish-status{max-width:85px}}

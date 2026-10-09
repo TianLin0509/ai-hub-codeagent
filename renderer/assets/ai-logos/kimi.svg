@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" viewBox="0 0 64 64" role="img" aria-label="Kimi">
+  <circle cx="32" cy="32" r="30" fill="#ffd966"/>
+  <path d="M18 16h8v14l13-14h10L35 31l15 17H39L29 36l-3 3v9h-8z" fill="#7a5a00"/>
+</svg>

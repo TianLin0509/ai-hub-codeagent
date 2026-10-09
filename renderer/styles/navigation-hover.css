@@ -1,0 +1,26 @@
+/* A preview reserves the same layout slot as a pinned rail, never overlays sessions. */
+:root:has(.app-container.rail-preview) { --hub-rail-slot:var(--display-rail-width,44px); }
+:root body #rail-edge-trigger {
+  position:absolute; top:var(--hw-top,58px); bottom:var(--hub-footer-height); left:0;
+  width:8px; padding:0; border:0; background:transparent; z-index:1090;
+  cursor:pointer; display:none;
+}
+:root body .app-container.rail-hidden #rail-edge-trigger { display:block; }
+#rail-edge-trigger span {
+  display:block; width:3px; height:38px; border-radius:3px; margin:auto;
+  background:var(--border-strong); opacity:.55;
+}
+#rail-edge-trigger:is(:hover,:focus-visible) span { background:var(--brand); opacity:1; }
+#rail-edge-trigger:focus-visible { outline:1px solid var(--brand); outline-offset:-1px; }
+:root body #scene-rail .rail-drawer-head,
+:root body .app-container.rail-preview #scene-rail .rail-drawer-head { justify-content:center; padding:0 2px; }
+:root body #scene-rail .rail-drawer-head strong,
+:root body .app-container.rail-preview #scene-rail .rail-drawer-head strong { display:none!important; }
+:root body #rail-pin[aria-pressed='true'] { color:var(--brand); background:var(--brand-tint); }
+:root body #rail-pin svg { transform:none; }
+:root body .app-container:is(.rail-pinned,.rail-preview) #app-body #scene-rail { overflow:visible; }
+:root body #scene-rail :is(.theme-menu,.options-menu) {
+  position:fixed; left:calc(var(--hub-rail-slot) + 8px); bottom:calc(var(--hub-footer-height) + 8px);
+  right:auto; top:auto; max-width:calc(100vw - var(--hub-rail-slot) - 16px); min-width:0;
+  z-index:1200;
+}

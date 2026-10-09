@@ -1,0 +1,4 @@
+/* The selected artwork is shared across themes and survives rail collapse. */
+:root body #scene-rail .btn-shell-nav .btn-icon { width: 28px; height: 28px; background: none; }
+:root body #scene-rail .rail-artwork { display: block; pointer-events: none; object-fit: contain; }
+:root[data-theme='codex'] body #scene-rail .rail-artwork { mix-blend-mode: multiply; }
