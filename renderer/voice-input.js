@@ -185,7 +185,7 @@ function attachVoiceInput({ input, rail, getStatusHost, getTarget, isActive }) {
   mic.innerHTML = micIcon; mic.title = '点击开始语音输入'; mic.setAttribute('aria-label', '开始语音输入');
   mic.title = '点击开始语音输入 · 右键打开语音设置';
   rail.classList.add('voice-enabled');
-  rail.insertBefore(mic, rail.querySelector('.floating-input-send, #mr-workflow-btn'));
+  rail.insertBefore(mic, rail.querySelector('.floating-input-send, #mr-workflow-controls, #mr-workflow-btn'));
   const status = document.createElement('span'); status.className = 'voice-status'; status.setAttribute('role', 'status');
   let recording = null, disposed = false, writing = false, statusTimer, statusHost;
   const setStatus = (message, expires = false) => {

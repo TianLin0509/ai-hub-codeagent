@@ -115,8 +115,17 @@ function detectClaudeTrustDialog(buffer) {
   if (!TRUST_HINT_RE.test(String(buffer || ''))) return null;
   const rows = renderPtyRows(buffer);
   if (!rows.size) return null;
+  return detectTrustDialogInRows([...rows.entries()].sort((left, right) => left[0] - right[0]));
+}
 
-  const entries = [...rows.entries()].sort((left, right) => left[0] - right[0]);
+// 屏幕上已经排好版的行（例如终端模拟器读出来的）：行号从 1 开始。
+function detectTrustDialogInLines(lines) {
+  const entries = (Array.isArray(lines) ? lines : []).map((line, index) => [index + 1, String(line || '')]);
+  if (!entries.some(([, line]) => TRUST_HINT_RE.test(line))) return null;
+  return detectTrustDialogInRows(entries);
+}
+
+function detectTrustDialogInRows(entries) {
   const joined = entries.map(([, line]) => line).join('\n');
   if (!TRUST_PROMPT_RE.test(joined) || !CONFIRM_HINT_RE.test(joined)) return null;
 
@@ -139,8 +148,35 @@ function detectClaudeTrustDialog(buffer) {
   return { cursorRow, trustRow, delta, keys };
 }
 
+// 用真正的终端模拟器还原屏幕。公司 Code Agent 的界面框架（opentui）逐格上色、只重画变化的格子，
+// 上面的简易重放还原不出版式；屏幕开得比真实终端大，绝对定位照样落在正确的行列上，不用跟随 resize。
+function createTrustScreen({ cols = 300, rows = 100 } = {}) {
+  let term = null;
+  try {
+    const { Terminal } = require('@xterm/headless');
+    term = new Terminal({ cols, rows, scrollback: 0, allowProposedApi: true });
+  } catch { return null; }
+  return {
+    write(data) { if (term) term.write(String(data || '')); },
+    lines() {
+      return new Promise(resolve => {
+        if (!term) { resolve([]); return; }
+        term.write('', () => {
+          const buffer = term.buffer.active;
+          const result = [];
+          for (let i = 0; i < term.rows; i += 1) result.push(buffer.getLine(buffer.viewportY + i)?.translateToString(true) || '');
+          resolve(result);
+        });
+      });
+    },
+    dispose() { try { term && term.dispose(); } catch {} term = null; },
+  };
+}
+
 module.exports = {
   CONFIRM_HINT_RE,
+  createTrustScreen,
+  detectTrustDialogInLines,
   MAX_MENU_DISTANCE,
   TRUST_HINT_RE,
   TRUST_OPTION_RE,

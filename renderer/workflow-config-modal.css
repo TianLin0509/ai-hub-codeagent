@@ -48,6 +48,22 @@
 }
 .mr-workflow-btn.active .mr-workflow-badge { display: block; }
 
+/* Compact smiling switch beside the settings button. */
+.mr-workflow-controls{display:inline-flex;align-items:center;grid-column:2;grid-row:3;align-self:end}
+.mr-workflow-controls[hidden]{display:none}
+.mr-group-composer.voice-enabled .mr-workflow-controls{grid-column:3}
+:root body .mr-group-composer:has(#mr-input-tuning.models-on-own-row)>.mr-workflow-controls{grid-row:4}
+.mr-workflow-switch{display:inline-flex;align-items:center;justify-content:center;flex:0 0 40px;width:40px;height:34px;padding:0;border:0;border-radius:10px;background:transparent;cursor:pointer;margin-right:6px}
+.mr-workflow-switch[hidden]{display:none}
+.mr-workflow-switch-track{display:block;position:relative;width:36px;height:22px;border-radius:14px;background:var(--border-mid,#b8c0cc);transition:background .18s}
+.mr-workflow-switch-face{position:absolute;left:3px;top:3px;width:16px;height:16px;border-radius:50%;background:#fff;color:#64748b;transition:transform .18s,color .18s;box-shadow:0 1px 2px #0002}
+.mr-workflow-switch-face svg{display:block;width:16px;height:16px}
+.mr-workflow-switch[aria-checked="true"] .mr-workflow-switch-track{background:var(--accent,var(--link,#3272cf))}
+.mr-workflow-switch[aria-checked="true"] .mr-workflow-switch-face{transform:translateX(14px);color:var(--accent,var(--link,#3272cf))}
+.mr-workflow-switch:focus-visible{outline:2px solid var(--accent,var(--link));outline-offset:2px}
+.mr-workflow-switch:disabled{cursor:wait;opacity:.65}
+@media(prefers-reduced-motion:reduce){.mr-workflow-switch-track,.mr-workflow-switch-face{transition:none}}
+
 /* A: expanded rounds; selectors stay inside the settings window. */
 #workflow-config-modal{background:rgba(4,10,12,.7);padding:24px;z-index:10050}
 #workflow-config-modal .wf-dialog{--wf-bg:#141b1f;--wf-card:#1c252a;--wf-field:#11191d;--wf-line:#34434a;--wf-muted:#a5b5bd;--wf-text:#edf2f4;--wf-accent:#b7dcc6;color-scheme:dark;width:min(1120px,94vw);max-width:1120px;max-height:92vh;background:var(--wf-bg);color:var(--wf-text);border:1px solid #56636b;border-radius:14px;box-shadow:0 25px 90px #0007;display:flex;flex-direction:column;overflow:hidden}

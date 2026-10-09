@@ -4392,10 +4392,23 @@ if (typeof document !== 'undefined') (function () {
     // File workflows use the same settings entry; their protocol stays attached.
     // 2026-07-20 maintainer [修#7d]：非群聊会议隐藏 workflow 按钮。
     btn.style.display = (meeting && meeting.groupChat) ? '' : 'none';
+    const controls = document.getElementById('mr-workflow-controls');
+    if (controls) controls.hidden = !(meeting && meeting.groupChat);
+    if (!(meeting && meeting.groupChat)) {
+      const toggle = document.getElementById('mr-workflow-switch');
+      if (toggle) toggle.hidden = true;
+    }
     if (!(meeting && meeting.groupChat)) return;
     const badge = document.getElementById('mr-workflow-badge');
     const wf = meeting && meeting.serialWorkflow;
     const on = !!(wf && wf.enabled && Array.isArray(wf.steps) && wf.steps.length);
+    const toggle = document.getElementById('mr-workflow-switch');
+    if (toggle) {
+      toggle.hidden = !(meeting?.groupChat && Array.isArray(wf?.steps) && wf.steps.length);
+      toggle.setAttribute('aria-checked', String(on));
+      toggle.setAttribute('aria-label', on ? '关闭工作流' : '启用工作流');
+      toggle.title = on ? '工作流生效中 · 点击关闭' : '工作流已关闭 · 点击启用';
+    }
     const workflowApi = window.WorkflowTemplates;
     const presetMeta = on && workflowApi && typeof workflowApi.getTemplateMeta === 'function'
       ? workflowApi.getTemplateMeta(wf.templateId)
@@ -5304,7 +5317,7 @@ if (typeof document !== 'undefined') (function () {
     _updateInputPreflight(meeting);
     if (payload.status === 'done') _showGcEscapeNotice(Conversation.enabled(meeting) ? '本次发言已完成；下一条输入仍按同一顺序回答' : '串行工作流已完成全部步骤', 'info');
     else if (payload.status === 'paused') {
-      if (!payload.currentTurnNum && payload.goal) {
+      if (!payload.currentTurnNum && !payload.completedStepCount && payload.goal) {
         _discardPendingUserMessage(payload.meetingId);
         _restoreQuestionAndPreserveDraft(payload.meetingId, payload.goal);
       }
@@ -7244,7 +7257,7 @@ if (typeof document !== 'undefined') (function () {
         });
       } else if (DevFile.enabled(m) || DevDiscuss.isDiscussing(m)) {
         handleMeetingSend(finalText, m, { recipientSids });
-      } else if (m.scene && m.serialWorkflow && m.serialWorkflow.loop && m.serialWorkflow.loop.enabled &&
+      } else if (m.scene && m.serialWorkflow && m.serialWorkflow.enabled !== false && m.serialWorkflow.loop && m.serialWorkflow.loop.enabled &&
           Array.isArray(m.serialWorkflow.steps) && m.serialWorkflow.steps.length) {
         // 循环已经在跑时，这句话的语义是「给当前任务补一句」，不是「开一个新任务」。
         // 以前这里照样调 loop:start，主进程以 already_running 拒绝，消息被退回输入框 ——
@@ -7348,6 +7361,24 @@ if (typeof document !== 'undefined') (function () {
 
     sendBtn.addEventListener('click', doSend);
 
+    const workflowSwitch = document.getElementById('mr-workflow-switch');
+    if (workflowSwitch) workflowSwitch.addEventListener('click', async () => {
+      const m = meetingData[activeMeetingId];
+      if (!m?.groupChat || workflowSwitch.disabled) return;
+      workflowSwitch.disabled = true;
+      try {
+        const result = await ipcRenderer.invoke('workflow:set-enabled', {meetingId:m.id, enabled:!m.serialWorkflow?.enabled, expectedRevision:m.serialWorkflow?.settingsRevision || 0});
+        if (!result?.ok) throw new Error(result?.reason || '开关未切换');
+        m.serialWorkflow = result.config;
+        DeliveryControls.clear(m.id); ConversationControls.clear(m.id);
+        if (activeMeetingId === m.id) {
+          _updateWorkflowBtnState(m); _updateInputPreflight(m);
+          _showGcEscapeNotice(result.config.enabled ? '工作流已开启，下一条新输入按保存的顺序执行' : '工作流已关闭，之后按普通群聊回答；原设置保留', 'info');
+        }
+        if (typeof window.schedulePersist === 'function') window.schedulePersist();
+      } catch(error) { if (activeMeetingId === m.id) _showGcEscapeNotice(error.message, 'error'); }
+      finally { workflowSwitch.disabled = false; }
+    });
     const workflowBtn = document.getElementById('mr-workflow-btn');
     if (workflowBtn) {
       workflowBtn.addEventListener('click', async () => {

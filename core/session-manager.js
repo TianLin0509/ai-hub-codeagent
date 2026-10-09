@@ -2092,30 +2092,56 @@ class SessionManager extends EventEmitter {
       // 绝不盲按回车——Claude Code 默认高亮 "No, exit"。detectClaudeTrustDialog 定位到
       // 「Yes, I trust this folder」那一行给出按键；定位不出来就一个键都不发。
       // 首帧时 ink 还没切 raw 模式，先等 1.2s 再用最新缓冲确认框还在。
-      const { detectClaudeTrustDialog } = require('./claude-trust-dialog.js');
+      const { detectClaudeTrustDialog, detectTrustDialogInLines, createTrustScreen } = require('./claude-trust-dialog.js');
       let trustDone = false;
       let trustBuf = '';
       let trustTimer = null;
+      const pressTrustKeys = (dialog) => {
+        trustDone = true;
+        console.log(`[trust-dialog] ${id} 自动确认信任框（${kind}，光标行 ${dialog.cursorRow} → 信任行 ${dialog.trustRow}）`);
+        dialog.keys.forEach((key, index) => {
+          setTimeout(() => { try { ptyProcess.write(key); } catch {} }, index * 80);
+        });
+      };
+      // Code Agent：交给终端模拟器还原屏幕再判断（它的界面框架逐格重画，字节流里拼不出整行字）。
+      // 判断节流到 0.4 秒一次，信任框画完后同样再等 1.2 秒、用最新屏幕确认一遍才按键。
+      const trustScreen = codeagentLaunch ? createTrustScreen() : null;
+      let trustSeenAt = 0;
+      const checkTrustScreen = async () => {
+        trustTimer = null;
+        if (trustDone || !trustScreen) return;
+        const dialog = detectTrustDialogInLines(await trustScreen.lines());
+        if (trustDone) return;
+        if (!dialog) { trustSeenAt = 0; return; }
+        if (!trustSeenAt) trustSeenAt = Date.now();
+        if (Date.now() - trustSeenAt < 1200) { trustTimer = setTimeout(checkTrustScreen, 400); return; }
+        pressTrustKeys(dialog);
+        try { trustSub.dispose(); } catch {}
+        trustScreen.dispose();
+      };
       const trustSub = ptyProcess.onData((d) => {
         if (trustDone) return;
+        if (trustScreen) {
+          trustScreen.write(d);
+          if (!trustTimer) trustTimer = setTimeout(checkTrustScreen, 400);
+          return;
+        }
         trustBuf = (trustBuf + d).slice(-16000);
         if (trustTimer || !detectClaudeTrustDialog(trustBuf)) return;
         trustTimer = setTimeout(() => {
           trustTimer = null;
           const dialog = detectClaudeTrustDialog(trustBuf);
           if (!dialog) return;
-          trustDone = true;
-          dialog.keys.forEach((key, index) => {
-            setTimeout(() => { try { ptyProcess.write(key); } catch {} }, index * 80);
-          });
+          pressTrustKeys(dialog);
           try { trustSub.dispose(); } catch {}
         }, 1200);
       });
       pendingTimers.push(setTimeout(() => {
+        if (trustScreen) trustScreen.dispose();
         if (trustDone) return;
         if (trustTimer) { clearTimeout(trustTimer); trustTimer = null; }
         try { trustSub.dispose(); } catch {}
-      }, 45000));
+      }, codeagentLaunch ? 90000 : 45000));
 
       // 与 8c5c6928 之前的 PTY 时代同一套投递：PowerShell 首屏安静 200ms 后敲入命令，
       // 3 秒安全兜底。所有参数都是启动前确定的，与原生后端同源。

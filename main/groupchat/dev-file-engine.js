@@ -14,7 +14,7 @@ function reviewBudgetStart(runtime) {
   return old > 0 ? Math.floor((old - 1) / 2) : 0;
 }
 
-function createDevFileEngine({ meetingManager, sessionManager, getHubDataDir, getDispatcher, ensureMemberReady, getMembers, deliveryEngine, isWorkflowRunning = () => false,
+function createDevFileEngine({ meetingManager, sessionManager, getHubDataDir, getDispatcher, ensureMemberReady, getMembers, deliveryEngine, isWorkflowRunning = () => false, stopWorkflow,
   sendToRenderer = () => {}, onChanged = () => {}, logger = console }) {
   const preparing = new Set(), active = new Map(), snapshots = new Map(), stopped = new Set();
   let timer = null, directoryEvents = null, restartScope = null;
@@ -280,6 +280,29 @@ function createDevFileEngine({ meetingManager, sessionManager, getHubDataDir, ge
     return { prompt: F.independentPrompt(m, F.directory(getHubDataDir(), id), members(m)), slot: executor(m, F.spec('kickoff')).slot };
   }
   function registerIpc(ipcMain, shell) {
+    ipcMain.handle('workflow:set-enabled', (_e, {meetingId, enabled, expectedRevision} = {}) => {
+      try {
+        const m = get(meetingId), wf = m?.serialWorkflow;
+        if (!m?.groupChat || !Array.isArray(wf?.steps) || !wf.steps.length) throw new Error('请先保存工作流设置');
+        if (typeof enabled !== 'boolean') throw new Error('工作流开关状态无效');
+        if ((wf.settingsRevision || 0) !== expectedRevision) throw new Error('设置已更新，请重试开关');
+        if (wf.enabled === enabled) return {ok:true, config:wf};
+        if (!enabled) {
+          if (deliveryEngine?.handles(meetingId)) deliveryEngine.stop(meetingId, {interrupt:false});
+          else if (F.enabled(m)) stop(meetingId);
+          else if (isWorkflowRunning(meetingId)) {
+            if (typeof stopWorkflow !== 'function') throw new Error('暂时无法暂停发言，请稍后重试');
+            stopWorkflow(meetingId);
+          }
+        }
+        const next = {...get(meetingId).serialWorkflow, enabled, settingsRevision:(wf.settingsRevision || 0)+1};
+        if (enabled && next.deliveryVersion===1) next.taskArmed=true;
+        meetingManager.updateMeeting(meetingId, {serialWorkflow:next});
+        sendToRenderer('meeting-updated', {meeting:get(meetingId)});
+        emit(meetingId);
+        return {ok:true, config:next};
+      } catch(error) { return {ok:false, reason:error.message}; }
+    });
     ipcMain.handle('workflow:configure', (_e, {meetingId, draft, expectedRevision} = {}) => {
       try {
         const m = get(meetingId);

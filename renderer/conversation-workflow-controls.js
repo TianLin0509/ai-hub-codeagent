@@ -31,7 +31,15 @@ function render(row,meeting,onRefresh,onError){
     :paused?`发言已暂停：${s?.error?.reason||s?.lastError?.reason||'上次对话中断'}`
     :s?.status==='unavailable'?`暂时无法读取发言进度：${s.error.reason}`
     :'每条新输入都按此顺序回答';
-  row.innerHTML=`<section class="mr-file-flow mr-conversation-flow" aria-label="按顺序发言" data-conversation-status="${esc(s?.status||'idle')}"><div><strong>发言顺序：${esc(order.join(' → '))}</strong><p>${esc(label)}</p></div><div class="mr-file-actions">${running?'<button type="button" data-conversation="stop">暂停发言</button>':paused?'<button type="button" data-conversation="resume">继续发言</button>':s?.status==='unavailable'?'<button type="button" data-conversation="refresh">重试读取</button>':''}</div></section>`;
+  const markup=`<section class="mr-file-flow mr-conversation-flow" aria-label="按顺序发言" data-conversation-status="${esc(s?.status||'idle')}"><div><strong>发言顺序：${esc(order.join(' → '))}</strong><p>${esc(label)}</p></div><div class="mr-file-actions">${running?'<button type="button" data-conversation="stop">暂停发言</button>':paused?'<button type="button" data-conversation="resume">继续发言</button>':s?.status==='unavailable'?'<button type="button" data-conversation="refresh">重试读取</button>':''}</div></section>`;
+  // Metadata updates must not replace a button between pointer-down and click.
+  // Keep its listener and identity when the visible progress has not changed.
+  const renderKey=id+':'+markup;
+  if(row.firstElementChild?.classList.contains('mr-conversation-flow')&&row._conversationMarkup===renderKey){
+    row.querySelectorAll('[data-conversation]').forEach(button=>{button.disabled=busy.has(id);});
+    return;
+  }
+  row.innerHTML=markup;row._conversationMarkup=renderKey;
   row.querySelectorAll('[data-conversation]').forEach(button=>{
     button.disabled=busy.has(id);
     button.addEventListener('click',async()=>{

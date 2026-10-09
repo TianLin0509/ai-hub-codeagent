@@ -485,6 +485,7 @@ function createLoopEngine(deps) {
   function validateLoop(meetingId) {
     const meeting = meetingManager.getMeeting(meetingId);
     if (!meeting || !meeting.groupChat) return { ok: false, reason: 'group_chat_not_found' };
+    if (meeting.serialWorkflow?.enabled === false) return {ok:false, reason:'工作流已关闭'};
     const blocked = discussPhaseBlock(meeting);
     if (blocked) return blocked;
     const workflow = meeting.serialWorkflow || {};
@@ -671,6 +672,7 @@ function createLoopEngine(deps) {
           nextStepIndex: state.nextStepIndex,
           currentStepIndex: state.currentStepIndex,
           currentTurnNum: state.currentTurnNum,
+          completedStepCount: state.completedSteps.length,
           totalSteps: steps.length,
           ...extra,
         });
@@ -1681,6 +1683,7 @@ function createLoopEngine(deps) {
       for (const mt of all) {
         if (require('../../core/dev-file-workflow').enabled(mt)) continue;
         const sw = mt && mt.serialWorkflow; const ls = sw && sw.loopState;
+        if (sw?.enabled === false) continue;
         // Reopening the Hub must not speak into an old conversation by itself.
         // The saved order remains available for each new user input.
         if (Conversation.enabled(mt)) continue;

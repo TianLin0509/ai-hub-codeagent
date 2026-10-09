@@ -142,7 +142,7 @@ function createDeliveryEngine({meetingManager,sessionManager,getHubDataDir,getDi
     try {
       let r=read(id);if(!r || terminal(r))return;
       expectedRun=r.id;
-      if(!D.enabled(meeting(id)) || meeting(id).status==='dormant'){r.status='paused';r.error='群聊已关闭、休眠或配置改变，核对交付后再接续';save(id,r);return;}
+      if(!D.enabled(meeting(id)) || !meeting(id).serialWorkflow.enabled || meeting(id).status==='dormant'){r.status='paused';r.error='群聊已关闭、休眠或配置改变，核对交付后再接续';save(id,r);return;}
       const step=r.steps.at(-1);let changed=false;
       // After restart there is no old Promise to settle this record. Reconcile
       // only exact persisted attempts; an idle session alone proves nothing.
