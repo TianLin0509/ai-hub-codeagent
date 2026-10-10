@@ -21,6 +21,8 @@
 //   不含 'powershell' 等非 AI 类型。
 // ---------------------------------------------------------------------------
 const ALL_AI_KINDS = ['claude', 'gemini', 'codex', 'deepseek', 'kimi', 'qwen', 'deepseek-acp', 'glm', 'codeagent'];
+// Offered by the group-creation and writing-member pickers.
+const GROUP_MEMBER_KINDS = ['claude', 'codex', 'deepseek', 'qwen', 'deepseek-acp', 'glm', 'codeagent'];
 const WEB_STYLE_KINDS = [];
 // DeepSeek V4 Pro / Flash 原生支持 Responses API，并适配 Codex 0.144.0+。
 // 新 DeepSeek 会话因此也属于 Codex CLI runtime；老会话恢复时
@@ -207,6 +209,7 @@ function slotIndexToId(idx) {
 
 module.exports = {
   ALL_AI_KINDS,
+  GROUP_MEMBER_KINDS,
   WEB_STYLE_KINDS,
   CODEX_CLI_KINDS,
   CODEX_SESSION_KINDS,

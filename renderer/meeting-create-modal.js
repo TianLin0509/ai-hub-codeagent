@@ -3,7 +3,7 @@
 (function () {
 const { ipcRenderer } = require('electron');
 const { checkDevWorkspace } = require('./dev-workspace-guard.js');
-const { KIND_LABELS } = require('../core/ai-kinds.js');
+const { KIND_LABELS, GROUP_MEMBER_KINDS } = require('../core/ai-kinds.js');
 const { MODEL_OPTIONS_BY_KIND, modelOptionsFor } = require('../core/model-options.js');
 
 const MODEL_KINDS = new Set(Object.keys(MODEL_OPTIONS_BY_KIND));
@@ -13,7 +13,6 @@ const DEFAULT_SLOTS = [
   { kind: 'codex' },
   { kind: 'deepseek' },
 ];
-const GROUP_MEMBER_KINDS = ['claude', 'codex', 'deepseek', 'qwen', 'deepseek-acp', 'glm', 'codeagent'];
 // Claude + Codex are the durable default pair. DeepSeek is an explicit third
 // member rather than a cost/latency-bearing default in every room.
 const DEFAULT_GROUP_MEMBERS = DEFAULT_SLOTS.slice(0, 2).map(x => ({ ...x }));

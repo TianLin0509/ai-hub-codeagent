@@ -102,13 +102,14 @@ body.writing-open:not(.hub-workspace-open) #memo-panel:not(.hw-embedded) { posit
 
 /* Writing: original features arranged as a compact list plus final preview. */
 body.writing-open #writing-panel { --wr-paper:var(--surface-raised); --wr-paper-ink:var(--fg-default); --wr-paper-line:var(--border-subtle); }
-#writing-panel .wr-head { padding:28px 32px 0; background:var(--surface-canvas); flex-wrap:wrap; align-items:center; gap:0 24px; }
-#writing-panel .wr-head h1 { font-size:28px; flex-basis:100%; margin:0 0 22px; letter-spacing:-.7px; }
-#writing-panel .wr-tabs { gap:28px; }
-#writing-panel .wr-tab { padding:12px 0; color:var(--fg-muted); }
+#writing-panel .wr-head { padding:0 16px; min-height:42px; flex:none; background:var(--surface-canvas); flex-wrap:nowrap; align-items:center; gap:0 18px; }
+:root body #writing-panel .wr-head h1 { font-size:16px; flex:none; margin:0; letter-spacing:0; }
+#writing-panel .wr-tabs { gap:18px; }
+#writing-panel .wr-tab { padding:10px 0; font-size:13px; color:var(--fg-muted); white-space:nowrap; }
+#writing-panel .wr-version { margin:0; }
 #writing-panel .wr-tab.active { color:var(--brand); }
-#writing-panel .wr-studio { padding:22px 32px; }
-#writing-panel .wr-studio-split { gap:22px; }
+#writing-panel .wr-studio { padding:8px 12px; }
+#writing-panel .wr-studio-split { grid-template-columns:200px minmax(0,1fr); gap:12px; }
 #writing-panel .wr-article { padding:14px 16px; gap:8px; border-radius:12px; }
 #writing-panel .wr-article.on { background:var(--brand-tint); box-shadow:none; }
 #writing-panel .wr-btn { min-height:32px; padding:6px 11px; }
@@ -156,6 +157,7 @@ body.writing-open #writing-panel { --wr-paper:var(--surface-raised); --wr-paper-
   #writing-panel .wr-list { min-height:250px; max-height:400px; }
   #writing-panel .wr-view.wr-voice.active { grid-template-columns:1fr; overflow:auto; }
   #writing-panel .wr-voice-main, #writing-panel .wr-voice-side { min-height:300px; overflow:visible; }
-  #writing-panel .wr-studio { padding:16px 20px; }
+  #writing-panel .wr-studio { padding:8px 10px; }
 }
 @media(prefers-reduced-motion:reduce) { #hub-workspace *, #writing-panel * { transition:none !important; animation:none !important; } }
+@media(max-width:900px) { #writing-panel .wr-studio-split { grid-template-columns:minmax(0,1fr); } }

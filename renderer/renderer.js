@@ -866,6 +866,7 @@ const modelUi = createModelUiController({
     codexProfile: session && session.codexProfile,
   }),
   getTerminalScreenText: sessionId => terminalActivityMonitor.extractLiveScreenLines(sessionId).join('\n'),
+  openCommandScreen: sessionId => require('./command-screen').openCommandScreen(ipcRenderer, sessionId),
   isSessionBusy: session => sessionRuntimeIsActive(session),
   // 头部徽章 T2 删了，模型名只剩 composer 底栏那个 chip。模型切换的每一步
   // （发起 / 确认 / 超时回滚）都要让它重画一次，否则会停在切换前的名字上。
@@ -1124,6 +1125,32 @@ function renderSessionList() {
 function scheduleSessionListRender() {
   sidebarRenderCoalescer.schedule();
 }
+
+// 画面停刷的现场记录（写进 <数据目录>/logs/window-events.log，见 core/window-keep-rendering.js）：
+// 页面被判成可见/不可见时记一笔；页面可见却超过 3 秒没出一帧，也记一笔（带当前视图与会话数），
+// 用来区分「窗口被当成看不见」和「真的画不动」。每秒只排一次 requestAnimationFrame，开销可忽略。
+(() => {
+  const report = (event, extra = {}) => {
+    try { ipcRenderer.send('hub:page-window-event', { event, view: typeof currentView === 'string' ? currentView : null, sessions: typeof sessions !== 'undefined' ? sessions.size : null, ...extra }); } catch {}
+  };
+  document.addEventListener('visibilitychange', () => report('visibility', { state: document.visibilityState }));
+  let pendingSince = 0;
+  let stalled = false;
+  setInterval(() => {
+    if (document.visibilityState !== 'visible') { pendingSince = 0; return; }
+    const now = performance.now();
+    if (pendingSince) {
+      if (!stalled && now - pendingSince > 3000) { stalled = true; report('frame-stall', { ms: Math.round(now - pendingSince) }); }
+      return;
+    }
+    pendingSince = now;
+    requestAnimationFrame(() => {
+      if (stalled) report('frame-resume', { ms: Math.round(performance.now() - pendingSince) });
+      stalled = false;
+      pendingSince = 0;
+    });
+  }, 1000);
+})();
 
 ipcRenderer.on('desktop-notification:open-session', (_event, payload = {}) => {
   const sessionId = String(payload.sessionId || '');
@@ -1875,7 +1902,8 @@ function paintAppToolbarForView(label) {
   toolbarActionsEl.replaceChildren();
   toolbarActionsEl.hidden = true;
   syncBackstageButton(false);
-  const signature = 'view:' + label;
+  const researchVersion = label === '投研' ? (window.__xresearchVersionInfo || {}) : null;
+  const signature = 'view:' + label + (researchVersion ? JSON.stringify(researchVersion) : '');
   if (toolbarCrumbEl.dataset.signature === signature) return;
   toolbarCrumbEl.dataset.signature = signature;
   toolbarCrumbEl.replaceChildren();
@@ -1883,6 +1911,19 @@ function paintAppToolbarForView(label) {
   name.className = 'crumb-view-name';
   name.textContent = label;
   toolbarCrumbEl.appendChild(name);
+  if (researchVersion) {
+    const version = document.createElement('button');
+    version.type = 'button';
+    version.className = 'cx-ui-version';
+    version.textContent = researchVersion.loaded ? 'UI ' + researchVersion.loaded : '版本待确认';
+    if (researchVersion.available && researchVersion.available !== researchVersion.loaded) {
+      version.textContent += ' · 更新至 ' + researchVersion.available;
+    }
+    version.title = '点击刷新投研页面，保留当前栏目。' + (researchVersion.error || '');
+    version.setAttribute('aria-label', version.textContent + '，点击刷新投研页面');
+    version.addEventListener('click', () => window.__xresearchRefresh?.());
+    toolbarCrumbEl.appendChild(version);
+  }
 }
 
 // 会话视图。下面这一整段就是 T2 的舞台头部原样搬上来的：面包屑三段 + 状态点、
@@ -2048,6 +2089,7 @@ function refreshAppToolbar() {
 }
 
 let _appToolbarRefreshRaf = null;
+window.addEventListener('xresearch-version-changed', scheduleAppToolbarRefresh);
 function scheduleAppToolbarRefresh() {
   if (_appToolbarRefreshRaf) return;
   _appToolbarRefreshRaf = requestAnimationFrame(() => {

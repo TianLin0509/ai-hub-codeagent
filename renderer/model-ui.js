@@ -196,6 +196,7 @@ function createModelUiController({
   getModelOptions = modelOptionsFor,
   refreshModelCatalog = async () => null,
   getTerminalScreenText = () => '',
+  openCommandScreen = null,
   isSessionBusy = session => !!(session && session.status === 'running'),
   sleep = ms => new Promise(resolve => setTimeout(resolve, ms)),
   now = Date.now,
@@ -411,11 +412,26 @@ function createModelUiController({
     }
   }
 
+  const commandScreens = new Map();
+  const commandText = id => commandScreens.get(id)?.text() ?? getTerminalScreenText(id);
+  async function beginCommandScreen(sessionId, session) {
+    if (!openCommandScreen || !['codex-picker','claude-inline'].includes(modelSwitchStrategy(session.kind))
+        || ['codex-app-server','claude-stream-json','acp'].includes(session.runtimeBackend)) return;
+    if (isSessionBusy(session)) throw new Error('当前回答仍在运行，请结束后再切换');
+    const reader = await openCommandScreen(sessionId);
+    commandScreens.set(sessionId, reader);
+    return reader;
+  }
+  function endCommandScreen(sessionId, reader) {
+    reader?.dispose();
+    if (reader && commandScreens.get(sessionId) === reader) commandScreens.delete(sessionId);
+  }
+
   async function waitForScreen(sessionId, predicate, label) {
     const deadline = now() + switchTimeoutMs;
     let lastScreen = '';
     while (now() < deadline) {
-      lastScreen = String(getTerminalScreenText(sessionId) || '');
+      lastScreen = String(commandText(sessionId) || '');
       const value = predicate(lastScreen);
       if (value) return { value, screen: lastScreen };
       await sleep(60);
@@ -431,7 +447,7 @@ function createModelUiController({
 
   function dismissOwnedCodexPicker(sessionId, pending) {
     if (!pending?.ownsCodexPicker) return;
-    const screen = getTerminalScreenText(sessionId);
+    const screen = commandText(sessionId);
     if (parseCodexModelPicker(screen) || parseCodexReasoningPicker(screen) || parseCodexAdvancedReasoningPicker(screen)) {
       writeTerminal(sessionId, '\x1b');
     }
@@ -454,7 +470,7 @@ function createModelUiController({
       return response.result;
     }
     if (isSessionBusy(session)) throw new Error('当前回答仍在运行，请结束后再切换模型');
-    if (!terminalAcceptsModelCommand(getTerminalScreenText(sessionId), 'codex-picker')) {
+    if (!terminalAcceptsModelCommand(commandText(sessionId), 'codex-picker')) {
       throw new Error('Codex 输入框有未发送内容或当前不在主提示符；请先处理后再切换模型');
     }
     await submitSlashCommand(sessionId, '/model', 'codex-picker');
@@ -526,7 +542,7 @@ function createModelUiController({
 
   async function switchClaudeModel(sessionId, session, option) {
     if (isSessionBusy(session)) throw new Error('当前回答仍在运行，请结束后再切换模型');
-    if (!terminalAcceptsModelCommand(getTerminalScreenText(sessionId), 'claude-inline')) {
+    if (!terminalAcceptsModelCommand(commandText(sessionId), 'claude-inline')) {
       throw new Error('Claude 输入框有未发送内容或当前不在主提示符；请先处理后再切换模型');
     }
     await submitSlashCommand(sessionId, `/model ${option.id}`, 'claude-inline');
@@ -581,7 +597,9 @@ function createModelUiController({
     updateActiveModelChip();
     renderModelPicker(menu, badgeEl, sessionId, { text: `正在切换到 ${option.label}…`, state: 'pending' });
     let preferencePrepared = false;
+    let commandScreen;
     try {
+      commandScreen = await beginCommandScreen(sessionId, session);
       if (session.runtimeBackend === 'claude-stream-json') {
         const result = await ipcRenderer.invoke('claude-native:set-model', { sessionId, modelId: option.id });
         if (!result?.ok) throw new Error(result?.error || '模型切换未确认');
@@ -653,7 +671,7 @@ function createModelUiController({
         });
       }
       return { ok: false, error: error && error.message ? error.message : String(error) };
-    }
+    } finally { endCommandScreen(sessionId, commandScreen); }
   }
   
   // ── 思考档切换（T1）─────────────────────────────────────────────────
@@ -750,7 +768,9 @@ function createModelUiController({
     session._modelSwitchPending = { id: modelId, label: effort };
     updateActiveModelChip();
     renderEffortPicker(menu, anchorEl, sessionId, efforts, { text: `正在切换到 ${effort}…`, state: 'pending' });
+    let commandScreen;
     try {
+      commandScreen = await beginCommandScreen(sessionId, session);
       const switched = session.runtimeBackend === 'acp'
         ? await (async () => {
           const response = await ipcRenderer.invoke('codex:native-action', {sessionId, action:'configure', effort});
@@ -789,7 +809,7 @@ function createModelUiController({
         });
       }
       return { ok: false, error: error && error.message ? error.message : String(error) };
-    }
+    } finally { endCommandScreen(sessionId, commandScreen); }
   }
 
   function closeModelPicker() {
@@ -831,6 +851,7 @@ function createModelUiController({
       if (!session || session._modelSwitchPending) return;
       session._modelSwitchPending = {id:session.currentModel?.id,label:tier};
       paint('正在确认速度设置…','pending'); updateActiveModelChip();
+      let commandScreen;
       try {
         if (isSessionBusy(session)) throw new Error('请等当前回答结束后再切换速度');
         const native = session.runtimeBackend === 'codex-app-server';
@@ -838,7 +859,11 @@ function createModelUiController({
         // Native Claude answers over the protocol; there is no terminal prompt
         // to inspect, and the old screen check would reject every switch.
         const nativeClaude = session.runtimeBackend === 'claude-stream-json';
-        if (!native && !nativeClaude && !terminalAcceptsModelCommand(getTerminalScreenText(sessionId),codexPty ? 'codex-picker' : 'claude-inline')) {
+        if (!native && !nativeClaude && !codexPty) commandScreen = await beginCommandScreen(sessionId, session);
+        // Codex's IPC checks the authoritative PTY snapshot and waits for the
+        // CLI acknowledgement. The hidden renderer frame can be empty/stale
+        // in card view; it must not veto that independent readiness check.
+        if (!native && !nativeClaude && !codexPty && !terminalAcceptsModelCommand(commandText(sessionId),'claude-inline')) {
           throw new Error('终端输入框有草稿或不在主提示符，请先处理后再切换');
         }
         const response = await ipcRenderer.invoke(native ? 'codex:native-action' : codexPty ? 'codex:set-speed' : 'session:set-fast', native
@@ -857,7 +882,7 @@ function createModelUiController({
         delete session._modelSwitchPending;
         updateActiveModelChip();
         if (openModelPicker?.el === menu) paint('切换失败：'+error.message,'error');
-      }
+      } finally { endCommandScreen(sessionId, commandScreen); }
     };
     paint('正在核对当前模型支持的速度…','pending');
     const session = sessions.get(sessionId);

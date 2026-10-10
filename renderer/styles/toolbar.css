@@ -112,6 +112,23 @@
 }
 
 /* 非会话视图（主页 / 投研 / 学习 / 开发 / 群聊）：面包屑只写视图名。 */
+.app-toolbar .cx-ui-version {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 3px 8px;
+  border: 1px solid var(--border-color, #d7dce3);
+  border-radius: 6px;
+  color: var(--text-secondary, #536175);
+  background: transparent;
+  cursor: pointer;
+  -webkit-app-region: no-drag;
+}
+.app-toolbar .cx-ui-version:hover { color: var(--text-primary, #17212f); }
 .crumb-view-name {
   font-size: 12.5px;
   font-weight: 600;

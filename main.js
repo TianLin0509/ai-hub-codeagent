@@ -1083,6 +1083,14 @@ function createWindow() {
     },
   });
   mainWindow._hubNativeTitleBar = nativeTitleBar;
+  // 窗口在屏幕上就一直出帧 + 窗口事件日志（公司真机「点后台冻住、半分钟后黑屏」，见该模块注释）。
+  try {
+    const keepRendering = require('./core/window-keep-rendering.js');
+    keepRendering.installWindowKeepRendering(mainWindow, {
+      app, ipcMain, dataDir: getHubDataDir(),
+      enabled: keepRendering.shouldKeepRendering({ community: require('./core/distribution').community }),
+    });
+  } catch (error) { console.warn('[window] keep-rendering setup failed:', error && error.message); }
   require('./main/ipc/preview-immersive-handlers.js').bindPreviewImmersiveWindow(mainWindow);
   // 工具栏要知道窗口是不是最大化：Windows 最大化一个隐藏标题栏的窗口时，
   // 窗口会比屏幕大出一圈边框，顶部那几像素会被切掉。渲染层拿这个状态决定

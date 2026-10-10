@@ -4,27 +4,7 @@
 // T2（2026-05-04 maintainer）：底部 module.exports 暴露 _isPartialUnchanged 给 Node unit test，
 //   require 时 typeof document === 'undefined' → IIFE 体内大量 DOM/IPC 引用会爆，故 IIFE 只在 renderer 浏览器环境跑。
 
-// A never-opened member terminal can retain the previous inline picker above
-// the current one. The real Codex 0.153.4 frame contained both highlighted rows:
-// model 1 and reasoning 3. Only the latest panel may supply a cursor.
-function groupInputTuningFrame(screen) {
-  // Ultra uses » for the same native input. Normalize only its leading glyph
-  // for the shared picker; retain draft text so its non-empty input guard holds.
-  const lines = String(screen || '').split('\n')
-    .map(line => line.replace(/^(\s*)»(?=\s|$)/, '$1›'));
-  let panel = -1, prompt = -1, changed = -1;
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i].trim();
-    if (/^(?:Select Model and Effort|Select Reasoning Level\b|Advanced Reasoning\b)/i.test(line)) panel = i;
-    if (/^›(?:\s*$|\s+(?!\d+\.).*)/.test(line)) prompt = i;
-    if (/^[•·]?\s*Model changed to\b/i.test(line)) changed = i;
-  }
-  if (panel < 0) return lines.join('\n');
-  // An input prompt below a panel means the panel has closed. Retain the real
-  // confirmation when present, but never offer the old menu to the next switch.
-  const start = prompt > panel ? (changed > panel ? changed : prompt) : panel;
-  return lines.slice(start).join('\n');
-}
+const { groupInputTuningFrame } = require('./command-screen-frame');
 
 if (typeof document !== 'undefined') (function () {
   async function copyGroupText(text) {
@@ -5131,6 +5111,7 @@ if (typeof document !== 'undefined') (function () {
       refreshModelCatalog: (kind, session) => window.WorkspaceController.loadModelCatalog(kind, {
         codexProfile: session && session.codexProfile,
       }),
+      openCommandScreen: sessionId => require('./command-screen').openCommandScreen(ipcRenderer, sessionId),
       // A group member need not have an opened terminal tab. Read the same hydrated
       // xterm buffer without opening a tab or resizing its PTY.
       getTerminalScreenText: sessionId => {
@@ -5153,26 +5134,7 @@ if (typeof document !== 'undefined') (function () {
     const meetingId = activeMeetingId;
     button.disabled = true;
     try {
-      const cached = getOrCreateTerminal(sessionId);
-      if (!cached.opened && !cached._hydrated) {
-        // Fast snapshots carry native geometry but no resize operations. An
-        // unopened xterm otherwise stays at 80x24 while the PTY paints 120x30,
-        // leaving an old empty prompt above a newly typed draft. Size only the
-        // local reader before the existing ordered hydrate; never resize PTY.
-        const snapshot = await ipcRenderer.invoke('get-session-buffer-snapshot', sessionId);
-        if (activeMeetingId !== meetingId || !button.isConnected) return;
-        if (!cached.opened && !cached._hydrated && !cached._hydrating) {
-          const cols = Number(snapshot?.baseCols || snapshot?.cols);
-          const rows = Number(snapshot?.baseRows || snapshot?.rows);
-          if (!Number.isInteger(cols) || cols < 2 || !Number.isInteger(rows) || rows < 1) {
-            throw new Error('无法确认成员终端尺寸，请先打开成员会话后重试');
-          }
-          cached.terminal.resize(cols, rows);
-        }
-      }
-      await hydrateTerminalFromSnapshot(sessionId, cached);
       if (activeMeetingId !== meetingId || !button.isConnected) return;
-      if (!cached._hydrated) throw new Error('成员终端正在载入，请稍后重试');
       _inputModelSessionId = sessionId;
       modelUi.closeModelPicker();
       const ui = _getInputModelUi();
