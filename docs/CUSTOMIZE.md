@@ -4,7 +4,7 @@
 
 ## 交给公司 Agent 的开工任务
 
-> 以 https://github.com/TianLin0509/ai-hub-codeagent 的 v0.5.6 为可复现基线，先读 AGENTS.md、docs/ARCHITECTURE.md、docs/CUSTOMIZE.md。为我们建立独立工作分支或新库，保留 MIT LICENSE 和上游来源。先完成安装和现有 GUI/协议回归，然后调查我们内部 agent 的真实接口、认证方式和部署平台，给出适配映射。沿下文顺序实现公司专用工作台；不得捏造内部 API，不得带入个人账号、聊天或网关，不得把未知提交当作成功。每一步交付源码、验证命令、截图和明确边界。
+> 以 https://github.com/TianLin0509/ai-hub-codeagent 的 v0.5.7 为可复现基线，先读 AGENTS.md、docs/ARCHITECTURE.md、docs/CUSTOMIZE.md。为我们建立独立工作分支或新库，保留 MIT LICENSE 和上游来源。先完成安装和现有 GUI/协议回归，然后调查我们内部 agent 的真实接口、认证方式和部署平台，给出适配映射。沿下文顺序实现公司专用工作台；不得捏造内部 API，不得带入个人账号、聊天或网关，不得把未知提交当作成功。每一步交付源码、验证命令、截图和明确边界。
 
 ## 先确定是哪一种改造
 

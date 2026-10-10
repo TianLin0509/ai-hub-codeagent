@@ -9,6 +9,10 @@ const fs = require('fs');
 const { isCodexSession, isNativeSession, acceptNativeSnapshot } = require('../core/codex-native-runtime.js');
 const { isNativeAgent } = require('../core/native-agent-runtime.js');
 const { isPtyAgentSession } = require('../core/agent-runtime-mode.js');
+// 公司版默认回到 9 月的「后台」路径：终端按实际尺寸常驻在卡片下面，点后台只藏卡片层（见 core/backstage-path.js）。
+const BACKSTAGE_KEEPS_TERMINAL = require('../core/backstage-path.js').keepsTerminalBehindCards();
+// 主面板的终端此刻是否「收起」：10 月路径下卡片视图里终端不显示、不调尺寸；9 月路径下它一直在卡片下面活着。
+function primaryTerminalDormant() { return currentView !== 'pty' && !BACKSTAGE_KEEPS_TERMINAL; }
 // 草稿写进 Main 的草稿库：原生会话和 PTY 的 Claude/Codex 会话都算（同一个 Hub 会话 id）。
 const hasDurableDraft = session => isNativeAgent(session) || isPtyAgentSession(session);
 const { recordNativeContent, promptReceipt } = require('../core/native-feedback.js');
@@ -688,7 +692,7 @@ function fitAndResizeTerminal(sessionId, cached, opts = {}) {
   if (!sessionId || !cached || !cached.opened || !cached.container) return false;
   // The primary terminal can have nonzero geometry behind the opaque card
   // overlay. Geometry alone is not evidence that the user opened backstage.
-  if (cached.container.closest('.terminal-panel') === terminalPanelEl && currentView !== 'pty') return false;
+  if (cached.container.closest('.terminal-panel') === terminalPanelEl && primaryTerminalDormant()) return false;
   const rect = cached.container.getBoundingClientRect();
   if (rect.width < 4 || rect.height < 4 || !cached.container.offsetWidth) return false;
   // 之前只有 Codex 会话在 fit 之后回到底部（shouldAutoPinCodexTerminal 里就写死了
@@ -790,7 +794,7 @@ function scheduleVisibleTerminalRecovery(sessionId, cached, opts = {}) {
     cached._surfaceRecoveryRaf = 0;
     if (terminalCache.get(sessionId) !== cached || !cached.opened || !cached.container) return;
     if (!cached.container.isConnected) return;
-    if (cached.container.closest('.terminal-panel') === terminalPanelEl && currentView !== 'pty') return;
+    if (cached.container.closest('.terminal-panel') === terminalPanelEl && primaryTerminalDormant()) return;
     if (!cached.container.offsetWidth || !cached.container.offsetHeight) {
       if (!secondPass) {
         cached._surfaceRecoveryRaf = requestAnimationFrame(() => recover(true));
@@ -2281,7 +2285,7 @@ function showTerminal(sessionId, opts = { focus: true }) {
   }
   // Card navigation does not display xterm. Recreating its Canvas/WebGL
   // surface here costs a frame and can stall Windows compositor commits.
-  if (embedded || currentView === 'pty') loadGpuRenderer(cached);
+  if (embedded || !primaryTerminalDormant()) loadGpuRenderer(cached);
   else unloadGpuRenderer(cached);
   // Behind the opaque cards a visible xterm still paints with its DOM fallback
   // renderer and measures every new glyph: on 2026-10-08 one click on a
@@ -2289,7 +2293,7 @@ function showTerminal(sessionId, opts = { focus: true }) {
   // Hide it exactly like inactive terminals; it keeps parsing output into its
   // buffer, and applyViewMode('pty') shows it and runs the visible recovery.
   // It is opened (and measured) above while still displayed.
-  if (!embedded) setCardHiddenTerminal(cached, currentView !== 'pty');
+  if (!embedded) setCardHiddenTerminal(cached, primaryTerminalDormant());
   if (isCodexKind(session.kind) && !isNativeAgent(session)) {
     cached._codexAnswerAccent ||= require('./codex-answer-accent').mountCodexAnswerAccent(cached.terminal, document);
     cached._codexAnswerAccent.refresh();
@@ -2307,7 +2311,7 @@ function showTerminal(sessionId, opts = { focus: true }) {
       cached._codexBackstage ||= createCodexBackstage({ document, ipcRenderer, sessionId,
         getSession:() => sessions.get(sessionId),
         renderProse:text => DOMPurify.sanitize(marked.parse(text, {async:false}), {FORBID_TAGS:['img','video','audio','iframe']}),
-        onModeChange:mode => { cached._backstageReadable=mode!=='legacy';if(cached._backstageReadable || currentView !== 'pty')unloadGpuRenderer(cached);else loadGpuRenderer(cached); },
+        onModeChange:mode => { cached._backstageReadable=mode!=='legacy';if(cached._backstageReadable || primaryTerminalDormant())unloadGpuRenderer(cached);else loadGpuRenderer(cached); },
         focusComposer:() => mountTarget.querySelector('.floating-input-box')?.focus() });
       cached._codexBackstage.mount(termContainer);
       cached._codexBackstage.setVisible(currentView === 'pty', {force:!!opts.forceScrollBottom});
@@ -2318,7 +2322,7 @@ function showTerminal(sessionId, opts = { focus: true }) {
     // Card navigation must not fit/redraw an invisible CLI, or resize a
     // session which a later click has already unmounted. Entering backstage
     // runs scheduleVisibleTerminalRecovery with the final visible geometry.
-    if (!termContainer.isConnected || (!embedded && (activeSessionId !== sessionId || currentView !== 'pty'))) return;
+    if (!termContainer.isConnected || (!embedded && (activeSessionId !== sessionId || primaryTerminalDormant()))) return;
     const dbg = window.__scrollDebug;
     if (dbg && dbg.isOn()) dbg.log('show:raf-enter', { focus: opts.focus, ...dbg.snap(cached.terminal, sessionId) });
     const forcePtyResize = cached._hydrated && cached._needsPtyRedraw;
@@ -4034,7 +4038,7 @@ function applyViewMode(mode, { remember = true, skipPreviousCardCapture = false 
       scheduleVisibleTerminalRecovery(activeSessionId, cached, { pinBottom: false });
     }
   }
-  if (mode === 'card' && typeof terminalCache !== 'undefined') {
+  if (mode === 'card' && !BACKSTAGE_KEEPS_TERMINAL && typeof terminalCache !== 'undefined') {
     unloadGpuRenderer(terminalCache.get(activeSessionId));
     setCardHiddenTerminal(terminalCache.get(activeSessionId), true);
   }
@@ -7076,7 +7080,7 @@ async function hydrateTerminalFromSnapshot(sessionId, cached) {
   // 才写进来的，此后再没有任何一次 fit/pin。内容量一变（尤其带绝对定位的 TUI 帧），
   // 布局就可能停在按空终端算出来的状态。回灌完成后补一次 fit + 置底。
   if (sessionId === activeSessionId
-      && (currentView === 'pty' || cached.container.closest('.terminal-panel') !== terminalPanelEl)) {
+      && (!primaryTerminalDormant() || cached.container.closest('.terminal-panel') !== terminalPanelEl)) {
     fitAndResizeTerminal(sessionId, cached, { force: true, forcePtyResize: true });
     cached._needsPtyRedraw = false;
     refreshTerminalRendererSurface(cached);

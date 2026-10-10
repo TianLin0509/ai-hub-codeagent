@@ -9,6 +9,12 @@
 // --copy-real-data：把 %USERPROFILE%\.ai-hub-community 复制一份来用（先关掉正在用的 Hub），
 //   在你真实的长会话上点「后台」，复现「历史越长越卡」类问题；不改原数据。
 // 发送的真实模型消息：每个会话 1 条（默认 3 条）。
+//
+// 对照开关（v0.5.7 起，同一安装包上切换新旧行为）：
+//   --backstage september|october  「后台」走 9 月还是 10 月的路径（core/backstage-path.js；默认跟安装包）
+//   --keep-rendering 1|0           窗口始终出帧（core/window-keep-rendering.js；默认跟安装包）
+//   --gpu auto|on|off               显卡加速（auto = 有 gpu-disabled.json 就关）
+//   --report <file>                 报告另存一份到这里
 const fs = require('fs');
 const os = require('os');
 const net = require('net');
@@ -30,7 +36,11 @@ for (const key of Object.keys(process.env)) {
 process.env.HUB_E2E_SHOW_WINDOWS = '1';
 process.env.HUB_TEST_PRIORITY = 'normal';
 const configDir = path.resolve(process.env.AI_HUB_CODEAGENT_CONFIG_DIR || process.env.CODEAGENT3_CONFIG_DIR || path.join(home, '.cac'));
-const gpuDisabled = fs.existsSync(path.join(home, '.ai-hub-community', 'gpu-disabled.json'));
+const gpuArg = arg('--gpu', 'auto');
+const gpuDisabled = gpuArg === 'off' || (gpuArg === 'auto' && fs.existsSync(path.join(home, '.ai-hub-community', 'gpu-disabled.json')));
+const backstageArg = arg('--backstage', '');
+const keepArg = arg('--keep-rendering', '');
+const reportCopy = arg('--report', '');
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hub-freeze-'));
 const out = path.join(root, 'report');
 fs.mkdirSync(out, { recursive: true });
@@ -141,7 +151,8 @@ async function main() {
   const dataDir = path.join(root, 'data');
   if (copyReal) { copyRealData(dataDir); md.push('（使用真实数据的副本）', ''); }
   hub = await launchIsolatedHub({ dataDir, port: await freePort(), executablePath: exe, windowMode: 'visible', label: 'freeze', allowExternalState: copyReal,
-    extraEnv: { AI_HUB_CODEAGENT_CONFIG_DIR: configDir, CLAUDE_HUB_HOME_DIR: path.join(root, 'home'), DEEPSEEK_API_KEY: '', ...(gpuDisabled ? { AI_HUB_DISABLE_GPU: '1' } : {}) } });
+    extraEnv: { AI_HUB_CODEAGENT_CONFIG_DIR: configDir, CLAUDE_HUB_HOME_DIR: path.join(root, 'home'), DEEPSEEK_API_KEY: '', ...(gpuDisabled ? { AI_HUB_DISABLE_GPU: '1' } : {}),
+      ...(backstageArg ? { AI_HUB_BACKSTAGE_PATH: backstageArg } : {}), ...(keepArg ? { AI_HUB_KEEP_RENDERING: keepArg } : {}) } });
   c = await connectFirstPage(hub);
   // 界面进程崩溃（黑屏的一种来源）：CDP 发 Inspector.targetCrashed；连接断开也记下来。
   c.ws.on('message', data => {
@@ -153,7 +164,8 @@ async function main() {
   if (rendererPref !== 'auto') await c.eval(`localStorage.setItem('hub.renderer', ${j(rendererPref)}), true`);
   else await c.eval(`localStorage.removeItem('hub.renderer'), true`);
   const env = { hub: await c.eval('document.title'), gpu: gpuDisabled ? '关闭（兼容渲染）' : '开启', gpuFlag: await c.eval("process.argv.includes('--ai-hub-gpu-disabled')"),
-    renderer: rendererPref, screen: await c.eval('`${screen.width}x${screen.height} 缩放 ${devicePixelRatio}`'), cpu: `${os.cpus().length} 核 ${os.cpus()[0] && os.cpus()[0].model}`, mem: `${Math.round(os.totalmem() / 2 ** 30)} GB` };
+    renderer: rendererPref, backstage: await c.eval("require('../core/backstage-path.js').backstagePath()").catch(() => '（旧版无此开关）'),
+    keepRendering: keepArg || '默认', screen: await c.eval('`${screen.width}x${screen.height} 缩放 ${devicePixelRatio}`'), cpu: `${os.cpus().length} 核 ${os.cpus()[0] && os.cpus()[0].model}`, mem: `${Math.round(os.totalmem() / 2 ** 30)} GB` };
   md.unshift('# 「后台」卡死取证报告', '', '```json', j(env, null, 2), '```', '');
   await c.eval(MON);
   let ids = [];
@@ -194,6 +206,7 @@ main().catch(e => { md.push('## 致命错误', '```text', redact(e && e.stack ||
     try { if (c) c.close(); } catch {}
     if (hub) await gracefulQuit(hub).catch(() => {});
     fs.writeFileSync(path.join(out, 'freeze-report.md'), md.join('\n').slice(0, 42000), 'utf8');
+    if (reportCopy) { try { fs.writeFileSync(path.resolve(reportCopy), md.join('\n').slice(0, 42000), 'utf8'); } catch {} }
     console.log('\n报告：' + path.join(out, 'freeze-report.md'));
     setTimeout(() => process.exit(0), 500);
   });
