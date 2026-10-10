@@ -35,6 +35,11 @@ async function runItems(browser, items, signal, onStage, onResult, fixture) {
 // second, odd-looking client of the same login (2026-10-08 review), and the routine check
 // below never visits a website at all.
 async function inspectAccounts({ chrome, items, signal, onStage, onResult, fixture }) {
+  const ordinary=require('./ordinary-browser-check'),transport=require('./ordinary-browser-client');
+  if(!fixture&&items.length===1&&ordinary.sharedSites.has(items[0].site)&&transport.enabled({identity:items[0].identity,root:chrome.root},chrome.env)){
+    const browser={chatgptCheck:(id,opts)=>ordinary.check(chrome,id,'chatgpt',opts.signal),liveStatus:(id,site,opts)=>ordinary.check(chrome,id,site,opts.signal)};
+    return runItems(browser,items,signal,onStage,onResult,null);
+  }
   if (!fixture) {
     const ep = await chrome.endpoint();
     if (!ep && chrome.profileHeld()) throw Error('专属 Chrome 的普通窗口开着，关掉后再确认登录；已有登录会保留。');

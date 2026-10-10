@@ -743,6 +743,17 @@ async function sendToPtyImpl(sid, prompt, kind, options = {}) {
         console.warn(`[group-chat] ${kind} prompt has no lifecycle acknowledgement for ${sid.slice(0, 8)}, but the screen ran with a clear input box; treating it as submitted`);
         acknowledgement = { source: 'pty-running-input-clear', observedAt: Date.now(), turnId: null };
       }
+      // 带回执的发送（下方输入框）同理（2026-10-10 用户：「可能没收到，要不要补发」经常误报）。
+      //   回执要求 CLI 回报的原文逐字相同，回报迟到或改写过（AI 还在答、新消息排队，长粘贴包装）
+      //   就一直拿不到。只要原文已离开输入框、屏幕在跑，就记作「已送达、未逐字确认」：不报卡住、
+      //   不补回车；之后逐字回报到达仍会把回执升级为已确认。原文还在输入框才是没提交的正向证据。
+      if (!acknowledgement && !cliExitedDuringAck && options.submissionReceipt) {
+        if (livePtyObserver) await livePtyObserver.probe(probeState);
+        if (!pasteStillInInputBox(probeState, prompt) && (observedRunningWithClearInput || looksAlreadyRunning(probeState))) {
+          console.warn(`[group-chat] ${kind} prompt for ${sid.slice(0, 8)} left the input box and the screen is running, but no exact receipt yet; treating it as delivered`);
+          acknowledgement = { source: 'pty-input-cleared', observedAt: Date.now(), turnId: null };
+        }
+      }
       // 等确认期间 CLI 退回了命令行：明确报失败（不是 notSent，退出前正文可能已写进 CLI）。
       if (!acknowledgement && cliExitedDuringAck) {
         return { ok: false, sendStatus: 'cli-exited', error: 'cli-exited', enterAttempts, acknowledgementSource: null,

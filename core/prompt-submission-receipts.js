@@ -58,7 +58,9 @@ class PromptSubmissionReceipts {
   finish(receipt, result) {
     if (this.get(receipt.sessionId) !== receipt || receipt.resolved) return;
     // A generic PTY/activity success cannot identify this particular message.
-    receipt.status = result?.ok === false ? 'failed' : result?.sendStatus === 'queued' ? 'queued' : 'unconfirmed';
+    // 原文离开了输入框且屏幕在跑：记「已送达」——不是已确认（仍可被逐字回报升级），也不提示补发。
+    receipt.status = result?.ok === false ? 'failed' : result?.sendStatus === 'queued' ? 'queued'
+      : result?.acknowledgementSource === 'pty-input-cleared' ? 'delivered' : 'unconfirmed';
     this.onUpdate(this.snapshot(receipt));
   }
 

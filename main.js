@@ -1812,7 +1812,9 @@ const promptOperations = registerPromptSubmitIpc(ipcMain, {
     return assistantService.preparePrompt(request);
   },
 });
-try {
+// 发行目标关掉助理时（公司版：没有 Claude，助理会话会一直显示运行异常）整个服务不起：
+// 不建、不恢复助理会话，日程与手机通道也随之不启动。
+if (require('./core/distribution').featureEnabled('assistant')) try {
   assistantService = require('./main/ipc/assistant-handlers').registerAssistantIpc(ipcMain, {
     dataDir: getHubDataDir(),
     historyDatabasePath: (() => {

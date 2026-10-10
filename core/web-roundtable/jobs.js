@@ -40,6 +40,8 @@ async function resumeWeb(id,provider){
   const job=status(id);if(job.kind!=='web'||job.input.provider!==provider)throw Error('Provider task mismatch');
   if(store.cancelled(id)||require('./recovery').parentCancelled(id))throw Error('Cancelled tasks are not resumed');
   if(job.state==='succeeded'){await require('./recovery').wakeParent(id);return job;}
+  const transport=require('../ordinary-browser-client');
+  if(transport.enabled({identity:'main'}))await transport.call({identity:'main'},'roundtable-person-'+provider,['human-done',adapters.get(provider).url]);
   if(job.submissionAttempted)return collect(id,provider);
   return store.locked('create-'+id,async()=>schedule(status(id)));
 }
@@ -62,11 +64,12 @@ async function runWeb(job,save,mode,runtime={}){
     // challenged automation (the person clears it from the account page).
     // The record belongs to the browser actually opened: the Hub Chrome for the real opener, or
     // whatever root a caller names together with its own opener.
-    const hubRoot=runtime.hubRoot||(runtime.open?null:require('../hub-chrome').defaultRoot(process.env)),guard=hubRoot&&(runtime.guard||require('../web-risk-guard'));
+    const ordinary=!runtime.open&&require('../ordinary-browser-client').enabled({identity:'main'});
+    const hubRoot=runtime.hubRoot||(runtime.open?null:ordinary?require('../personal-chrome').personalRoot(process.env):require('../hub-chrome').defaultRoot(process.env)),guard=hubRoot&&(runtime.guard||require('../web-risk-guard'));
     for(;guard;){
-      if(typeof guard.read==='function'&&typeof guard.settleHandoff==='function'&&guard.read(hubRoot).handoff)
+      if(!ordinary&&typeof guard.read==='function'&&typeof guard.settleHandoff==='function'&&guard.read(hubRoot).handoff)
         await guard.settleHandoff(new (require('../hub-chrome').HubChrome)({root:hubRoot})).catch(()=>{});
-      try{guard.assertAutomationAllowed(hubRoot,{identity:'main',url,navigate:true});break;}
+      try{guard.assertAutomationAllowed(hubRoot,{identity:'main',url,navigate:!ordinary});break;}
       catch(e){
         if(e.code==='HUB_RATE_LIMITED'||e.code==='HUB_COOLDOWN')throw Object.assign(Error('这个网站本小时的自动访问次数已用完，稍后再试；不影响你自己使用'),{attention:true,recovery:'rate_limited'});
         if(e.code==='HUB_SITE_CHALLENGED')throw Object.assign(Error('此网站刚遇到人机验证，自动化已暂停；请从 Hub 账号页打开此网站完成验证后再处理任务'),{attention:true,recovery:'human_verification'});
@@ -115,7 +118,10 @@ async function runWeb(job,save,mode,runtime={}){
       await store.sleep(700);
     }while(Date.now()<end);
     throw Object.assign(Error('No verified complete answer before deadline. Use web_collect on the same task; never resend blindly.'),{attention:true});
-  }catch(e){save({state:e.cancelled?'cancelled':job.submissionAttempted||e.attention?'needs_attention':'failed',error:e.message,...(e.errorCode?{errorCode:e.errorCode}:{}),...(e.recovery?{recovery:{reason:e.recovery,accountId:'web-'+provider,instruction:'在 AI Hub 账号页打开此账号，完成验证后让原工具继续此任务；原任务 ID 保留，已发送问题只补收。'}}:{}),...(browser?.page.networkErrors?.length?{networkErrors:browser.page.networkErrors}:{})});}
+  }catch(e){
+    if(/^Extension pairing/.test(e.message)){e.attention=true;e.errorCode='extension_pairing_required';e.recovery='extension_pairing';}
+    if(/^Site challenged/.test(e.message)){e.attention=true;e.errorCode='human_verification';e.recovery='human_verification';}
+    save({state:e.cancelled?'cancelled':job.submissionAttempted||e.attention?'needs_attention':'failed',error:e.message,...(e.errorCode?{errorCode:e.errorCode}:{}),...(e.recovery?{recovery:{reason:e.recovery,accountId:'web-'+provider,instruction:e.recovery==='extension_pairing'?'在账号 Tab 普通浏览器配对官方扩展后继续原任务；不会转用其他浏览器':'在 AI Hub 账号页打开此账号，完成验证后让原工具继续此任务；原任务 ID 保留，已发送问题只补收。'}}:{}),...(browser?.page.networkErrors?.length?{networkErrors:browser.page.networkErrors}:{})});}
   finally{if(browser)try{await browser.close();}catch(e){save({cleanupError:e.message});}if(release)release();}
 }
 module.exports={terminal,text,status,create,ask,collect,resumeWeb,spawnWorker,runWeb,schedule};

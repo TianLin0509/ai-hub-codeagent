@@ -55,7 +55,12 @@ const CHALLENGE_PROBE = `(() => {
   const conversation = frame('article,[data-message-author-role],textarea,[contenteditable="true"]');
   const visible = sel => [...document.querySelectorAll(sel)].some(e => {
     const style = getComputedStyle(e);
-    return e.getClientRects().length > 0 && style.visibility !== 'hidden' && style.visibility !== 'collapse' && style.display !== 'none';
+    if (!e.getClientRects().length || style.visibility === 'hidden' || style.visibility === 'collapse' || style.display === 'none'
+      || (e.checkVisibility && !e.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true }))) return false;
+    // Background Turnstile widgets can have a DOM rect but no visible area, or
+    // sit outside the viewport. They are not a request for human verification.
+    const r = e.getBoundingClientRect();
+    return r.width > 0 && r.height > 0 && r.right > 0 && r.bottom > 0 && r.left < innerWidth && r.top < innerHeight;
   });
   // Title alone is not proof (account-browser.js keeps the same rule): it needs Cloudflare's own script too.
   const cf = typeof window._cf_chl_opt === 'object' || frame('script[src*="/cdn-cgi/challenge-platform/"]');

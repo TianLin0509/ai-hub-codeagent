@@ -204,6 +204,12 @@ function failureCategory(error) {
 }
 async function main(binding, argv = process.argv.slice(2)) {
   try {
+    validateBinding(binding);
+    if(require('./ordinary-browser-client').enabled(binding)){
+      const out=await require('./ordinary-browser-client').main(binding,argv);
+      noteActivity(binding,argv,out.isError?out.error==='Site challenged'?'verification_required':out.error==='Human handoff'?null:'failed':bridgeOutcome(out.result));
+      return out;
+    }
     const result = await new BrowserTool(binding).execute(argv);
     noteActivity(binding, argv, bridgeOutcome(result));
     process.stdout.write(JSON.stringify({ result: result ?? null }) + '\n');

@@ -2,8 +2,11 @@
   "edition": "community",
   "target": "company",
   "repo": "TianLin0509/ai-hub-codeagent",
-  "version": "0.5.2",
-  "upstreamVersion": "1.6.400",
-  "upstreamCommit": "f3ecf81626771bb708c0ba9bc609621f4b93fe15",
+  "features": {
+    "assistant": false
+  },
+  "version": "0.5.3",
+  "upstreamVersion": "1.6.403",
+  "upstreamCommit": "2d967ad8c696e103b94da8a819deae9f66029019",
   "upstreamDirty": false
 }

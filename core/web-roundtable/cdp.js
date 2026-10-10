@@ -26,6 +26,8 @@ async function endpoint(profile) {
 // login (the main one unless told otherwise). No per-site browser is started any more, and
 // closing the task closes only its tab.
 async function open(provider, url, options={}) {
+  if(!options.hubChrome&&require('../ordinary-browser-client').enabled({identity:options.identity||'main'},options.env||process.env))
+    return require('./ordinary').open(provider,url,options);
   const { HubChrome } = require('../hub-chrome');
   const hub=options.hubChrome||new HubChrome({env:options.env||process.env});
   // Open blank first so Network is enabled before the site's own first requests.

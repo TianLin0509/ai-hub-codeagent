@@ -1,14 +1,15 @@
 'use strict';
 const path = require('path');
 function providerStatus(provider) {
-  const p = require('./providers').get(provider), root = require('../hub-chrome').defaultRoot();
+  const ordinary=require('../ordinary-browser-client').enabled({identity:'main'});
+  const p = require('./providers').get(provider), root = ordinary?require('../personal-chrome').personalRoot():require('../hub-chrome').defaultRoot();
   const guard = require('../web-risk-guard'), paused = guard.blocked(root, 'main', provider), handoff = guard.handoff(root);
   const waiting = require('./recovery').list(require('./store').dataDir()).filter(t => t.provider === provider);
   return { provider, name: p.name, profile: path.join(root, 'main'), identity: 'main', loginSource: 'ai-hub-accounts', authentication: 'not_checked',
     automation: handoff ? 'human_handoff' : paused ? 'verification_required' : 'not_checked', retryAt: handoff?.until || paused?.until || null,
     waitingTasks: waiting.length, capabilities: ['ask','same_conversation_followup','collect','resume','cancel'],
-    nextAction: handoff ? '完成人工操作并关闭专属窗口后继续原任务' : paused ? '在 Hub 账号页对应网站点去验证，完成后复核并继续原任务' : waiting.length ? '在 Hub 账号页复核并继续原任务；已发送问题只补收原会话' : '可提交问题；首次真实访问才确认登录和额度',
-    mode: 'shared Hub Chrome; account checks use headless inspection' };
+    nextAction: handoff ? ordinary?'完成人工操作后继续原任务，无需关闭普通浏览器':'完成人工操作并关闭专属窗口后继续原任务' : paused ? '在 Hub 账号页对应网站点去验证，完成后复核并继续原任务' : waiting.length ? '在 Hub 账号页复核并继续原任务；已发送问题只补收原会话' : '可提交问题；首次真实访问才确认登录和额度',
+    mode: ordinary?'account Tab ordinary Chrome via official extension':'shared Hub Chrome; account checks use headless inspection' };
 }
 function progress(job) {
   return { ...job, progress: { phase: job.phase || job.state, completedRounds: job.rounds?.length || 0, requestedRounds: job.input.rounds,
