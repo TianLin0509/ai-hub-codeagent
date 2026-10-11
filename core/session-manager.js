@@ -58,6 +58,23 @@ const {
 // 取 1MB 是给带 ANSI 色彩的 TUI 输出留余量（同样内容字节数可达纯文本数倍）。
 // 代价很小：每会话一个字符串，远低于多留一个 xterm + WebGL 实例。
 const RING_BUFFER_BYTES = 1024 * 1024;
+const { TerminalRingBuffer } = require('./terminal-ring-buffer');
+const TERMINAL_RING = Symbol('terminalRing');
+// Swap a session entry's `ringBuffer` string for an accessor backed by a
+// TerminalRingBuffer, keeping its current contents. Readers and assignments
+// keep working on plain strings.
+function attachTerminalRing(entry) {
+  if (entry[TERMINAL_RING]) return entry[TERMINAL_RING];
+  const ring = new TerminalRingBuffer(entry.ringBuffer || '');
+  Object.defineProperty(entry, TERMINAL_RING, { value: ring, enumerable: false });
+  Object.defineProperty(entry, 'ringBuffer', {
+    configurable: true,
+    enumerable: true,
+    get: () => ring.toString(),
+    set: value => ring.reset(value),
+  });
+  return ring;
+}
 
 // 试过两种"起点对齐"，都已放弃，记在这里免得有人再走一遍：
 //   1) 对齐到最后一次 \x1b[2J 全屏清屏 —— 实测是**倒退**。Codex/Kimi 每次重绘都清屏，
@@ -3325,28 +3342,10 @@ class SessionManager extends EventEmitter {
     if (!s) return;
     // 累计输出字符数：缓冲区截断后长度不再增长，「某时刻之后的新输出」只能靠它来定位。
     s.outputChars = (Number(s.outputChars) || 0) + String(data || '').length;
-    let rb = (s.ringBuffer || '') + data;
-    const ringLimit = Number(s.ringBufferLimit || RING_BUFFER_BYTES);
-    if (rb.length > ringLimit) {
-      rb = rb.slice(rb.length - ringLimit);
-      // Trim leading lone low-surrogates (unpaired 0xDC00–0xDFFF) left by the cut.
-      // A high surrogate (0xD800–0xDBFF) at position 0 is fine only if it's
-      // immediately followed by a low surrogate; otherwise drop it too.
-      let i = 0;
-      while (i < rb.length && i < 4) {
-        const cc = rb.charCodeAt(i);
-        // Lone low-surrogate — definitely unpaired, drop it
-        if (cc >= 0xDC00 && cc <= 0xDFFF) { i++; continue; }
-        // High surrogate followed by something that is NOT a low surrogate — drop it
-        if (cc >= 0xD800 && cc <= 0xDBFF) {
-          const next = rb.charCodeAt(i + 1);
-          if (!(next >= 0xDC00 && next <= 0xDFFF)) { i++; continue; }
-        }
-        break;
-      }
-      if (i > 0) rb = rb.slice(i);
-    }
-    s.ringBuffer = rb;
+    // Chunked tail buffer: appending no longer copies the whole 1 MB string per
+    // chunk (core/terminal-ring-buffer.js). `s.ringBuffer` stays a plain string
+    // to every reader; it is assembled lazily on read.
+    attachTerminalRing(s).append(data, Number(s.ringBufferLimit || RING_BUFFER_BYTES));
   }
 
   // Returns the ring-buffer string for a session, '' if exists but empty,

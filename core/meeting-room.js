@@ -224,6 +224,23 @@ class MeetingRoomManager {
     };
   }
 
+  // Read-only { id, subSessions } view for membership repair. The arrays are
+  // the live ones: callers must not mutate them.
+  getMeetingMemberships() {
+    return Array.from(this.meetings.values(), m => ({ id: m.id, subSessions: m.subSessions }));
+  }
+
+  // Ids of meetings whose member list contains this session, in the same order
+  // as getDevWorkbenchRecords(). Read-only and clone-free: it runs for every
+  // session-updated event, where cloning every workflow cost ~2 ms per call.
+  getMeetingIdsForSession(sessionId) {
+    const ids = [];
+    for (const [id, m] of this.meetings) {
+      if (m && typeof m === 'object' && Array.isArray(m.subSessions) && m.subSessions.includes(sessionId)) ids.push(id);
+    }
+    return ids;
+  }
+
   getDevWorkbenchRecords() {
     return Array.from(this.meetings.keys(), id => this.getDevWorkbenchRecord(id)).filter(Boolean);
   }

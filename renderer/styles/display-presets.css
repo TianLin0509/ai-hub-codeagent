@@ -59,7 +59,11 @@
 :root[data-display-mode] body #session-list .sl-kind[data-state='unknown'] { filter:grayscale(.6); opacity:.65; outline:1px dashed var(--status-warning); outline-offset:1px; }
 :root[data-display-mode] body #session-list .sl-kind[data-state='wait'] { outline:1px solid var(--status-warning); outline-offset:1px; }
 :root[data-display-mode] body #session-list .sl-kind[data-state='error'] { filter:none; outline:2px solid var(--status-danger); outline-offset:1px; }
-:root[data-display-mode] body #session-list .sl-kind:is([data-state='run'],[data-state='start']) { animation:sl-logo-breathe 1.6s ease-in-out infinite; animation-delay:var(--sidebar-work-phase,0ms); }
+/* 运行中 / 唤醒中：静态绿环 + 光晕，唤醒中用虚线（2026-10-11 取代呼吸动画，说明见 shell-sidebar-terminal.css） */
+:root[data-display-mode] body #session-list .sl-kind:is([data-state='run'],[data-state='start']):not(.sl-group-logos .sl-kind) { border-radius:50%; outline:2px solid var(--sl-run-ring); outline-offset:1px; box-shadow:0 0 0 3px color-mix(in srgb,var(--sl-run-ring) 18%,transparent),0 0 7px color-mix(in srgb,var(--sl-run-ring) 60%,transparent); }
+:root[data-display-mode] body #session-list .sl-kind[data-state='start']:not(.sl-group-logos .sl-kind) { outline-style:dashed; box-shadow:none; }
+:root[data-display-mode] body #session-list .sl-group-logos:is([data-state='run'],[data-state='start']) { border-radius:999px; outline:2px solid var(--sl-run-ring); outline-offset:1px; box-shadow:0 0 0 3px color-mix(in srgb,var(--sl-run-ring) 18%,transparent),0 0 7px color-mix(in srgb,var(--sl-run-ring) 60%,transparent); }
+:root[data-display-mode] body #session-list .sl-group-logos[data-state='start'] { outline-style:dashed; box-shadow:none; }
 :root[data-display-mode] body #session-list .sl-time { font-size:10px; margin:0; }
 :root[data-display-mode] body #session-list .sl-time.has-unread { color:var(--brand); font-weight:700; text-decoration:underline; text-underline-offset:3px; }
 :root[data-display-mode] body #session-list .sl-group-actions { display:none; position:absolute; left:0; right:0; top:27px; z-index:30; padding:6px; background:var(--surface-overlay); border:1px solid var(--border-subtle); border-radius:var(--radius-sm); box-shadow:var(--shadow-md); }

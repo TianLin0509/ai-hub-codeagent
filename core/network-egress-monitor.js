@@ -150,8 +150,21 @@ function probeErrorCode(error, route) {
   return 'direct_unavailable';
 }
 
+// Each probe starts curl.exe. Creating a process is synchronous on the calling
+// thread on Windows; measured 50-125 ms per curl on Electron's main thread
+// (two per sample, once a minute), i.e. a visible window freeze. Run them on
+// the shared off-main exec worker instead (same program, args and options).
+function offMainExecFileCallback(file, args, options, callback) {
+  const { sharedOffMainExecFile } = require('./off-main-exec.js');
+  sharedOffMainExecFile()(file, args, options).then(
+    ({ stdout, stderr }) => callback(null, stdout, stderr),
+    error => callback(error, error && error.stdout, error && error.stderr),
+  );
+}
+
 function createCurlGeoProbe(options = {}) {
-  const execFileImpl = options.execFile || childProcess.execFile;
+  const execFileImpl = options.execFile
+    || (require('worker_threads').isMainThread ? offMainExecFileCallback : childProcess.execFile);
   const endpoints = Array.isArray(options.endpoints) && options.endpoints.length
     ? options.endpoints
     : DEFAULT_ENDPOINTS;

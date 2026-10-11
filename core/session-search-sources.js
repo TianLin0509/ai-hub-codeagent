@@ -11,7 +11,7 @@ const {
   readCodexRolloutMeta,
   isCodexTopLevelRolloutMeta,
 } = require('./codex-transcript-parser.js');
-const { streamCodexJsonlRecordsSync } = require('./codex-rollout-reader.js');
+const { createCodexLineFilter, streamCodexJsonlRecordsSync } = require('./codex-rollout-reader.js');
 const {
   codexAgentMessageEventFromRecord,
 } = require('./transcript-payload-utils.js');
@@ -735,16 +735,24 @@ function streamJsonlRecordsSync(filePath, onRecord, chunkBytes = 1024 * 1024) {
   });
 }
 
-function parseCodexRolloutStreaming(filePath) {
+function parseCodexRolloutStreaming(filePath, scanCache = null) {
   const entries = [];
   const toolDocs = [];
-  streamJsonlRecordsSync(filePath, (record, lineIndex) => {
+  const onRecord = (record, lineIndex) => {
     entries.push({ obj: record, index: lineIndex });
     const toolDoc = codexToolDocFromRecord(record, lineIndex + 0.5);
     if (toolDoc) toolDocs.push(toolDoc);
     const commentaryDoc = codexCommentaryDocFromRecord(record, lineIndex + 0.501);
     if (commentaryDoc) toolDocs.push(commentaryDoc);
-  });
+  };
+  if (scanCache) {
+    // Same filter and chunking as the full stream; only already-scanned
+    // complete lines of an appended file are skipped.
+    const records = scanCache.readRecords(filePath, 'codex-search', { lineFilter: createCodexLineFilter('search') });
+    for (const item of records) onRecord(item.record, item.lineIndex);
+  } else {
+    streamJsonlRecordsSync(filePath, onRecord);
+  }
   return { turns: parseCodexRolloutEntries(entries), toolDocs };
 }
 
@@ -777,7 +785,10 @@ function streamJsonlEntriesSync(filePath, lineFilter, chunkBytes = 1024 * 1024) 
 }
 
 function parseClaudeDescriptor(descriptor, options = {}) {
-  const turns = parseClaudeTranscriptEntries(streamJsonlEntriesSync(descriptor.filePath, claudeSearchLineFilter));
+  const entries = options.scanCache
+    ? options.scanCache.readRecords(descriptor.filePath, 'claude-search', { lineFilter: claudeSearchLineFilter }).map(item => item.record)
+    : streamJsonlEntriesSync(descriptor.filePath, claudeSearchLineFilter);
+  const turns = parseClaudeTranscriptEntries(entries);
   const session = sessionRecordFromDescriptor(descriptor, turns);
   const docs = docsFromTurns(turns, session.title, descriptor.provider);
   if (docs[0]) docs[0].timestamp = session.updatedAt;
@@ -793,7 +804,7 @@ function parseCodexDescriptor(descriptor, options = {}) {
   // call metadata from the JSON envelope. This preserves complete search
   // history without decoding binary transport rows or imposing a tail-only
   // feature downgrade.
-  const streamed = parseCodexRolloutStreaming(descriptor.filePath);
+  const streamed = parseCodexRolloutStreaming(descriptor.filePath, options.scanCache || null);
   const turns = streamed.turns;
   const meta = descriptor.codexMeta || readCodexRolloutMeta(descriptor.filePath) || {};
   const session = sessionRecordFromDescriptor(descriptor, turns, { cwd: meta.cwd, slug: meta.slug });

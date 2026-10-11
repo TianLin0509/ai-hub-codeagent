@@ -1676,14 +1676,15 @@
    哪家 CLI 靠品牌色一眼分辨（Claude 橙 / Codex 绿 / DeepSeek 蓝 / Gemini 蓝 / Kimi 黄），
    具体型号进 tooltip。.ai-logo 自带 margin-right: 8px，这里必须清掉，否则和时间列打架。 */
 .sl-kind { width: 13px; height: 13px; margin-right: 0; justify-self: center; }
-/* 2026-09-06：普通会话运行中，logo 呼吸。
-   群聊行早就用「黄点脉冲」表示有人在干活，普通会话只有一个 4.4px 的绿点，扫一眼很容易
-   漏掉。logo 是这一行最大的图形，让它承担同一个语义，两种行的"运行中"就读得一样快。
-   只动 logo，绿点保持常亮 —— 一行里两个东西同时闪会互相抢注意力。 */
-.session-item.slim.running .sl-kind { animation: sl-logo-breathe 1.6s ease-in-out infinite; }
-@keyframes sl-logo-breathe {
-  0%, 100% { opacity: 1; transform: scale(1); }
-  50% { opacity: .42; transform: scale(.86); }
+/* 2026-09-06：普通会话运行中，logo 承担「在干活」的语义（它是这一行最大的图形）。
+   2026-10-11 用户拍板：呼吸动画改成静态标记——绿色实线圆环 + 光晕。原因：
+   ① 连续动画让界面一直以屏幕刷新率重画（4K 119Hz 实测 3 个 logo：界面 13%、显卡 17%，静态 2% / 1%）；
+   ② Windows 关了「动画效果」时浏览器报告 prefers-reduced-motion，呼吸被整条关掉，运行中和空闲看起来一样。
+   和等待（琥珀细环）、异常（红粗环 + 红底）同一套「圆环」语言，靠颜色区分。实际生效的规则在
+   display-presets.css（选择器更具体），这里和 sidebar-v2.css 保持同样的效果作兜底。 */
+.session-item.slim.running .sl-kind {
+  border-radius: 50%; outline: 2px solid var(--sl-run-ring); outline-offset: 1px;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--sl-run-ring) 18%, transparent), 0 0 7px color-mix(in srgb, var(--sl-run-ring) 60%, transparent);
 }
 .sl-ctx { font-size: 10px; font-weight: 700; font-family: ui-monospace, Consolas, monospace; white-space: nowrap; }
 .sl-ctx.ok { color: var(--accent-green); }

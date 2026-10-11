@@ -8,6 +8,11 @@ const os = require('os');
 // Freeze the running window's build before a later source-mode merge changes
 // files on disk, even if its first native session is opened much later.
 require('./core/runtime-build-info').runtimeBuildInfo();
+// Opt-in main-process CPU profile for isolated performance runs; inert unless
+// HUB_MAIN_CPU_PROFILE is set (see core/main-cpu-profiler.js).
+if (process.env.HUB_MAIN_CPU_PROFILE) {
+  require('./core/main-cpu-profiler.js').startMainCpuProfiler({ dataDir: require('./core/data-dir.js').getHubDataDir() });
+}
 
 // 2026-05-16 maintainer：防卡死后门 — 默认开 Chromium CDP 端口（OS 自动分配）。
 //   实际分配的端口在启动后写入 <dataDir>/control/<pid>.json 的 cdpPort 字段，

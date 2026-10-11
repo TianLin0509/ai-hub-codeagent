@@ -1,7 +1,7 @@
 'use strict';
 const {parentPort,workerData}=require('node:worker_threads');
 const {SessionSearchEngine}=require('./session-search-engine');
-const engine=new SessionSearchEngine({...workerData,backgroundWriter:false},status=>parentPort.postMessage({type:'status',status}));
+const engine=new SessionSearchEngine({...workerData,backgroundWriter:false,prewarmOnOpen:false,sqliteCacheMb:32},status=>parentPort.postMessage({type:'status',status}));
 parentPort.on('message',async message=>{
   try {
     if(message.type==='close') {

@@ -694,6 +694,8 @@
   --text-secondary: var(--fg-muted);
   --text-muted: var(--fg-faint);
   --accent-green: var(--status-success);
+  /* 侧栏「运行中」静态绿环：深色主题的 status-success 被调得很柔，用饱和的 mark-green-strong 才一眼可见 */
+  --sl-run-ring: var(--mark-green-strong, var(--status-success));
   --accent-blue: var(--link);
   --accent-orange: var(--status-warning);
   --accent-red: var(--status-danger);

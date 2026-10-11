@@ -5,8 +5,8 @@
   "features": {
     "assistant": false
   },
-  "version": "0.5.7",
-  "upstreamVersion": "1.6.414",
-  "upstreamCommit": "312847bec00237b51d6513bc018cb6d9f7bc9a0e",
+  "version": "0.5.8",
+  "upstreamVersion": "1.6.419",
+  "upstreamCommit": "8b2b70a7e802e2d1a42e4bac9b6225f4ddefdb9e",
   "upstreamDirty": false
 }

@@ -46,5 +46,8 @@ function step() {
 }
 out.write(`${ESC}?1049h${ESC}?25l${ESC}2J` + frame());
 out.on('resize', () => { cols = out.columns || cols; rows = out.rows || rows; out.write(`${ESC}2J` + frame()); });
-setInterval(step, intervalMs);
+const timer = setInterval(step, intervalMs);
+// 测试用：输出一段时间后停下（终端内容随之静止，便于逐行核对屏幕）。
+const stopAfter = Number(process.env.FAKE_TUI_STOP_AFTER_MS || 0);
+if (stopAfter > 0) setTimeout(() => clearInterval(timer), stopAfter);
 process.stdin.on('data', () => {}); process.stdin.resume();

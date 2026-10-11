@@ -7,6 +7,7 @@ const { Worker } = require('node:worker_threads');
 const { randomUUID } = require('node:crypto');
 const { SqliteSessionSearchIndex } = require('./session-search-sqlite-index.js');
 const { SearchSourceMetaCache } = require('./search-source-meta-cache.js');
+const { AppendScanCache } = require('./search-append-scan-cache.js');
 const {
   collectSourceDescriptors,
   isMetadataOnlySignature,
@@ -23,6 +24,8 @@ const {
   sqlitePathForLegacyCache,
 } = require('./session-search-config.js');
 const { transcriptMdPath, writeTranscriptMarkdown } = require('./session-transcript-md.js');
+
+const PREWARM_AFTER_CHANGED_SOURCES = 32;
 
 // Non-Codex adapters still materialize source text and retain conservative
 // bounds. Codex uses a byte-filtered semantic stream, so its raw rollout size
@@ -78,6 +81,9 @@ class SessionSearchEngine {
     this.writerRequest = null;
     this.retryState = new Map();
     this._sourceMetaCache = new SearchSourceMetaCache();
+    // Only the writer reparses transcripts; it keeps records of large live
+    // transcripts so each sync reads just what was appended since the last one.
+    this._appendScanCache = new AppendScanCache();
     const databasePath = options.databasePath || sqlitePathForLegacyCache(options.cachePath);
     if (!databasePath) throw new Error('session search databasePath is required');
     this.options = {
@@ -101,7 +107,11 @@ class SessionSearchEngine {
     // 短词（1~2 字，中文最常打的长度）要顺序扫「标题 / 我的提问 / AI 回答」三档。
     // 这几档一共十几 MB，冷缓存下第一次查要 1241ms；预热一次只要 ~75ms，之后同一个
     // 查询 65ms。放进 setImmediate：既不挡构造，也不挡第一次查询。
-    setImmediate(() => { try { this.index.prewarmShortTermScopes(); } catch { /* 预热失败无所谓 */ } });
+    // 后台写线程（prewarmOnOpen:false）不预热：查询走主线程与只读连接，写线程的这次全扫
+    // 只是把同一批页再映射进本进程一遍（mmap 页按连接各算一次工作集），纯开销。
+    if (options.prewarmOnOpen !== false) {
+      setImmediate(() => { try { this.index.prewarmShortTermScopes(); } catch { /* 预热失败无所谓 */ } });
+    }
     this.refreshPromise = null;
     this.lastRefreshAt = Number(this.index.getMeta('lastRefreshAt', 0)) || 0;
     const stats = this.index.getStats();
@@ -304,7 +314,7 @@ class SessionSearchEngine {
       this._emit(silentRescan
         ? { phase: 'rescanning', lastError: null, sourceErrors: [] }
         : { phase: 'discovering', refreshing: true, lastError: null, sourceErrors: [] });
-      if (force) this._sourceMetaCache.clear();
+      if (force) { this._sourceMetaCache.clear(); this._appendScanCache.clear(); }
       const collected = collectSourceDescriptors(this._dynamicOptions(snapshot), snapshot, this._sourceMetaCache);
       const descriptors = [...(collected.descriptors || [])]
         .sort((left, right) => Number(right && right.mtime || 0) - Number(left && left.mtime || 0))
@@ -365,7 +375,7 @@ class SessionSearchEngine {
               else this.index.replaceSource(titleOnlySourceFromDescriptor(descriptor, { stale: true }));
               activeKeys.add(descriptor.key);
             } else {
-              const parsed = parseSourceDescriptor(descriptor, collected.maps);
+              const parsed = parseSourceDescriptor(descriptor, collected.maps, { scanCache: this._appendScanCache });
               const limited = clipSource(parsed, {
                 ...this.options,
                 preserveAll: streamed,
@@ -445,8 +455,12 @@ class SessionSearchEngine {
       }
       this.lastRefreshAt = Date.now();
       this.index.setMeta('lastRefreshAt', this.lastRefreshAt);
-      // 刚重写过大量页，缓存被冲掉了，重新预热短词档
-      setImmediate(() => { try { this.index.prewarmShortTermScopes(); } catch { /* 同上 */ } });
+      // 刚重写过大量页，缓存被冲掉了，重新预热短词档。
+      // 只在批量重建后做：活跃会话每 10 秒一轮的小增量几乎不动页缓存，而预热要把
+      // 三档正文全扫一遍（生产库 2.8GB），每轮都扫就是后台常驻 CPU 与内存的来源之一。
+      if (parsedSources + metadataChanges >= PREWARM_AFTER_CHANGED_SOURCES) {
+        setImmediate(() => { try { this.index.prewarmShortTermScopes(); } catch { /* 同上 */ } });
+      }
       const stats = this.index.getStats();
       if(parsedSources || metadataChanges || stats.sessions!==previousStats.sessions || stats.documents!==previousStats.documents) this.index.setMeta('contentUpdatedAt',Date.now());
       staleSources = Math.max(staleSources, Number(stats.staleSources) || 0);
@@ -546,9 +560,10 @@ class SessionSearchEngine {
         writer.once('error',reject);
         writer.postMessage({type:'close'});
         });
-      }).finally(() => { this._sourceMetaCache.clear(); this.index.close(); });
+      }).finally(() => { this._sourceMetaCache.clear(); this._appendScanCache.clear(); this.index.close(); });
     }
     this._sourceMetaCache.clear();
+    this._appendScanCache.clear();
     this.index.close();
   }
 }

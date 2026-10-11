@@ -136,6 +136,10 @@ function codexLineFilter(prefix, context = {}, profile = 'turns') {
     }
     if (profile === 'search') {
       const toolType = envelope.itemType || envelope.payloadType;
+      // A read chunk can end between `"type":"message"` and `"role":"user"`.
+      // Rejecting then would drop a user prompt depending on where the 1 MB
+      // chunk (or an incremental scan's start) happened to fall.
+      if (!envelope.role && normalizeType(toolType) === 'message' && !prefixExhausted) return null;
       if (toolType) return isSearchableToolCallType(toolType);
       return prefixExhausted ? false : null;
     }

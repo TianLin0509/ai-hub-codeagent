@@ -85,6 +85,9 @@ class SqliteSessionSearchIndex {
     this.databasePath = databasePath;
     this.maxCandidateSessions = Math.max(50, Number(options.maxCandidateSessions) || DEFAULT_MAX_CANDIDATE_SESSIONS);
     this.maxQueryDocs = Math.max(1000, Number(options.maxQueryDocs) || DEFAULT_MAX_QUERY_DOCS);
+    // 页缓存是私有内存，按连接各占一份。查询主连接保留 128MB；后台写线程只做增量写，
+    // 由它传入更小的值。
+    this.cacheSizeKb = Math.max(2048, Math.round((Number(options.sqliteCacheMb) || 128) * 1024));
     this.db = null;
     this.statsCache = null;
     this.recoveredDatabaseFiles = [];
@@ -103,7 +106,7 @@ class SqliteSessionSearchIndex {
     this.db = new DatabaseSync(this.databasePath);
     // cache_size 从 32MB 提到 128MB、并开 1GB mmap：这个库实测 1.8GB，短词查询要顺序
     // 扫 docs 表，页缓存太小时每次搜索都在重新读盘。
-    this.db.exec('PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL; PRAGMA temp_store=FILE; PRAGMA cache_size=-131072; PRAGMA mmap_size=1073741824; PRAGMA busy_timeout=5000; PRAGMA foreign_keys=ON;');
+    this.db.exec(`PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL; PRAGMA temp_store=FILE; PRAGMA cache_size=-${this.cacheSizeKb}; PRAGMA mmap_size=1073741824; PRAGMA busy_timeout=5000; PRAGMA foreign_keys=ON;`);
     // WAL 从不截断（journal_size_limit 默认 -1），实测生产环境攒到 290MB，
     // 每次读都要先过一遍这么大的 WAL 索引。开库时截断一次，之后限制在 64MB。
     this.db.exec('PRAGMA journal_size_limit=67108864;');
@@ -254,6 +257,15 @@ class SqliteSessionSearchIndex {
     this.selectSession = this.db.prepare('SELECT * FROM sessions WHERE key = ?');
     this.selectSessionUpdatedAt = this.db.prepare('SELECT updated_at FROM sessions WHERE key = ?');
     this.selectDocs = this.db.prepare('SELECT * FROM docs WHERE session_key = ? ORDER BY ordinal, id');
+    this.selectSourceRow = this.db.prepare('SELECT key, searchable FROM sources WHERE key = ?');
+    this.selectSessionKeyBySource = this.db.prepare('SELECT key FROM sessions WHERE source_key = ?');
+    this.selectSourceDocRows = this.db.prepare('SELECT id, session_key, event_id, scope, role, speaker, text, normalized_text, ordinal, timestamp FROM docs WHERE source_key = ?');
+    this.deleteDocById = this.db.prepare('DELETE FROM docs WHERE id = ?');
+    this.updateSourceRow = this.db.prepare('UPDATE sources SET signature = ?, stale = ?, searchable = 1, updated_at = ? WHERE key = ?');
+    this.updateSessionRow = this.db.prepare(`UPDATE sessions SET
+      provider = ?, native_family = ?, kind = ?, title = ?, cwd = ?, project_label = ?, model = ?, updated_at = ?,
+      hub_session_id = ?, native_session_id = ?, meeting_id = ?, transcript_path = ?, codex_sessions_root = ?, codex_profile = ?, turn_count = ?
+      WHERE key = ?`);
     // scope / 时间 / 词条三个条件现在全部下推到 SQL，语句按条件形状缓存。
   }
 
@@ -303,7 +315,91 @@ class SqliteSessionSearchIndex {
     this.statsCache = null;
     if (!source || !source.key) return { docs: 0, chars: 0 };
     const docs = source.searchable === false ? [] : (Array.isArray(source.docs) ? source.docs.slice() : []);
-    return this.replaceSourceChunks(source, [docs]);
+    return this._updateSourceInPlace(source, docs) || this.replaceSourceChunks(source, [docs]);
+  }
+
+  /**
+   * Bring an already indexed source to the given docs by touching only the
+   * rows that differ. A live transcript is re-parsed every sync with a few new
+   * messages; deleting and re-inserting all of its rows made FTS5 tokenize and
+   * un-tokenize the whole conversation each time. The rows left afterwards are
+   * exactly what replaceSourceChunks() would write (same first-wins handling of
+   * duplicate event ids, same synthetic title); unchanged rows keep their rowid.
+   * Returns null when the shape differs (new source, session key change,
+   * searchability change) so the caller performs the full replacement.
+   */
+  _updateSourceInPlace(source, docs) {
+    const session = source.session || {};
+    if (source.searchable === false || !session.key) return null;
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const prior = this.selectSourceRow.get(source.key);
+      const priorSession = prior && Number(prior.searchable) === 1 ? this.selectSessionKeyBySource.get(source.key) : null;
+      if (!priorSession || priorSession.key !== session.key) {
+        this.db.exec('ROLLBACK');
+        return null;
+      }
+      const desired = new Map();
+      const want = (doc) => {
+        const text = String(doc && doc.text || '');
+        if (!text) return;
+        const eventId = String(doc.eventId || doc.id || `doc-${doc.ordinal || 0}`);
+        if (desired.has(eventId)) return;
+        const scope = doc.scope || 'assistant';
+        desired.set(eventId, {
+          scope, role: doc.role || null, speaker: doc.speaker || null, text,
+          normalized: scope === 'tool' ? '' : normalizeSearchText(text),
+          ordinal: Number(doc.ordinal) || 0, timestamp: Number(doc.timestamp) || 0,
+          kept: false,
+        });
+      };
+      const insertedSyntheticTitle = !!session.title;
+      if (insertedSyntheticTitle) want({
+        id: 'title', eventId: 'title', scope: 'title', role: 'title',
+        text: session.title, ordinal: -1, timestamp: Number(session.updatedAt) || 0,
+      });
+      for (const doc of docs) {
+        if (insertedSyntheticTitle && doc && doc.scope === 'title') continue;
+        want(doc);
+      }
+      for (const row of this.selectSourceDocRows.all(source.key)) {
+        const target = row.session_key === session.key ? desired.get(row.event_id) : null;
+        if (target && !target.kept
+          && row.scope === target.scope && (row.role || null) === target.role && (row.speaker || null) === target.speaker
+          && row.text === target.text && row.normalized_text === target.normalized
+          && Number(row.ordinal) === target.ordinal && Number(row.timestamp) === target.timestamp) {
+          target.kept = true;
+          continue;
+        }
+        this.deleteDocById.run(row.id);
+      }
+      let documentCount = 0;
+      let textChars = 0;
+      for (const [eventId, doc] of desired) {
+        documentCount += 1;
+        textChars += doc.text.length;
+        if (doc.kept) continue;
+        const inserted = this.insertDoc.run(
+          source.key, session.key, eventId, doc.scope, doc.role, doc.speaker, doc.text,
+          doc.normalized, doc.ordinal, doc.timestamp,
+        );
+        if (Number(inserted.changes) > 0) this._writeCjkAux(Number(inserted.lastInsertRowid), doc.scope, doc.text);
+      }
+      this.updateSourceRow.run(String(source.signature || ''), source.stale ? 1 : 0, Number(session.updatedAt) || 0, source.key);
+      this.updateSessionRow.run(
+        session.provider || 'unknown', session.nativeFamily || null,
+        session.kind || null, session.title || '未命名会话', session.cwd || null,
+        session.projectLabel || null, session.model || null, Number(session.updatedAt) || 0,
+        session.hubSessionId || null, session.nativeSessionId || null, session.meetingId || null,
+        session.transcriptPath || null, session.codexSessionsRoot || null, session.codexProfile || null,
+        Number(session.turnCount) || 0, session.key,
+      );
+      this.db.exec('COMMIT');
+      return { docs: documentCount, chars: textChars };
+    } catch (error) {
+      try { this.db.exec('ROLLBACK'); } catch {}
+      throw error;
+    }
   }
 
   replaceSourceChunks(source, chunks) {

@@ -64,8 +64,28 @@ function withoutVolatileTimestamps(entity) {
   return stable;
 }
 
+// Every persist round compares all 1400+ kept sessions. Most of them are
+// shallow copies of the previous record (closed sessions without UI edits), so
+// first check whether every field still holds the very same value; only fall
+// back to the deep comparison when something was actually replaced.
+function sameFieldValues(left, right) {
+  if (Object.getPrototypeOf(left) !== Object.getPrototypeOf(right)) return false;
+  if (Object.getOwnPropertySymbols(left).length || Object.getOwnPropertySymbols(right).length) return false;
+  let count = 0;
+  for (const key of Object.keys(left)) {
+    if (key === 'updatedAt' || key === 'savedAt') continue;
+    if (!Object.prototype.hasOwnProperty.call(right, key) || !Object.is(left[key], right[key])) return false;
+    count += 1;
+  }
+  for (const key of Object.keys(right)) {
+    if (key !== 'updatedAt' && key !== 'savedAt') count -= 1;
+  }
+  return count === 0;
+}
+
 function persistentEntityEquals(left, right) {
   if (!left || !right) return left === right;
+  if (typeof left === 'object' && typeof right === 'object' && sameFieldValues(left, right)) return true;
   return isDeepStrictEqual(
     withoutVolatileTimestamps(left),
     withoutVolatileTimestamps(right),
@@ -213,8 +233,10 @@ function handlePersistSessions(list, meetingList, deps) {
     });
   });
   mergeResumeMetaFields(list, previousSessions);
+  // Only ids and member lists are needed; avoid cloning every meeting (timelines,
+  // workflows) on each persist round.
   require('../../core/session-meeting-membership.js').restoreMissingMeetingIds(
-    list, meetingManager.getAllMeetings?.() || []);
+    list, meetingManager.getMeetingMemberships?.() || meetingManager.getAllMeetings?.() || []);
   for (const session of list) {
     const live = deps.getLiveSession?.(session.hubId);
     // Renderer persistence can race the latest usage event. The main-process

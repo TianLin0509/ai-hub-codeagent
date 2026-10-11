@@ -23,8 +23,13 @@ function compactDisconnectMessage(value) {
     .slice(0, 500);
 }
 
-function detectStreamDisconnect(value) {
-  const plain = stripTerminalControls(value);
+// 三个模式都要求出现 stream / error / fatal 之一（API Error 也含 error）。PTY 每来一小块都要
+// 检查最近 2400 字符，绝大多数时候一个关键词都没有，先用一次便宜的查找挡掉（2026-10-11
+// 生产界面剖析：这里占界面线程脚本时间的第一位）。
+const STREAM_DISCONNECT_KEYWORDS = /stream|error|fatal/i;
+
+function detectInPlainText(plain) {
+  if (!STREAM_DISCONNECT_KEYWORDS.test(plain)) return null;
   for (const pattern of STREAM_DISCONNECT_PATTERNS) {
     const match = pattern.exec(plain);
     if (!match) continue;
@@ -39,12 +44,17 @@ function detectStreamDisconnect(value) {
   return null;
 }
 
+function detectStreamDisconnect(value) {
+  return detectInPlainText(stripTerminalControls(value));
+}
+
 function appendStreamDisconnectChunk(previousTail, chunk, maxTailChars = DEFAULT_TAIL_CHARS) {
   const limit = Math.max(500, Number(maxTailChars) || DEFAULT_TAIL_CHARS);
   const combined = (String(previousTail || '') + stripTerminalControls(chunk)).slice(-limit);
   return {
     tail: combined,
-    issue: detectStreamDisconnect(combined),
+    // combined 由已清洗的块拼成；只有跨块被截断的控制序列会留下 ESC，这时才需要再清洗一遍。
+    issue: detectInPlainText(combined.includes('\x1b') ? stripTerminalControls(combined) : combined),
   };
 }
 

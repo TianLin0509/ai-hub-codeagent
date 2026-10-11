@@ -18,9 +18,7 @@
 #session-list .sidebar-group .session-item.slim.meeting.gc .sl-group-progress { display: none; }
 .sl-group-icon { width: 15px; height: 15px; stroke: var(--text-muted); stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; fill: none; }
 .sl-group-icon.idle { stroke: #3b82f6; }
-.sl-group-icon.run { stroke: var(--accent-green); animation: sidebar-group-pulse 1.5s ease-in-out infinite; }
-@keyframes sidebar-group-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .4; } }
-@media (prefers-reduced-motion: reduce) { .sl-group-icon.run { animation: none; } }
+.sl-group-icon.run { stroke: var(--accent-green); }
 .sl-group-icon.wait { stroke: var(--accent-orange); }
 .sl-group-icon.error, .sl-group-icon.unread { stroke: var(--accent-red); }
 #session-list .session-item.slim.meeting.has-session-details .sl-line1.with-arrow { grid-template-columns: 10px minmax(0, 1fr) auto auto; }

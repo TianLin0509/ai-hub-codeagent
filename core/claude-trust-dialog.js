@@ -160,11 +160,15 @@ function createTrustScreen({ cols = 300, rows = 100 } = {}) {
     write(data) { if (term) term.write(String(data || '')); },
     lines() {
       return new Promise(resolve => {
-        if (!term) { resolve([]); return; }
-        term.write('', () => {
-          const buffer = term.buffer.active;
+        const current = term;
+        if (!current) { resolve([]); return; }
+        current.write('', () => {
+          // The 90 s watchdog may dispose the screen while this write is still
+          // queued; xterm then fires the callback with `term` already null.
+          if (term !== current) { resolve([]); return; }
+          const buffer = current.buffer.active;
           const result = [];
-          for (let i = 0; i < term.rows; i += 1) result.push(buffer.getLine(buffer.viewportY + i)?.translateToString(true) || '');
+          for (let i = 0; i < current.rows; i += 1) result.push(buffer.getLine(buffer.viewportY + i)?.translateToString(true) || '');
           resolve(result);
         });
       });

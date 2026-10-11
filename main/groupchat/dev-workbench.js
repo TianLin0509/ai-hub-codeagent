@@ -285,7 +285,9 @@ function createDevWorkbench(deps) {
     if (disposed || !data) return;
     if (channel==='session-updated') {
       const sid=data.session?.id || data.sid;
-      if(sid) for(const m of allMeetings()) if(m.subSessions?.includes(sid)) changed(m.id);
+      if (!sid) return;
+      if (meetingManager.getMeetingIdsForSession) { for (const id of meetingManager.getMeetingIdsForSession(sid)) changed(id); }
+      else for(const m of allMeetings()) if(m.subSessions?.includes(sid)) changed(m.id);
       return;
     }
     const channels = ['delivery:changed', 'loop:progress', 'workflow:progress', 'meeting-created', 'meeting-updated', 'meeting-closed', 'meeting-created-with-errors'];
