@@ -149,7 +149,13 @@ class QwenCliSession extends EventEmitter {
       const record=this.records.at(-1);if(!record)return;
       this.bindRecord(record);
       if(row.type==='assistant'&&row.model&&row.model!==this.currentModel){this.currentModel=row.model;this.emit('bound',{threadId:this.threadId,model:row.model});}
-      if(row.type==='assistant' || row.type==='user')captureClaudeMessage(record,{...row,message:{...row.message,
+      // Tool results arrive as their own rows; each assistant row is one API
+      // response stamped when it ends, which the card's speed timing needs.
+      const usage=row.usageMetadata;
+      if(row.type==='assistant' || row.type==='user' || row.type==='tool_result')captureClaudeMessage(record,{...row,
+        type:row.type==='tool_result'?'user':row.type,message:{...row.message,
+        ...(row.type==='assistant'?{id:row.uuid}:{}),
+        ...(row.type==='assistant'&&usage?{usage:{input_tokens:usage.promptTokenCount,output_tokens:usage.candidatesTokenCount}}:{}),
         content:parts.map(p=>p.functionCall?{type:'tool_use',id:p.functionCall.id,name:p.functionCall.name,input:p.functionCall.args}
           :p.functionResponse?{type:'tool_result',tool_use_id:p.functionResponse.id,content:JSON.stringify(p.functionResponse.response)}
           :p.thought?{type:'thinking',thinking:p.text||''}:{type:'text',text:p.text||''})}});

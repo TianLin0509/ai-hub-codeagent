@@ -175,7 +175,7 @@
                       <button class="new-session-option" data-kind="qwen" aria-pressed="false"><span class="ai-logo logo-qwen"></span>千问 · Qwen Code</button>
                       <button class="new-session-option" data-kind="glm" aria-pressed="false"><span class="ai-logo logo-glm"></span>智谱 · ZCode</button>
                       <button class="new-session-option" data-kind="codeagent" aria-pressed="false"><span class="ai-logo logo-codeagent"></span>CodeAgent · 公司内网</button>
-                      <button class="new-session-option" data-kind="gemini" aria-pressed="false"><span class="ai-logo logo-gemini"></span>Gemini CLI</button>
+                      <button class="new-session-option" data-kind="gemini" aria-pressed="false"><span class="ai-logo logo-gemini"></span>Antigravity CLI</button>
                       <button class="new-session-option" data-kind="powershell" aria-pressed="false"><span class="ai-logo logo-powershell"></span>PowerShell</button>
                     </div>
                     <div class="menu-group-label" id="new-session-tuning-label">模型 / 速度 / MCP</div>
@@ -218,7 +218,7 @@
                     <div class="launch-center-resume-list">
                       <button type="button" class="launch-center-resume-option" data-resume-kind="claude-resume"><span class="ai-logo logo-claude"></span><span class="launch-center-resume-copy"><strong>Claude</strong><small>从 Claude Code 历史中选择</small></span><span class="hint">PTY picker</span></button>
                       <button type="button" class="launch-center-resume-option" data-resume-kind="codex-resume"><span class="ai-logo logo-codex"></span><span class="launch-center-resume-copy"><strong>Codex</strong><small>从 Codex rollout 中精确恢复</small></span><span class="hint">PTY picker</span></button>
-                      <button type="button" class="launch-center-resume-option" data-resume-kind="gemini-resume"><span class="ai-logo logo-gemini"></span><span class="launch-center-resume-copy"><strong>Gemini</strong><small>继续最近一次原生会话</small></span><span class="hint">最近一次</span></button>
+                      <button type="button" class="launch-center-resume-option" data-resume-kind="gemini-resume"><span class="ai-logo logo-gemini"></span><span class="launch-center-resume-copy"><strong>Antigravity</strong><small>继续最近一次原生会话</small></span><span class="hint">最近一次</span></button>
                       <button type="button" class="launch-center-resume-option" data-resume-kind="deepseek-resume"><span class="ai-logo logo-deepseek"></span><span class="launch-center-resume-copy"><strong>DeepSeek</strong><small>恢复兼容 Claude CLI 的历史</small></span><span class="hint">PTY picker</span></button>
                       <button type="button" class="launch-center-resume-option" data-resume-kind="kimi-resume"><span class="ai-logo logo-kimi"></span><span class="launch-center-resume-copy"><strong>Kimi</strong><small>恢复 Kimi Code 历史会话</small></span><span class="hint">PTY picker</span></button>
                     </div>
@@ -531,7 +531,7 @@
                 <div class="session-search-selects"><label class="session-search-filter" for="session-search-time-field"><span>依据</span><select id="session-search-time-field"><option value="eventTime">消息时间</option><option value="conversationTime">会话活动</option></select></label> <div class="session-search-filter session-search-sort-control" role="group" aria-label="排序"><span id="session-search-sort-label">排序</span><select id="session-search-sort" aria-labelledby="session-search-sort-label"><option value="relevance">相关度</option><option value="conversationTime">最近对话</option><option value="matchTime">最近命中</option><option value="title">标题 A–Z</option></select></div></div>
                 <div class="session-search-specific-providers" role="group" aria-label="其他模型细分"><span>其他模型</span>              <button type="button" class="session-search-chip" data-provider="deepseek" aria-pressed="false" hidden><span class="provider-dot provider-deepseek"></span><span>DeepSeek</span><b>0</b></button>
               <button type="button" class="session-search-chip" data-provider="kimi" aria-pressed="false" hidden><span class="provider-dot provider-kimi"></span><span>Kimi</span><b>0</b></button>
-              <button type="button" class="session-search-chip" data-provider="gemini" aria-pressed="false" hidden><span class="provider-dot provider-gemini"></span><span>Gemini</span><b>0</b></button></div>
+              <button type="button" class="session-search-chip" data-provider="gemini" aria-pressed="false" hidden><span class="provider-dot provider-gemini"></span><span>Antigravity</span><b>0</b></button></div>
                 <div id="session-search-agent-slot"></div>
                 <div class="session-search-scope-tabs" id="session-search-scope-tabs" role="tablist" aria-label="搜索范围">
             <button type="button" class="active" data-scope="dialogue" role="tab" aria-selected="true">对话内容</button>
@@ -600,8 +600,8 @@
             <button class="config-ai-row" type="button" data-ai="gemini">
               <span class="config-ai-mark gemini">GE</span>
               <span class="config-ai-copy">
-                <strong>Gemini</strong>
-                <small id="cfg-summary-gemini">订阅模式 · gemini-3-pro-preview</small>
+                <strong>Antigravity</strong>
+                <small id="cfg-summary-gemini">订阅模式 · gemini-3.1-pro-high</small>
               </span>
               <span class="config-ai-status subscription">订阅</span>
             </button>
@@ -671,8 +671,8 @@
 
           <div class="config-ai-detail" id="cfg-detail-gemini">
             <div class="config-mode-card selected">
-              <strong>订阅 / Gemini CLI 登录</strong>
-              <span>使用当前本机 Gemini CLI 登录状态。API 模式暂不接入，避免影响当前可用链路。</span>
+              <strong>订阅 / Antigravity CLI 登录</strong>
+              <span>使用当前本机 Antigravity CLI 登录状态。使用 Google 订阅登录；输入 /usage 查看原生额度。</span>
             </div>
           </div>
 

@@ -5,6 +5,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { getHubDataDir } = require('./data-dir.js');
 const modelCatalog = require('./deepseek-codex-model-catalog.json');
+const { writeHubManagedCodexConfig } = require('./codex-managed-config.js');
 
 const DEEPSEEK_CODEX_MODEL = 'deepseek-v4-flash';
 const DEEPSEEK_CODEX_MODELS = Object.freeze([
@@ -107,9 +108,12 @@ function ensureDeepSeekCodexProfile(projectDir, opts = {}) {
   for (const trustedProject of trustedProjects) {
     configLines.push(`[projects.${tomlString(trustedProject)}]`, 'trust_level = "trusted"', '');
   }
-  fs.writeFileSync(configPath, configLines.join('\n'), 'utf8');
+  // 只接管 Hub 生成的顶层键；Codex 写下的 [hooks.state.*]（用户在 /hooks 点的信任）、
+  // [tui] 等原样保留。以前整份覆盖，信任每次启动都被抹掉，审核页反复出现。
+  const configResult = writeHubManagedCodexConfig(configPath, configLines.join('\n'), opts);
 
-  return { codexHome, catalogPath, configPath, trustedProjectsPath, model: DEEPSEEK_CODEX_MODEL };
+  return { codexHome, catalogPath, configPath, trustedProjectsPath, model: DEEPSEEK_CODEX_MODEL,
+    configPreserved: configResult.preserved, configWarning: configResult.warning };
 }
 
 module.exports = {

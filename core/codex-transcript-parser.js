@@ -329,6 +329,35 @@ function normalizeUserDuplicateText(text) {
   return require('./conversation-display').userTextIdentity(text);
 }
 
+// Each token_usage_record is written as one model response finishes and names
+// its turn, so sub-agent and other-turn calls never count here. A call starts
+// at the latest input it waited for: the prompt or a tool output. Oversized
+// tool outputs are dropped by the line filter; after a call that requested
+// tools, the token_count Codex writes once outputs return marks that moment.
+const CODEX_INPUT_TYPES = new Set(['function_call_output', 'custom_tool_call_output']);
+const CODEX_LOCAL_TOOL_TYPES = new Set(['function_call', 'custom_tool_call', 'local_shell_call']);
+function trackCodexGeneration(pending, obj) {
+  if (!pending?.hasTaskStart || !Number.isFinite(pending.generationMark)) return;
+  const at = toMs(obj.timestamp);
+  if (!Number.isFinite(at)) return;
+  const payload = obj.payload || {};
+  if (obj.type === 'token_usage_record') {
+    if (payload.turn_id !== pending.providerTurnId) return;
+    pending.generation = require('./turn-speed-metrics').addGenerationCall(pending.generation,
+      { startedAt: pending.generationMark, endedAt: Math.max(at, pending.generationMark),
+        outputTokens: payload.usage?.output_tokens });
+    pending.generationMark = Math.max(at, pending.generationMark);
+    pending.awaitingTools = pending.callRequestedTools;
+    pending.callRequestedTools = false;
+    return;
+  }
+  if (obj.type === 'response_item' && CODEX_LOCAL_TOOL_TYPES.has(payload.type)) pending.callRequestedTools = true;
+  const input = obj.type === 'response_item' && (CODEX_INPUT_TYPES.has(payload.type) || payload.role === 'user')
+    || obj.type === 'event_msg' && (payload.type === 'user_message'
+      || payload.type === 'token_count' && pending.awaitingTools);
+  if (input) pending.generationMark = Math.max(pending.generationMark, at);
+}
+
 function parseCodexRolloutEntries(entries) {
   const turns = [];
   let pendingAssistant = null;
@@ -353,6 +382,10 @@ function parseCodexRolloutEntries(entries) {
         usageInfo: null,
         context: null,
         hasTaskStart: false,
+        generation: null,
+        generationMark: null,
+        awaitingTools: false,
+        callRequestedTools: false,
         agentMessages: [],
         displayMessages: [],
         toolCalls: [],
@@ -389,6 +422,7 @@ function parseCodexRolloutEntries(entries) {
         nativeOutcome: pendingAssistant.aborted ? 'interrupted' : pendingAssistant.completed ? 'completed' : null,
         durationMs: pendingAssistant.durationMs || undefined,
         ...(usage ? { usage } : {}),
+        generation: pendingAssistant.generation,
         model: pendingAssistant.context?.model,
         providerTurnId: pendingAssistant.providerTurnId,
         speedTier: require('./turn-speed-metrics').speedTier(pendingAssistant.context?.service_tier),
@@ -447,6 +481,7 @@ function parseCodexRolloutEntries(entries) {
   };
 
   entries.forEach(({ obj, index }, entryIndex) => {
+    trackCodexGeneration(pendingAssistant, obj);
     if (obj.type === 'turn_context') {
       if (pendingAssistant && (!obj.payload?.turn_id || obj.payload.turn_id === pendingAssistant.providerTurnId))
         pendingAssistant.context = obj.payload || null;
@@ -513,6 +548,7 @@ function parseCodexRolloutEntries(entries) {
         pending.ts = pending.ts || toMs(obj.timestamp);
         pending.hasTaskStart = true;
         pending.taskStartedAt = toMs(obj.timestamp);
+        pending.generationMark = pending.taskStartedAt;
         pending.providerTurnId = payload.turn_id || payload.turnId || null;
         return;
       }

@@ -4,7 +4,7 @@ const path = require('path');
 function renderSessionWelcome(session, escapeHtml) {
   const kind = String(session?.kind || 'claude').replace(/-resume$/, '');
   const provider = kind==='deepseek-acp' ? 'deepseek' : ['claude', 'codex', 'gemini', 'kimi', 'deepseek','qwen','glm','codeagent'].includes(kind) ? kind : 'claude';
-  const label = { claude: 'Claude', codex: 'Codex', gemini: 'Gemini', kimi: 'Kimi', deepseek: 'DeepSeek',qwen:'千问 · Qwen Code',glm:'智谱 · ZCode',codeagent:'CodeAgent' }[provider];
+  const label = { claude: 'Claude', codex: 'Codex', gemini: 'Antigravity', kimi: 'Kimi', deepseek: 'DeepSeek',qwen:'千问 · Qwen Code',glm:'智谱 · ZCode',codeagent:'CodeAgent' }[provider];
   const assistant = session?.purpose === 'hub-assistant';
   const mark = `<img src="${assistant ? 'assets/assistant/penguin.png' : `assets/ai-logos/${provider}.svg`}" alt="${assistant ? '企鹅助理' : label}" />`;
   const cwd = session?.cwd || '';

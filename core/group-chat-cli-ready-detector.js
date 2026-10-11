@@ -22,7 +22,9 @@ const MARKERS = {
   // 2.1.28x 的底栏是 "manual mode on · ← for agents" / "bypass permissions on"，
   // 空输入框占位是 `Try "how does <filepath> work?"`（2026-09-25 真机截图）。
   claude: ['shift+tab', '? for shortcuts', 'bypass permissions', 'Try "', 'mode on', 'for agents'],
-  gemini: ['Type your message', 'YOLO', 'gemini-'],
+  // Native agy 1.3.3 redraw after dismissing onboarding: full empty input frame.
+  // The footer alone also exists behind a modal and cannot prove readiness.
+  gemini: [/(?:^|\n)[─━]{5,}\n>\s*\n[─━]{5,}\n\? for shortcuts/],
   // Do not use model ids such as "gpt-5.6-sol" here: the PowerShell launch
   // command itself contains "--model gpt-5.6-sol", which can falsely mark Codex
   // ready before the TUI input box exists.
@@ -50,6 +52,7 @@ const CHOICE_DIALOG_BLOCKERS = [/press enter to confirm/i, /Use ↑\/↓ to move
 const CODEAGENT_DIALOG_BLOCKERS = [/版本更新提醒/, /Quick safety check/i, /Confirm Enter\s*\|/i];
 
 const BLOCKERS = {
+  gemini: [/not signed in/i, /Select login method/i, /sign in to continue/i, /Do you trust the contents of this project/i, /esc to dismiss/i, ...CHOICE_DIALOG_BLOCKERS],
   claude: [...CHOICE_DIALOG_BLOCKERS],
   codeagent: [...CODEAGENT_DIALOG_BLOCKERS, ...CHOICE_DIALOG_BLOCKERS],
   codex: [/Do you trust the contents of this directory/i, /Booting MCP server/i, /esc to interrupt/i, ...CHOICE_DIALOG_BLOCKERS],
@@ -69,6 +72,7 @@ const BLOCKERS = {
 // 其余阻断词（Kimi 未登录、Codex 的信任弹窗）是**终态**：它们不会自己好，
 // 而且登录页上本来就同时渲染着状态栏 marker —— 用「谁更新」判会直接放行，所以不许过期。
 const STALEABLE_BLOCKERS = {
+  gemini: [/Do you trust the contents of this project/i, /esc to dismiss/i, ...CHOICE_DIALOG_BLOCKERS],
   // 选择框答完就消失：之后出现的输入行标记说明它已被新画面盖掉。
   claude: [...CHOICE_DIALOG_BLOCKERS],
   codeagent: [...CODEAGENT_DIALOG_BLOCKERS, ...CHOICE_DIALOG_BLOCKERS],

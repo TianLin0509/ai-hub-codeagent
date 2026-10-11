@@ -146,13 +146,13 @@ function collectCapabilities({ homeDir, dataDir, projects = [] }) {
   scanSkills(home('.codex','skills','.system'),['codex'],'system');
   scanSkills(home('.claude','skills'),['claude'],'user');
   scanSkills(home('.kimi-code','skills'),['kimi'],'user');
-  scanSkills(home('.gemini','skills'),['gemini'],'user');
+  scanSkills(home('.gemini','antigravity-cli','skills'),['gemini'],'user');
   scanSkills(home('.qwen','skills'),['qwen'],'user');
   codexConfig(home('.codex'),'codex','user');
   codexConfig(path.join(dataDir,'deepseek-codex-profile'),'deepseek','profile');
   const claude = jsonMcp(home('.claude.json'),'claude','user');
   jsonMcp(home('.kimi-code','mcp.json'),'kimi','user');
-  jsonMcp(home('.gemini','settings.json'),'gemini','user');
+  jsonMcp(home('.gemini','config','mcp_config.json'),'gemini','user');
   jsonMcp(home('.qwen','settings.json'),'qwen','user');
   // Skill-invoked MCPs are real dependencies too, even when no native CLI loads them.
   jsonMcp(home('.mcporter','mcporter.json'),'external','user');
@@ -173,7 +173,7 @@ function collectCapabilities({ homeDir, dataDir, projects = [] }) {
     const {cwd,kind,profileHome} = project;
     if (!cwd || !ALL_AI_KINDS.includes(kind)) continue;
     const scope = `project:${cwd}`;
-    const own = {claude:'.claude',codex:'.agents',deepseek:'.agents',kimi:'.kimi-code',gemini:'.gemini',qwen:'.qwen'}[kind];
+    const own = {claude:'.claude',codex:'.agents',deepseek:'.agents',kimi:'.kimi-code',gemini:'.agents',qwen:'.qwen'}[kind];
     if (own) scanSkills(path.join(cwd,own,'skills'),[kind],scope);
     if (sharedAgents.includes(kind)) scanSkills(path.join(cwd,'.agents','skills'),[kind],scope);
     if (kind==='claude') {
@@ -181,7 +181,8 @@ function collectCapabilities({ homeDir, dataDir, projects = [] }) {
       const p = Object.entries(claude.projects || {}).find(([p])=>path.resolve(p).toLowerCase()===path.resolve(cwd).toLowerCase())?.[1];
       for (const [name,c] of Object.entries(p?.mcpServers || {})) add('mcp',name,'项目 MCP 服务器',{agent:kind,scope,path:home('.claude.json'),enabled:c.disabled!==true});
     } else if (kind==='kimi') jsonMcp(path.join(cwd,'.kimi-code','mcp.json'),kind,scope);
-    else if (kind==='gemini' || kind==='qwen') jsonMcp(path.join(cwd,own,'settings.json'),kind,scope);
+    else if (kind==='gemini') jsonMcp(path.join(cwd,own,'mcp_config.json'),kind,scope);
+    else if (kind==='qwen') jsonMcp(path.join(cwd,own,'settings.json'),kind,scope);
     if (kind==='codex' || kind==='deepseek') {
       codexConfig(path.join(cwd,'.codex'),kind,scope);
       if (profileHome && path.resolve(profileHome)!==home('.codex')) {

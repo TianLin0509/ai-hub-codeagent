@@ -8,7 +8,7 @@ class PhoneJournal{
  // 已发出的消息只留编号用于去重（最近 600 条），办完的收件只留最近 300 条，提醒去重表只留最近 500 条。
  compact(){const s=this.state;for(const r of s.outbox)if(r.sent)delete r.payload;
   if(s.outbox.length>600)s.outbox=s.outbox.filter((r,i)=>!r.sent||i>=s.outbox.length-600);
-  const DONE=['done','answered','rejected','lost','unknown'],done=s.inbox.filter(r=>DONE.includes(r.state));
+  const DONE=['done','answered','rejected','lost','unknown','unresolved'],done=s.inbox.filter(r=>DONE.includes(r.state));
   if(done.length>300){const drop=new Set(done.slice(0,done.length-300));s.inbox=s.inbox.filter(r=>!drop.has(r));}
   for(const r of s.inbox)if(DONE.includes(r.state))delete r.pcm;
   if(Array.isArray(s.notices)&&s.notices.length>500)s.notices=s.notices.slice(-500);

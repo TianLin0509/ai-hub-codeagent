@@ -12,11 +12,11 @@ const LONG_POLL_SECONDS=15; // 中继支持长等待时，新消息一到即返�
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 class PhoneChannel{
  constructor({assistant,journal,renderHtml=null,transcribe,prepareVoice=null,fastLane=null,imageRoots=[],speak=null,inboxRoot=null}){Object.assign(this,{assistant,journal,renderHtml,transcribe,prepareVoice,fastLane,imageRoots,speak,inboxRoot});this.closed=false;this.issue=null;this.online=false;this.lastPoll=0;}
- status(){const s=this.journal.state;return{ok:true,version:'1.1.0',protocol:2,enabled:s.enabled,connected:this.online,issue:this.issue,paired:!!s.credentials,pending:s.inbox.filter(r=>r.state==='queued').length,unknown:s.inbox.filter(r=>r.state==='unknown').length,voice:true,phoneApp:s.phoneApp||null,backend:this.assistant.overview().backendKind||null};}
+ status(){const s=this.journal.state;return{ok:true,version:'1.1.0',protocol:2,enabled:s.enabled,connected:this.online,issue:this.issue,paired:!!s.credentials,pending:s.inbox.filter(r=>r.state==='queued').length,unknown:s.inbox.filter(r=>['unknown','unresolved'].includes(r.state)).length,voice:true,phoneApp:s.phoneApp||null,backend:this.assistant.overview().backendKind||null};}
  async request(endpoint,{method='GET',body,role='hub',wait=0}={}){const c=this.journal.state.credentials;if(!c)throw Error('请先连接手机');const q=method==='GET'?`?channel=${c.channel}&role=${role}&after=${this.journal.state.cursor}${wait?'&wait='+wait:''}`:'';const headers={Authorization:'Bearer '+c.hubToken,'Content-Type':'application/json'};if(endpoint==='/create'){const file='C:/AppData/Secrets/aihub-phone-relay-registration.txt';const secret=process.env.HUB_PHONE_REGISTER_KEY||(fs.existsSync(file)?fs.readFileSync(file,'utf8').trim():'');if(!/^[A-Za-z0-9_-]{43}$/.test(secret))throw Error('手机连接服务尚未配置，请先完成手机服务部署');headers['X-Register-Key']=secret;}const r=await fetch(c.url+endpoint+q,{method,headers,body:body&&JSON.stringify({...body,channel:c.channel,role}),signal:AbortSignal.timeout(wait?(wait+15)*1000:20000)});if(!r.ok)throw Error('手机连接服务暂时不可用（'+r.status+'）');return r.json();}
  async pair(){const s=this.journal.state;if(!s.credentials)this.journal.change(x=>{x.credentials=credentials();x.notices=this.assistant.notifications({limit:200}).notifications.map(n=>n.id);x.created=Date.now();});const {channel,hubToken,phoneToken}=s.credentials;await this.request('/create',{method:'POST',body:{channel,hubToken,phoneToken}});this.journal.change(x=>{x.enabled=true;});this.start();return{...this.status(),code:invite(s.credentials)};}
- emit(id,value){const s=this.journal.state;if(s.outbox.some(r=>r.id===id))return;const c=s.credentials;this.journal.change(x=>{x.outbox.push({id,payload:seal(c.key,c.channel,id,'hub',{...value,time:Date.now()}),sent:false});});}
- observeReceipt(r){if(r?.status!=='confirmed'||r.notSent||r.contentMismatch)return;const row=this.journal.state.inbox.find(x=>x.id===r.clientSubmissionId&&x.sessionId===r.sessionId);if(row&&ACTIVE.includes(row.state)){this.journal.change(()=>{row.turnId=r.turnId||null;row.state='waiting';row.issue=null;row.t={...row.t,confirmed:row.t?.confirmed||Date.now()};});const by=this.assistantLabel();this.emit('receipt-'+row.id,{type:'status',requestId:row.id,state:'received',lane:'assistant',by,text:'已交给助理会话（'+by+'）处理。'});}}
+ emit(id,value){const s=this.journal.state;if(s.outbox.some(r=>r.id===id))return;if(value.type==='status'&&value.requestId)this.log({id:value.requestId,role:'delivery',state:value.state,text:value.text});const c=s.credentials;this.journal.change(x=>{x.outbox.push({id,payload:seal(c.key,c.channel,id,'hub',{...value,time:Date.now()}),sent:false});});}
+ observeReceipt(r){if(r?.status!=='confirmed'||r.notSent||r.contentMismatch)return;const row=this.journal.state.inbox.find(x=>x.id===r.clientSubmissionId&&x.sessionId===r.sessionId);if(row&&(ACTIVE.includes(row.state)||row.state==='unresolved')){this.journal.change(()=>{row.turnId=r.turnId||null;if(row.state!=='unresolved')row.state='waiting';row.issue=null;row.t={...row.t,confirmed:row.t?.confirmed||Date.now()};});const by=this.assistantLabel(row);this.emit('receipt-'+row.id,{type:'status',requestId:row.id,state:'received',lane:'assistant',by,text:'已交给助理会话（'+by+'）处理。'});}}
  // 有任务在途或 10 分钟内有往来时 1.5 秒取一次，其余 2.2 秒；中继按 IP 限每分钟 180 次，手机与电脑常在同一出口。
  // 收消息走独立的长等待循环（消息一到立刻处理）；处理由 kick 触发（新消息、助理答完、关注提醒），定时器只做兜底。
  start(){if(this.timer||this.closed)return;this.timer=setInterval(()=>{const s=this.journal.state,busy=s.inbox.some(r=>r.state==='queued'||r.state==='transcribing'||ACTIVE.includes(r.state))||Date.now()-(s.lastInbound||0)<600000;if(Date.now()-this.lastPoll>=(busy?1500:5000))void this.tick();},500);this.timer.unref();void this.receiveLoop();void this.tick();}
@@ -38,7 +38,7 @@ class PhoneChannel{
      if(m.type==='voice_prepare'){this.journal.change(x=>{x.cursor=packet.seq;x.lastInbound=Date.now();});try{this.prepareVoice?.();}catch(e){console.warn('[phone] voice_prepare',e.message);}continue;}
      if(m.attachment){const saved=this.saveAttachment(m.attachment);m.text=m.text+'\n\n（我从手机分享了一个文件：'+saved+'）';m.noFast=true;m.shared=require('node:path').basename(saved);delete m.attachment;}
      if(m.to==='assistant'||m.context)m.noFast=true;
-     this.journal.change(x=>{x.inbox.push({...m,id:packet.id,state:'queued',t:{received:Date.now()}});x.cursor=packet.seq;x.lastInbound=Date.now();});if(m.type==='text')this.log({id:packet.id,role:'user',input:'text',text:m.text});}catch{this.journal.change(x=>{x.cursor=packet.seq;});this.emit('invalid-'+packet.id,{type:'status',requestId:packet.id,state:'rejected',text:'消息校验未通过，未提交任务。'});}}else this.journal.change(x=>{x.cursor=packet.seq;});}
+     this.journal.change(x=>{x.inbox.push({...m,id:packet.id,state:'queued',t:{received:Date.now()}});x.cursor=packet.seq;x.lastInbound=Date.now();});if(m.type==='text'){this.log({id:packet.id,role:'user',input:'text',text:m.text});this.log({id:packet.id,role:'delivery',state:'queued',text:'已到电脑，等待助理接收'});}}catch{this.journal.change(x=>{x.cursor=packet.seq;});this.emit('invalid-'+packet.id,{type:'status',requestId:packet.id,state:'rejected',text:'消息校验未通过，未提交任务。'});}}else this.journal.change(x=>{x.cursor=packet.seq;});}
  }
  validate(m){
   if(m.type==='session_cards_get'&&(typeof m.sessionId!=='string'||! /^[A-Za-z0-9_-]{1,100}$/.test(m.sessionId)||m.before!=null&&(typeof m.before!=='string'||m.before.length>160)))throw Error('卡片请求无效');
@@ -80,7 +80,8 @@ class PhoneChannel{
  // 备忘清单变了（含跨天分组变化）就把整份精简清单发给手机；原话截到 600 字。
  sendMemos(force=false){const memos=this.assistant.memos;if(!memos)return;const sig=memos.signature();if(!force&&sig===this.journal.state.memoSignature)return;const v=memos.view(),cut=m=>({...m,raw:String(m.raw||'').slice(0,600)});this.emit('memos-'+crypto.randomUUID(),{type:'memos',open:v.open.map(cut),closed:v.closed.map(cut),groups:v.groups});this.journal.change(x=>{x.memoSignature=sig;});}
  log(entry){try{this.assistant.logDialog?.(entry);}catch(e){console.warn('[phone] dialog log',e.message);}}
- assistantLabel(){const p=this.assistant.currentProfile?.();if(!p)return'助理会话';let kind=p.kind;try{kind=require('../ai-kinds').getKindLabel(p.kind);}catch{}return[kind,p.label].filter(Boolean).join(' · ');}
+ isPhoto(row){return require('../hub-assistant/photo-assistant').isPhotoRequest(row);}
+ assistantLabel(row){if(this.isPhoto(row))return '拍图助理';const p=this.assistant.currentProfile?.();if(!p)return'助理会话';let kind=p.kind;try{kind=require('../ai-kinds').getKindLabel(p.kind);}catch{}return[kind,p.label].filter(Boolean).join(' · ');}
  // 助理设置与回答方式任一变化（电脑面板改的也算）都重发 profile，手机两边保持一致。
  profileSignature(){return JSON.stringify([this.assistant.currentProfile?.(),this.assistant.frontDesk?.(),this.watchingCount()]);}
  // 关注中且正在运行的任务数：手机据此在后台继续等结果，任务停下就不再常驻后台。
@@ -118,13 +119,15 @@ class PhoneChannel{
   // 语音先识别（不受助理忙碌影响），可直接答的简单问题走快速通道，其余照旧排队交给完整助理。
   for(const row of s.inbox.filter(r=>r.state==='queued'&&r.type==='voice_message'))await this.transcribeRow(row);
   if(this.fastLane&&!this.assistant.fastLaneDisabled?.())for(const row of s.inbox.filter(r=>r.state==='queued'&&r.type==='text'&&!r.fastTried))await this.tryFastLane(row);
-  const active=s.inbox.find(r=>ACTIVE.includes(r.state));
-  if(active){let finals;try{finals=this.assistant.readLiveFinal(active.sessionId).records;}catch(e){finals=[];if(/找不到原会话/.test(e.message)){this.journal.change(()=>{active.state='lost';active.issue=e.message;});this.emit('lost-'+active.id,{type:'status',requestId:active.id,state:'unknown',text:'助理会话已不在本窗口，结果请在电脑上查看；不会自动重发。'});}}const answer=finals.find(r=>r.clientSubmissionId===active.id||active.turnId&&r.turnId===active.turnId);if(answer){const found=Date.now();
+  const detached=s.inbox.filter(r=>r.state==='unresolved');
+  const revisit=detached.length?detached[(this.reconcileIndex=(this.reconcileIndex||0)+1)%detached.length]:null;
+  for(const active of [...s.inbox.filter(r=>ACTIVE.includes(r.state)),...(revisit?[revisit]:[])]){let finals;try{finals=this.assistant.readLiveFinal(active.sessionId).records;}catch(e){finals=[];if(/找不到原会话/.test(e.message)){this.journal.change(()=>{active.state='lost';active.issue=e.message;});this.emit('lost-'+active.id,{type:'status',requestId:active.id,state:'unknown',text:'助理会话已不在本窗口，结果请在电脑上查看；不会自动重发。'});}}const answer=finals.find(r=>r.clientSubmissionId===active.id||active.turnId&&r.turnId===active.turnId);if(answer){const found=Date.now();
     // 先记进对话记录（助理页靠它显示），再发手机、改通道状态：后两步出错也不会出现「手机收到了、助理页没有」。
-    if(!active.logged){this.log({id:active.id,role:'assistant',lane:'assistant',by:this.assistantLabel(),text:answer.text,ms:active.t?.received?found-active.t.received:null});active.logged=true;}
-    await this.reply('answer-'+active.id,answer.text,{requestId:active.id,lane:'assistant',by:this.assistantLabel(),...(active.t?.received?{ms:found-active.t.received}:{})});this.journal.change(()=>{active.state='answered';active.t={...active.t,answerFound:found,answerQueued:Date.now()};});
+    if(!active.logged){this.log({id:active.id,role:'assistant',lane:'assistant',by:this.assistantLabel(active),text:answer.text,ms:active.t?.received?found-active.t.received:null});active.logged=true;}
+    await this.reply('answer-'+active.id,answer.text,{requestId:active.id,lane:'assistant',by:this.assistantLabel(active),...(active.t?.received?{ms:found-active.t.received}:{})});this.journal.change(()=>{active.state='answered';active.t={...active.t,answerFound:found,answerQueued:Date.now()};});
    const t=active.t||{},span=(a,b)=>t[a]&&t[b]?t[b]-t[a]:null;console.log('[phone] timing',active.id.slice(0,8),JSON.stringify({asr:span('asrStart','asrDone'),toDispatch:span('received','dispatch'),submit:span('dispatch','confirmed'),turn:span('confirmed','answerFound'),total:span('received','answerQueued')}));}}
-  if(!s.inbox.some(r=>ACTIVE.includes(r.state))&&!this.assistant.switching){const row=s.inbox.find(r=>r.state==='queued');if(row){
+  this.releaseUncertain();
+  for(const photo of [false,true]){const target=photo?this.assistant.photo:this.assistant;if(!target||target.switching||s.inbox.some(r=>ACTIVE.includes(r.state)&&this.isPhoto(r)===photo))continue;const row=s.inbox.find(r=>r.state==='queued'&&this.isPhoto(r)===photo);if(row){
     if(row.type==='voice'){this.journal.change(()=>{row.state='transcribing';});try{const text=await this.transcribe(row.pcm);if(!text.trim())throw Error('没有听清，请重新录音');this.emit('transcript-'+row.id,{type:'transcript',requestId:row.id,text});this.journal.change(()=>{row.state='transcribed';delete row.pcm;});}catch(e){this.emit('voiceerror-'+row.id,{type:'status',requestId:row.id,state:'rejected',text:e.message});this.journal.change(()=>{row.state='rejected';delete row.pcm;});}}
     else if(row.type==='set_profile'){this.journal.change(()=>{row.state='switching';});try{const r=await this.assistant.setProfile({kind:row.kind,model:row.model,effort:row.effort||undefined});if(!r.ok)throw Error(r.error||'切换未完成');this.journal.change(()=>{row.state='done';});await this.sendProfile(row.id).catch(e=>console.warn('[phone] profile',e.message));}catch(e){this.journal.change(()=>{row.state='rejected';row.issue=e.message;});this.emit('profileerror-'+row.id,{type:'status',requestId:row.id,state:'rejected',text:'助理设置未切换：'+e.message});await this.sendProfile().catch(()=>{});}}
     else{
@@ -142,6 +145,17 @@ class PhoneChannel{
   for(const n of this.assistant.notifications({limit:200}).notifications){if(s.notices.includes(n.id)||n.createdAt<s.created)continue;await this.reply('notice-'+crypto.createHash('sha256').update(n.id).digest('hex').slice(0,32),n.kind==='memory-update'||n.kind==='reminder'||n.kind==='memo-digest'||n.kind==='podcast'||n.kind?.startsWith('daily-')?n.text:'关注任务「'+n.title+'」有新进展：\n'+n.text,{notice:true,...(n.kind==='reminder'?{reminder:true}:{}),...(n.kind?.startsWith('daily-')?{daily:n.kind.slice(6)}:{})});this.journal.change(x=>x.notices.push(n.id));if(n.kind?.startsWith('daily-'))this.sendWorkbench();}
   await this.flush(4);
  }catch(e){this.online=false;this.issue=e.message;}finally{this.working=false;if(this.rekick&&!this.closed){this.rekick=false;setTimeout(()=>void this.tick(),0);}}}
+ // 送达未知不等于永远占用队首。只在原会话已空闲且超过核对期时释放；
+ // 原请求保留为待核对，不重发，并继续接收按提交编号匹配的迟到回答。
+ releaseUncertain(){
+  for(const row of this.journal.state.inbox){
+   const since=row.t?.dispatch||row.t?.received;
+   if(row.state!=='unknown'||!since||Date.now()-since<30*60000||this.assistant.sessionBusy?.(row.sessionId)!==false)continue;
+   this.journal.change(()=>{row.state='unresolved';row.issue='送达仍待核对，原会话已空闲；已恢复后续排队，不自动重发本条。';});
+   this.emit('unresolved-'+row.id,{type:'status',requestId:row.id,state:'unknown',text:row.issue});
+   this.log({id:row.id,role:'delivery',state:'unresolved',text:row.issue});
+  }
+ }
  async flush(limit=8){for(const row of this.journal.state.outbox.filter(r=>!r.sent).slice(0,limit)){await this.request('/send',{method:'POST',body:{id:row.id,payload:row.payload}});this.journal.change(()=>{row.sent=true;});}}
   async transcribeRow(row){
    this.journal.change(()=>{row.state='transcribing';row.t={...row.t,asrStart:Date.now()};});
@@ -155,7 +169,7 @@ class PhoneChannel{
   // 快速通道：约 1 秒答复；交还标记、出错或超时都回到完整助理，不丢消息。
   async tryFastLane(row){
    this.journal.change(()=>{row.fastTried=true;});
-   if(row.noFast||!this.fastLane.eligible(row.text))return false;
+   if(row.noFast||this.isPhoto(row)||!this.fastLane.eligible(row.text))return false;
    try{
     const started=Date.now(),result=await this.fastLane.answer(row.text,{history:this.assistant.recentHistory?.()||[],userPrefs:this.assistant.memory?.read?.().user||'',memory:this.assistant.memory?.read?.().memory||'',...(this.assistant.frontDesk?{model:this.assistant.frontDesk().model}:{}),hubStatus:this.assistant.statusDigest?.()||''});
     if(result.handoff){console.log('[phone] fast lane handoff',row.id.slice(0,8),Date.now()-started+'ms');return false;}
@@ -170,10 +184,10 @@ class PhoneChannel{
    }catch(e){console.warn('[phone] fast lane fallback',e.message);return false;}
   }
   async dispatch(row){
-  const overview=this.assistant.overview();if(overview.submissionPending||['running','waiting'].includes(overview.status))return;
-  const ready=await this.assistant.ensureSession();if(!ready.ok)throw Error(ready.error||'助理未就绪');if(!row.routed){this.journal.change(()=>{row.routed=true;});this.log({id:row.id,role:'route',lane:'assistant',by:this.assistantLabel()});}
+  const target=this.isPhoto(row)?this.assistant.photo:this.assistant;const overview=target.overview();if(overview.submissionPending||['running','waiting'].includes(overview.status))return;
+  const ready=await target.ensureSession();if(!ready.ok)throw Error(ready.error||'助理未就绪');if(!row.routed){this.journal.change(()=>{row.routed=true;});this.log({id:row.id,role:'route',lane:'assistant',by:this.assistantLabel(row)});}
   this.journal.change(()=>{row.state='dispatching';row.sessionId=ready.sessionId;row.t={...row.t,dispatch:Date.now()};});
-  try{const r=await this.assistant.send({text:(row.context?this.assistant.workbench.context(row.context):'')+row.text,requestId:row.id,...(row.inputMode==='voice'?{inputMode:'voice'}:{})});const receipt=r.receipt?.receipt;if(receipt?.status==='confirmed')this.observeReceipt({...receipt,sessionId:ready.sessionId,clientSubmissionId:row.id});else if(r.receipt?.notSent){this.journal.change(()=>{row.state='rejected';row.issue=r.receipt.message||r.receipt.error;});this.emit('rejected-'+row.id,{type:'status',requestId:row.id,state:'rejected',text:r.receipt.message||'本条消息未发送，请等助理就绪后重新发送。'});}else if(row.state==='dispatching')this.journal.change(()=>{row.state='unknown';row.issue=r.receipt?.message||r.receipt?.error;});}catch(e){this.journal.change(()=>{row.state=e.notSent?'rejected':'unknown';row.issue=e.message;});}
+  try{const r=await target.send({text:(!this.isPhoto(row)&&row.context?this.assistant.workbench.context(row.context):'')+row.text,requestId:row.id,...(row.inputMode==='voice'?{inputMode:'voice'}:{})});const receipt=r.receipt?.receipt;if(receipt?.status==='confirmed')this.observeReceipt({...receipt,sessionId:ready.sessionId,clientSubmissionId:row.id});else if(r.receipt?.notSent){this.journal.change(()=>{row.state='rejected';row.issue=r.receipt.message||r.receipt.error;});this.emit('rejected-'+row.id,{type:'status',requestId:row.id,state:'rejected',text:r.receipt.message||'本条消息未发送，请等助理就绪后重新发送。'});}else if(row.state==='dispatching')this.journal.change(()=>{row.state='unknown';row.issue=r.receipt?.message||r.receipt?.error;});}catch(e){this.journal.change(()=>{row.state=e.notSent?'rejected':'unknown';row.issue=e.message;});}
   if(row.state==='unknown')this.emit('unknown-'+row.id,{type:'status',requestId:row.id,state:'unknown',text:'任务是否送达尚未确认，正在核对，不会自动再发。'});
  }
  async reply(id,text,extra={},{cards=true}={}){this.emit(id,{type:'answer',text,...extra});for(const [i,img]of require('./images').answerImages(text,{roots:this.imageRoots}).entries())this.emit(id+'-original-'+i,{type:'image',originId:id,png:img.data.toString('base64'),caption:img.caption,...extra});if(!cards||!this.renderHtml||this.journal.state.outbox.some(r=>r.id===id+'-html-0-0'))return;

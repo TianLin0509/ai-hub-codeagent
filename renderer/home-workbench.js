@@ -32,7 +32,7 @@ const MAX_ARTIFACT_ITEMS = 6;
 const PROVIDER_LABELS = {
   claude: 'CLAUDE',
   codex: 'CODEX',
-  gemini: 'GEMINI',
+  gemini: 'ANTIGRAVITY',
   deepseek: 'DEEPSEEK',
   kimi: 'KIMI',
   powershell: 'SHELL',

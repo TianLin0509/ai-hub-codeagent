@@ -25,7 +25,7 @@ const KIND_SHORT = {
   'deepseek-acp': 'DeepSeek',
   qwen: 'Qwen',
   glm: 'GLM',
-  gemini: 'Gemini',
+  gemini: 'Antigravity',
   kimi: 'Kimi',
 };
 

@@ -260,6 +260,7 @@ function registerWorkspaceIpc(ipcMain, deps) {
     configDir: process.env.CLAUDE_CONFIG_DIR || undefined,
     homeDir: process.env.CLAUDE_HUB_HOME_DIR || undefined,
   }));
+  ipcMain.handle('antigravity:model-catalog', () => require('../../core/antigravity-model-catalog').readModelCatalog());
 
   ipcMain.handle('workspace:create-scratch', (_event, opts = {}) => {
     const workspace = workspaceService.createScratchWorkspace({ ...opts, select: false });

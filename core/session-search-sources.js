@@ -398,6 +398,26 @@ const GEMINI_MIN_CHAT_BYTES = 2048;
 
 function listGeminiDescriptors(roots, maps, diagnostics = []) {
   const groups = new Map();
+  // Antigravity keeps global native UUID directories alongside Gemini's legacy tmp tree.
+  for(const root of roots||[]){
+    const brain=path.join(path.dirname(root),'antigravity-cli','brain');
+    let dirs;
+    try{dirs=fs.readdirSync(brain,{withFileTypes:true});}catch(error){if(error.code!=='ENOENT')recordDiscoveryError(diagnostics,brain,error);continue;}
+    for(const dir of dirs){
+      if(!dir.isDirectory()||!require('./antigravity-config').UUID.test(dir.name))continue;
+      const logs=path.join(brain,dir.name,'.system_generated','logs');
+      try{
+        const files=['transcript.jsonl','transcript_full.jsonl'].map(name=>path.join(logs,name)).filter(f=>fs.existsSync(f));
+        if(!files.length)continue;
+        const filePath=files.sort((a,b)=>fs.statSync(b).size-fs.statSync(a).size)[0],stat=fs.statSync(filePath);
+        const hubSession=preferredHubSession(maps.sessions.filter(s=>baseKind(s.kind)==='gemini'&&s.geminiChatId===dir.name));
+        const descriptor={type:'gemini',key:`antigravity:${dir.name}`,filePath,root:brain,provider:'gemini',nativeSessionId:dir.name,hubSession,
+          geminiProjectHash:'antigravity',fileSignature:statSignature(stat),mtime:stat.mtimeMs||0};
+        descriptor.signature=`${descriptor.fileSignature}:${shortHash(normalizePath(filePath))}:${metadataSignature(hubSession)}`+PROJECTION_SUFFIX;
+        groups.set(descriptor.key,[descriptor]);
+      }catch(error){recordDiscoveryError(diagnostics,logs,error);}
+    }
+  }
   for (const root of roots || []) {
     let projectDirs;
     try { projectDirs = fs.readdirSync(root, { withFileTypes: true }); }
@@ -951,6 +971,12 @@ function parseKimiDescriptor(descriptor) {
 }
 
 function parseGeminiDescriptor(descriptor, options = {}) {
+  if(descriptor.geminiProjectHash==='antigravity'){
+    const turns=require('./antigravity-transcript-parser').parseAntigravityTranscriptToTurns(descriptor.filePath,{expectedSessionId:descriptor.nativeSessionId});
+    const session=sessionRecordFromDescriptor(descriptor,turns,{cwd:descriptor.hubSession?.geminiProjectRoot||descriptor.hubSession?.cwd||null});
+    const docs=docsFromTurns(turns,session.title,'gemini');
+    return {key:descriptor.key,signature:descriptor.signature,session,docs,searchable:!session.meetingId,truncatedByReadGuard:false};
+  }
   const maxBytes = Math.max(256 * 1024, Number(options.maxJsonReadBytes) || DEFAULT_JSON_SOURCE_READ_BYTES);
   let data = null;
   try {

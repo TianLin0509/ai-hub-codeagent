@@ -45,7 +45,7 @@ class AccountCenter {
     const native=(id,name,provider,home,uses)=>({id,name,provider,home:path.resolve(require('./codex-usage-scope').expandHomePath(home,this.homeDir)),type:'native',uses,action:'login',configProvider:provider});
     const rows=[native('claude','Claude Code','claude',this.env.CLAUDE_CONFIG_DIR || path.join(this.homeDir,'.claude'),['Claude 会话','开发群聊']),
       ...profiles.filter(p=>/^[\w-]{1,64}$/.test(p.id)).map(p=>{const row=native('codex-'+p.id,'Codex · '+p.label,'codex',p.home || path.join(this.homeDir,'.codex'),['Codex 会话','开发群聊']);return {...row,profileLabel:p.label,browserIdentity:p.browserIdentity,isDefault:p.id===(c.codexSubscriptionProfile || 'default'),accountLabel:codexAccountLabel(row.home)};}),
-      native('gemini-cli','Gemini CLI','gemini',path.join(this.homeDir,'.gemini'),['Gemini 会话']),
+      native('gemini-cli','Antigravity CLI','gemini',path.join(this.homeDir,'.gemini','antigravity-cli'),['Antigravity 会话']),
       native('kimi','Kimi Code','kimi',this.env.KIMI_CODE_HOME || path.join(this.homeDir,'.kimi-code'),['Kimi 会话']),
       ...['deepseek','doubao','kimi','qwen','gemini','chatgpt'].map(p=>({id:'web-'+p,name:({deepseek:'DeepSeek',doubao:'豆包',kimi:'Kimi',qwen:'千问',gemini:'Gemini',chatgpt:'ChatGPT'})[p]+' · 网页',type:'web',provider:p,uses:['专用网页登录'],action:'login',managedBrowser:true,phoneLogin:['deepseek','doubao'].includes(p)})),
       ...['claude','codex','deepseek'].map(p=>({id:'api-'+p,name:({claude:'Claude 中转',codex:'Codex API',deepseek:'DeepSeek API'})[p],type:'api',provider:p,uses:[p+' API 会话'],action:'configure',configProvider:p,configured:!!c[p+'ApiKey']})),

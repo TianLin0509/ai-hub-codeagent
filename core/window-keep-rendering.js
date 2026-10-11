@@ -20,8 +20,10 @@ const path = require('path');
 const LOG_LIMIT_BYTES = 512 * 1024;
 
 function shouldKeepRendering({ env = process.env, community = false } = {}) {
-  if (env.AI_HUB_KEEP_RENDERING === '1') return true;
-  if (env.AI_HUB_KEEP_RENDERING === '0') return false;
+  // cmd 里 `set X=0 && ...` 会把空格带进值，按去空格后的值认。
+  const forced = String(env.AI_HUB_KEEP_RENDERING || '').trim();
+  if (forced === '1') return true;
+  if (forced === '0') return false;
   return !!community;
 }
 

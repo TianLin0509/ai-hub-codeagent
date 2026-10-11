@@ -4,6 +4,34 @@ const count = value => typeof value === 'number' && Number.isFinite(value) && va
 function inputTokens(usage) {
   return count(usage?.input_tokens) + count(usage?.cache_read_input_tokens) + count(usage?.cache_creation_input_tokens);
 }
+// One API call per message id: it starts when its request could be sent (the
+// prompt, or the latest tool result before it) and ends at its last frame.
+// Frames keep transcript order, so tool results between calls advance the
+// start; sub-agent frames carry their parent tool id and stay outside.
+function claudeGeneration(record, frames) {
+  const { addGenerationCall } = require('./turn-speed-metrics');
+  const calls = new Map();
+  let mark = record.createdAt;
+  for (const frame of frames) {
+    const at = frame.hubObservedAt;
+    if (!Number.isFinite(at) || frame.partial || frame.parent_tool_use_id) continue;
+    if (frame.type === 'user') {
+      if ((frame.message?.content || []).some?.(block => block?.type === 'tool_result')) mark = Math.max(mark, at);
+      continue;
+    }
+    const id = frame.type === 'assistant' && frame.message?.id;
+    if (!id) continue;
+    const call = calls.get(id) || { startedAt: mark, endedAt: at, outputTokens: 0 };
+    call.endedAt = Math.max(call.endedAt, at);
+    call.outputTokens = Math.max(call.outputTokens, frame.message.usage?.output_tokens ?? -1);
+    calls.set(id, call);
+    mark = Math.max(mark, at);
+  }
+  let generation = null;
+  for (const call of calls.values()) generation = addGenerationCall(generation, call);
+  return generation && !generation.invalid ? generation : null;
+}
+
 // Result usage is the sum of API calls; the last assistant call describes
 // context occupancy. Never present the summed inputs as a context percentage.
 function claudeTurnMetrics(record, frames) {
@@ -38,6 +66,7 @@ function claudeTurnMetrics(record, frames) {
       ...(count(contextWindow) > 0 ? { context_window: contextWindow } : {}),
     } } : {}),
     ...(typeof duration === 'number' && Number.isFinite(duration) && duration >= 0 ? { durationMs: duration } : {}),
+    generation: claudeGeneration(record, frames),
   };
 }
 

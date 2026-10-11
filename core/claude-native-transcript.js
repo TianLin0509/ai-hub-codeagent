@@ -158,6 +158,7 @@ function mergeContinuations(head, continuations) {
         output_tokens: (merged.usage?.output_tokens || 0) + assistant.usage.output_tokens };
     }
     merged.outputUsageComplete = merged.outputUsageComplete && assistant.outputUsageComplete;
+    merged.generation = require('./turn-speed-metrics').sumGenerations(merged.generation, assistant.generation);
     if (merged.speedTier !== assistant.speedTier) merged.speedTier = null;
     // A continuation is part of this displayed turn; preserve the elapsed
     // interval rather than retaining only the first query's engine duration.

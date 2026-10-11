@@ -157,7 +157,7 @@ function registerPromptSubmitIpc(ipcMain, deps) {
   });
   const normalizeAssistantReceipt = event => {
     const session=sessionManager.getSession(event.sessionId||event.hubSessionId);
-    if(session?.kind!=='claude'||session.purpose!=='hub-assistant')return event;
+    if(session?.kind!=='claude'||!['hub-assistant','hub-photo-assistant'].includes(session.purpose))return event;
     return {...event,text:require('../../core/assistant-context-display').assistantSubmissionText(event.text,session.purpose)};
   };
   const observePrompt = event => {
@@ -356,7 +356,7 @@ function registerPromptSubmitIpc(ipcMain, deps) {
       || sessionManager.getNativeClaude?.(request.sessionId));
     const aiSession = native || (session && isPasteSensitive(session.transcriptKind || session.kind));
     if (!aiSession || typeof request.text !== 'string' || !request.text.trimStart().startsWith('/')) {
-      if (session?.purpose !== 'hub-assistant') return sendPrompt(event, request);
+      if (!['hub-assistant','hub-photo-assistant'].includes(session?.purpose)) return sendPrompt(event, request);
       // Reserve before any async context work. A second submit must not replace
       // the first request's tool authority while its PTY receipt is pending.
       if (assistantSubmissions.has(request.sessionId)) return { ok: false, notSent: true,

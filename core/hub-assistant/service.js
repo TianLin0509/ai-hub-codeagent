@@ -56,6 +56,7 @@ class AssistantService {
   captureContinuity(){for(const id of this.assistantIds()){const meta=this.sessionMetadata(id);if(!meta)continue;for(const row of this.liveHistory.read(meta).records)this.continuity.add({...row,provider:meta.kind,timestamp:row.timestamp||Date.now()});}}
   liveInventory(){return this.sessions().map(s=>{const result=s.isOpen?this.liveHistory.read(s):null;return{...s,nativeSessionId:nativeId(s),latestFinal:result?.records.at(-1)||null,liveIssue:result?.issue||null};});}
   get videos(){if(!this._videos)this._videos=new (require('./video-studio').VideoStudio)({assistant:this});return this._videos;}
+  get photo(){if(!this._photo)this._photo=new (require('./photo-assistant').PhotoAssistant)(this);return this._photo;}
   sessionCards(request){return require('./session-cards').sessionCards(this,request);}
   readLiveFinal(sessionId){const meta=this.sessionMetadata(sessionId);if(!meta)throw new Error('找不到原会话');const result=this.liveHistory.read(meta);return{sessionId,title:meta.title,...result};}
   // 不做固定频率的心跳：会话答完一轮由完成事件记账与提醒；换班按精确时间点（空闲 2 小时、每天 4 点）触发；
@@ -87,6 +88,7 @@ class AssistantService {
   }
   // 任一会话答完一轮：助理自己 → 记上下文用量并排好空闲换班；其他会话 → 立即记账，被关注则立即提醒。
   onTurnComplete(sessionId,event={}){
+    if(this.store.get('photoAssistant')?.id===sessionId){this.deps.onAssistantTurnComplete?.(sessionId);return;}
     const at=Number(event.completedAt)||Date.now();
     if(this.assistantIds().includes(sessionId)){this.observeUsage(sessionId,event.usage,at);this.store.set('lastActiveAt:'+sessionId,at);this.scheduleIdleCheckpoint(at);
       // 助理答完立刻让手机通道取答案推送，不等下一次定时处理。
@@ -312,7 +314,7 @@ class AssistantService {
   fastLaneDisabled(){return this.frontDesk().mode==='cli';}
   // 快答用的 Hub 只读状态摘要（会话、最近结果、关注、待提醒）。
   // 会话是否在干活：PTY 会话以 CLI hook 报告的本轮为准（列表里的 status 对它们常显示空闲），再看原生运行态与待核对的提交。
-  sessionBusy(id){const s=this.sessions().find(x=>x.id===id);if(!s?.isOpen)return false;return !!this.deps.isAgentTurnActive?.(id)||require('../session-runtime-truth').sessionRuntimeIsActive(s)||['running','waiting'].includes(s.status)||!!this.deps.hasPendingPrompt?.(id);}
+  sessionBusy(id){const s=this.deps.getSession(id);if(!s)return false;return !!this.deps.isAgentTurnActive?.(id)||require('../session-runtime-truth').sessionRuntimeIsActive(s)||['running','waiting'].includes(s.status)||!!this.deps.hasPendingPrompt?.(id);}
   statusDigest(){
     try{return require('./status-digest').buildStatusDigest({sessions:this.sessions().map(x=>x.isOpen&&x.status!=='waiting'&&this.sessionBusy(x.id)?{...x,status:'running'}:x),ledger:this.ledger.entries(),followed:this.followedTasks(),reminders:this.reminders.list()});}
     catch(e){console.warn('[assistant] status digest',e.message);return '';}

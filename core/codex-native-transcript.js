@@ -1,6 +1,20 @@
 'use strict';
 const {displayUserText}=require('./synthetic-user-filter');
 const {TERMINAL,BACKEND}=require('./codex-native-runtime');
+// Live native turns stamp each tool item as it starts and completes. The
+// model was working for the rest of the turn. An ACP tool can be announced
+// while the model still streams its arguments; it runs from in_progress.
+const MODEL_ITEMS=new Set(['userMessage','agentMessage','reasoning','acpPlan','plan']);
+function nativeGeneration(turn,items,ts,tsEnd) {
+  if(turn.hubGeneration)return turn.hubGeneration;
+  const output=turn.hubUsage?.output_tokens;
+  if(!TERMINAL.has(turn.status) || !Number.isFinite(ts) || !Number.isFinite(tsEnd) || !Number.isSafeInteger(output))return null;
+  const tools=items.filter(i=>!MODEL_ITEMS.has(i.type)).map(i=>[i.hubRunningAt ?? i.hubStartedAt,i.hubCompletedAt ?? tsEnd]);
+  if(tools.some(([start])=>!Number.isFinite(start)))return null;
+  return {outputTokens:output,activeMs:tsEnd-ts-require('./turn-speed-metrics').coveredMs(tools,ts,tsEnd),
+    calls:null,method:'minus-tools'};
+}
+
 // Content presentation never changes execution state. IDs come from the same
 // native thread/turn/items used for live delivery and survive renderer reload.
 function nativeTranscriptTurns(threadId, turns) {
@@ -48,6 +62,7 @@ function nativeTranscriptTurns(threadId, turns) {
       displayTurnKey:threadId+':'+turn.id,
       providerTurnId:turn.id,
       ...(turn.hubUsage ? { usage: turn.hubUsage } : {}),
+      generation:nativeGeneration(turn,items,ts,tsEnd),
       speedTier: turn.hubSpeedTier,
       durationMs:ts && tsEnd ? tsEnd-ts : undefined});
   }

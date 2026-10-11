@@ -19,7 +19,7 @@
   const KIND_LABELS = {
     ...require('../core/acp-profiles').LABELS,
     claude: 'Claude Code',
-    gemini: 'Gemini CLI',
+    gemini: 'Antigravity CLI',
     codex: 'Codex CLI',
     chatgpt: 'ChatGPT',
     deepseek: 'DeepSeek',
@@ -1318,6 +1318,11 @@
 
   function loadModelCatalog(kind, options = {}) {
     const base = String(kind || '').replace(/-resume$/, '');
+    if (base === 'gemini') return ipcRenderer.invoke('antigravity:model-catalog').then(result=>{
+      setRuntimeModelOptions('gemini',result.ok?result.models:[]);
+      if(!result.ok)console.warn('[antigravity-models]',result.error);
+      return result;
+    }).catch(error=>{console.warn('[antigravity-models]',error.message);return {ok:false,error:error.message};});
     if (base === 'chatgpt') {
       return ipcRenderer.invoke('chatgpt-web:status').then(result => {
         chatgptCatalog = result;

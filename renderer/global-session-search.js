@@ -44,7 +44,7 @@ const PROVIDER_META = Object.freeze({
   meeting: { label: '群聊', className: 'provider-meeting' },
   deepseek: { label: 'DeepSeek', className: 'provider-deepseek' },
   kimi: { label: 'Kimi', className: 'provider-kimi' },
-  gemini: { label: 'Gemini', className: 'provider-gemini' },
+  gemini: { label: 'Antigravity', className: 'provider-gemini' },
   other: { label: '其他', className: 'provider-other' },
   qwen: { label: '千问', className: 'provider-other' },
   glm: { label: '智谱', className: 'provider-other' },

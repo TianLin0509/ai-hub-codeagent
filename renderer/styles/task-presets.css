@@ -208,67 +208,6 @@
   .fi-preset-remove { transition: none; }
 }
 
-/* 「消息可能没提交」提示条（2026-09-03）。
-   闭环发送后这条应该极少出现；它存在的意义是把残余失败从"静默卡死"
-   变成"看得见、点一下能救"。用 warning 而不是 danger：消息通常还在
-   CLI 输入框里，没有丢，只是没提交。 */
-.fi-stuck {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-height: 26px;
-  padding: 4px 9px;
-  border: 1px solid rgba(var(--rgb-warning), .45);
-  border-radius: var(--radius-md, 7px);
-  background: var(--status-warning-tint, rgba(var(--rgb-warning), .13));
-}
-.fi-stuck-label {
-  flex: 1 1 auto;
-  min-width: 0;
-  color: var(--text-primary);
-  font-size: 11px;
-  font-weight: 650;
-  line-height: 1.35;
-}
-.fi-stuck-resend,
-.fi-stuck-dismiss {
-  flex: 0 0 auto;
-  min-height: 22px;
-  padding: 2px 11px;
-  border-radius: var(--radius-pill);
-  font: inherit;
-  font-size: 11px;
-  font-weight: 700;
-  line-height: 1;
-  cursor: pointer;
-  transition: color .15s ease, border-color .15s ease, background .15s ease, opacity .15s ease;
-}
-.fi-stuck-resend {
-  border: 1px solid rgba(var(--rgb-warning), .62);
-  background: rgba(var(--rgb-warning), .18);
-  color: var(--text-primary);
-}
-.fi-stuck-resend:hover,
-.fi-stuck-resend:focus-visible {
-  background: rgba(var(--rgb-warning), .28);
-  border-color: rgba(var(--rgb-warning), .85);
-  outline: none;
-}
-.fi-stuck-resend:disabled { cursor: wait; opacity: .6; }
-.fi-stuck-dismiss {
-  border: 1px solid var(--border);
-  background: transparent;
-  color: var(--text-secondary);
-  font-weight: 600;
-}
-.fi-stuck-dismiss:hover,
-.fi-stuck-dismiss:focus-visible {
-  color: var(--text-primary);
-  border-color: var(--text-secondary);
-  background: var(--bg-tertiary);
-  outline: none;
-}
-
 /* Command replies are local feedback, never optimistic conversation messages. */
 .codex-command-feedback { position: absolute; left: 0; right: 0; bottom: calc(100% + 8px); z-index: 100; padding: 12px 14px; border: 1px solid var(--border-mid); border-radius: 12px; background: var(--surface-raised); box-shadow: var(--shadow-lg); color: var(--fg-default); }
 .codex-command-feedback[hidden] { display: none; }

@@ -11,6 +11,7 @@ function registerAssistantIpc(ipcMain,deps){
     'workbench-action':request=>service.workbench.action(request),
     'get-overview':()=>service.overview(),status:()=>service.overview(),
     'ensure-session':()=>service.ensureSession(),context:request=>service.context(request),
+    'ensure-photo-session':()=>service.photo.ensureSession(),
     'switch-backend':request=>service.switchBackend(request),
     'set-profile':request=>service.setProfile(request),'front-desk':()=>require('../../core/hub-assistant/front-desk').catalog(service.frontDesk()),'set-front-desk':request=>service.setFrontDesk(request),'memos':()=>service.memoView(),'memo-action':request=>{const r=service.memoAction(String(request?.ref||''),{action:request?.action,until:request?.until||'',title:request?.title||''});return{ok:true,memo:r.memo};},'dialog-log':request=>service.dialogLog(request),ask:request=>service.ask(request),'page-status':()=>service.pageStatus(),'rotate-now':()=>service.rotateNow(),
     'open-memory':async()=>{const file=service.memory.file('user');if(!deps.openPath)return{ok:false,error:'记忆文件暂不可打开'};const error=await deps.openPath(file);return error?{ok:false,error}:{ok:true,path:file};},'phone-profile':()=>service.phoneProfile(),

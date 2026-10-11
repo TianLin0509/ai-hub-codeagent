@@ -461,7 +461,7 @@ function _renderMetaPills(turn, compact = false) {
 
 function renderTurnSpeed(turn) {
   const display = require('./turn-speed-display').speedDisplay(turn.turnSpeed);
-  return display ? `<span class="turn-speed" title="${escapeHtml(display.title)}" aria-label="${escapeHtml(display.text)}"><span class="turn-speed-detail">${escapeHtml(display.mode ? display.mode + ' · ' : '')}均速 </span>≈${escapeHtml(display.rate)}<span class="turn-speed-unit"> tok</span>/s</span>` : '';
+  return display ? `<span class="turn-speed" title="${escapeHtml(display.title)}" aria-label="${escapeHtml(display.text)}"><span class="turn-speed-detail">${escapeHtml(display.mode ? display.mode + ' · ' : '')}${display.label} </span>≈${escapeHtml(display.rate)}${display.whole ? `<span class="turn-speed-detail"> · 整轮 ${escapeHtml(display.whole)}</span>` : ''}<span class="turn-speed-unit"> tok</span>/s</span>` : '';
 }
 
 // === Spec 1 v0.9.0 · turn 卡片渲染 ===
@@ -500,7 +500,7 @@ function renderTurnCard(turn) {
   const isProgress = !isUser && turn.phase === 'commentary';
   // inherited = 从父会话补进来的「分支前」对话（见 core/branch-transcript-inheritance.js）。
   const cls = (isUser ? 'turn-card user' : 'turn-card assistant') + (turn.inherited ? ' inherited' : '');
-  const who = isUser ? '用户' : (turn.model || (turn.source==='acp' ? require('../core/ai-kinds').getKindLabel(turn.kind) : turn.kind) || 'Claude');
+  const who = isUser ? '用户' : (turn.model || (turn.source==='antigravity-cli' ? 'Antigravity' : turn.source==='acp' ? require('../core/ai-kinds').getKindLabel(turn.kind) : turn.kind) || 'Claude');
   const ts = turn.ts ? formatAbsoluteTime(turn.ts) : '';
 
   // 头像分支

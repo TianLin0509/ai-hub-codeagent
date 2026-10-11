@@ -16,6 +16,8 @@ test('社区版默认开启，主仓库默认关闭；环境变量可强制', ()
   assert.strictEqual(shouldKeepRendering({ env: {}, community: false }), false);
   assert.strictEqual(shouldKeepRendering({ env: { AI_HUB_KEEP_RENDERING: '1' }, community: false }), true);
   assert.strictEqual(shouldKeepRendering({ env: { AI_HUB_KEEP_RENDERING: '0' }, community: true }), false);
+  // cmd 的 set X=0 && ... 会带尾随空格（公司 v0.5.8 第 4 步就是这样没关掉）
+  assert.strictEqual(shouldKeepRendering({ env: { AI_HUB_KEEP_RENDERING: '0 ' }, community: true }), false);
 });
 
 function fakeWindow() {

@@ -24,7 +24,7 @@ function providerLabel(session) {
   if (kind === 'codex' || kind === 'deepseek') return kind === 'codex' ? 'Codex' : 'DeepSeek';
   if (kind === 'claude') return 'Claude';
   if (kind === 'kimi') return 'Kimi';
-  if (kind === 'gemini') return 'Gemini';
+  if (kind === 'gemini') return 'Antigravity';
   if (kind === 'powershell') return 'PowerShell';
   return 'AI';
 }

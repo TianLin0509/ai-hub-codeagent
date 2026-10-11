@@ -43,9 +43,7 @@ const MODEL_OPTIONS_BY_KIND = {
     { id: 'haiku',               label: 'Haiku · 最新可用版本' },
   ],
   gemini: [
-    { id: 'gemini-3-pro-preview', label: 'Gemini 3.1 Pro' },
-    { id: 'gemini-2.5-pro',       label: 'Gemini 2.5 Pro' },
-    { id: 'gemini-2.5-flash',     label: 'Gemini 2.5 Flash' },
+    { id: 'gemini-3.1-pro-high', label: 'Gemini 3.1 Pro · High' },
   ],
   codex: [
     { id: 'gpt-6-astra',   label: 'GPT-6 Astra' },
@@ -116,7 +114,7 @@ const DEFAULT_MODEL_BY_KIND = {
   'deepseek-acp': 'deepseek-v4-pro',
   glm: 'glm-5.2',
   claude: 'claude-opus-5[1m]',
-  gemini: 'gemini-3-pro-preview',
+  gemini: 'gemini-3.1-pro-high',
   codex: 'gpt-6-astra',
   deepseek: 'deepseek-v4-flash',
   kimi: 'kimi-code/k3',

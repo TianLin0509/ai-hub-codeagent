@@ -16,14 +16,26 @@ const STANDIN = path.join(__dirname, 'fixtures', 'codeagent-standin', 'codeagent
 const FOREIGN_HOOK = 'python "C:/Users/x/.cac/scripts/codeagent-hub-hook.py" stop';
 
 async function main() {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hub-codeagent-'));
-  const out = path.resolve('artifacts/20261008-codeagent-kind-claude1'); fs.mkdirSync(out, { recursive: true });
+  // HUB_CODEAGENT_SHORT_CWD=1：会话目录用 8.3 短名写法交给 Hub（公司用户名超 8 个字符时系统临时目录就是这样），
+  // CLI 回报的是长名。放在 C 盘用户临时目录下，那里会生成短名。
+  const shortCwd = process.env.HUB_CODEAGENT_SHORT_CWD === '1';
+  const tempBase = shortCwd ? path.join(process.env.LOCALAPPDATA || os.homedir(), 'Temp') : os.tmpdir();
+  const root = fs.mkdtempSync(path.join(tempBase, 'hub-codeagent-'));
+  const out = path.resolve(shortCwd ? 'artifacts/20261011-codeagent-short-cwd-claude1' : 'artifacts/20261008-codeagent-kind-claude1'); fs.mkdirSync(out, { recursive: true });
   const claudeSource = process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude');
   const claudeAuth = path.join(claudeSource, '.credentials.json');
   const authBefore = hash(claudeAuth);
-  const cac = path.join(root, '.cac'), cwd = path.join(root, 'workspace'), dataDir = path.join(root, 'data');
+  // hub-launcher 要求数据目录在系统临时目录下，短名场景只把工作目录与配置目录放到 C 盘。
+  const cac = path.join(root, '.cac'), stateRoot = shortCwd ? fs.mkdtempSync(path.join(os.tmpdir(), 'hub-codeagent-state-')) : root, dataDir = path.join(stateRoot, 'data');
+  let cwd = path.join(root, shortCwd ? 'workspace-long-name' : 'workspace');
   for (const d of [cac, cwd, dataDir]) fs.mkdirSync(d, { recursive: true });
   const result = { checks: [], passed: false };
+  if (shortCwd) {
+    const short = require('child_process').execFileSync('cmd.exe', ['/d', '/s', '/c', `"for %I in ("${cwd}") do @echo %~sI"`],
+      { encoding: 'utf8', windowsVerbatimArguments: true }).trim();
+    assert.ok(short && short.toLowerCase() !== cwd.toLowerCase() && fs.existsSync(short), 'no 8.3 short name for ' + cwd + ' -> ' + short);
+    result.cwdLong = cwd; result.cwdShort = short; cwd = short;
+  }
   let hub, c;
   const until = async (expr, label, ms = 180000) => { const end = Date.now() + ms; while (Date.now() < end) { if (await c.eval(expr)) return; await sleep(300); } throw Error('timeout: ' + label); };
   const shot = async name => { const s = await c.send('Page.captureScreenshot', { format: 'png' }); fs.writeFileSync(path.join(out, name + '.png'), Buffer.from(s.data, 'base64')); };
@@ -40,8 +52,8 @@ async function main() {
 
     hub = await launchIsolatedHub({ dataDir, port: await freePort(), windowMode: 'hidden', label: 'codeagent standin', extraEnv: {
       AI_HUB_CODEAGENT_COMMAND: STANDIN, AI_HUB_CODEAGENT_CONFIG_DIR: cac,
-      CLAUDE_HUB_HOME_DIR: path.join(root, 'home'), DEEPSEEK_API_KEY: '',
-      HUB_SESSION_SEARCH_CLAUDE_ROOTS: path.join(root, 'none') } });
+      CLAUDE_HUB_HOME_DIR: path.join(stateRoot, 'home'), DEEPSEEK_API_KEY: '',
+      HUB_SESSION_SEARCH_CLAUDE_ROOTS: path.join(stateRoot, 'none') } });
     c = await connectFirstPage(hub);
     await c.send('Emulation.setDeviceMetricsOverride', { width: 1440, height: 1000, deviceScaleFactor: 1, mobile: false });
     await until('typeof sessions !== "undefined"', 'renderer');
@@ -119,6 +131,7 @@ async function main() {
     assert.ok(lines.includes('CODEAGENT-OK-1') && lines.includes('CODEAGENT-OK-2'), 'both turns in one transcript');
     result.checks.push('Suspended, reopened from the sidebar: resumed with --resume <same id>, second answer in the same transcript');
     await shot('03-card-resumed');
+    result.bindLog = hub.log().filter(l => /\[codeagent hook\]|ignored foreign|nested CLI/.test(l)).slice(0, 20);
     result.passed = true;
   } catch (error) {
     result.error = error && error.stack || String(error);

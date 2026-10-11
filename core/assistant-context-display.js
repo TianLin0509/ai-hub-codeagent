@@ -8,7 +8,7 @@ function unwrapNativePaste(text) {
 
 // Display projection only. Native text, receipt identity and stored records stay intact.
 function assistantContextDisplay(text, purpose) {
-  if (purpose !== 'hub-assistant' || typeof text !== 'string') return null;
+  if (!['hub-assistant','hub-photo-assistant'].includes(purpose) || typeof text !== 'string') return null;
   const rawText=text;
   // Claude's real PTY transcript wraps long bracketed pastes. Only unwrap one
   // complete native wrapper; surrounding user prose remains visible intact.
@@ -33,7 +33,7 @@ function assistantContextDisplay(text, purpose) {
 }
 
 function assistantSubmissionText(text,purpose) {
-  if(typeof text!=='string'||purpose!=='hub-assistant')return text;
+  if(typeof text!=='string'||!['hub-assistant','hub-photo-assistant'].includes(purpose))return text;
   const inner=unwrapNativePaste(text);
   return inner!==text&&assistantContextDisplay(inner,purpose)?inner:text;
 }

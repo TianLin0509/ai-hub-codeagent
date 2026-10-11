@@ -108,7 +108,7 @@ function createAssistantPage({ document, window, ipcRenderer, openSession, close
       if (e.role === 'user') {
         const from = e.source === 'hub' ? '电脑' : e.input === 'voice' ? '手机语音' + (e.durationMs ? ' ' + Math.round(e.durationMs / 1000) + '″' : '') : '手机';
         const to = routeOf(e.id), pending = !answered.has(e.id);
-        html += `<div class="ap-msg me"><div class="ap-bubble">${esc(e.text)}</div><div class="ap-cap">${esc(from)} · ${time(e.at)}${to ? ` <span class="ap-to">→ ${esc(to)}${pending ? ' 处理中' : ''}</span>` : e.forced ? ' <span class="ap-to">→ 助理会话</span>' : ''}</div></div>`;
+        html += `<div class="ap-msg me"><div class="ap-bubble">${esc(e.text)}</div><div class="ap-cap">${esc(from)} · ${time(e.at)}${to ? ` <span class="ap-to">→ ${esc(to)}${pending ? ' 待回复' : ''}</span>` : e.forced ? ' <span class="ap-to">→ 助理会话</span>' : ''}</div></div>`;
       } else if (e.role === 'assistant') {
         const who = e.lane === 'notice' ? '提醒 · ' + (e.by || '') : (e.by || '') + (e.ms != null ? ' · ' + seconds(e.ms) : '');
         // 快答不满意：一键让助理会话再答（带上原问题）。
@@ -117,7 +117,11 @@ function createAssistantPage({ document, window, ipcRenderer, openSession, close
       } else if (e.role === 'system') html += `<div class="ap-note">${esc(e.text)}</div>`;
     }
     const waiting = entries.filter(e => e.role === 'user' && !answered.has(e.id) && Date.now() - e.at < 1800000);
-    if (waiting.length) html += `<div class="ap-msg ai typing"><div class="ap-bubble"><span></span><span></span><span></span></div><div class="ap-cap">${esc(desk?.waiting || desk?.queued ? '助理会话处理中' : '正在回答')}</div></div>`;
+    if (waiting.length) {
+      const delivery=entries.filter(e=>e.id===waiting.at(-1).id&&e.role==='delivery').at(-1);
+      const label=delivery?.text||(desk?.waiting?'已交给助理，等待回复':desk?.queued?'已排队，等待助理接收':'等待回答');
+      html += `<div class="ap-msg ai typing"><div class="ap-bubble"><span></span><span></span><span></span></div><div class="ap-cap">${esc(label)}</div></div>`;
+    }
     list.innerHTML = html;
     if (atBottom || !list.dataset.painted) { scroll.scrollTop = scroll.scrollHeight; list.dataset.painted = '1'; }
   }

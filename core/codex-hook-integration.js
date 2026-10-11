@@ -12,7 +12,11 @@
 // hook，否则新条目会被静默跳过，状态就退化成只能看 rollout。hash 算法与 Codex
 // 源码 hooks/src/engine/discovery.rs::hook_hash + config/src/fingerprint.rs 一致：
 // {event_name, matcher?, hooks:[归一化后的 handler]} 转 JSON、键排序、紧凑序列化后 sha256。
-// 只为命令里带 session-hub-hook 的条目写信任，绝不替用户信任别的 hook。
+// 只为两类条目写信任：命令里带 session-hub-hook 的 Hub 条目；调用方传入的个人策略
+// （~/.agents/context-policy.json 的 codexHooks，用户本人写下、由 agent-user-context
+// 同步进 hooks.json）里逐字相同的条目。来源不明的手工 hook 绝不替用户信任。
+// 不信任个人策略条目时，Codex 0.159 起启动即停在「hooks need review」审核页，
+// Hub 发的 prompt 进不去（2026-10-11 DeepSeek 会话卡死）。
 //
 // hook 脚本在没有 CLAUDE_HUB_SESSION_ID 时立刻退出，所以用户自己在终端里跑的
 // Codex 不受影响。
@@ -266,15 +270,37 @@ function verifyTrustEdit(before, after, entries, parse) {
   if (!deepEqual(newDoc, expected)) throw new Error('改写后的 config.toml 语义与预期不一致，已放弃写入');
 }
 
+// 个人策略 hooks.json 里每个 command handler 的身份：事件 + matcher + handler 全文（键排序）。
+// 比 trust hash 更严：hash 不含 commandWindows 等字段，这里要求逐字相同才算「用户写的那条」。
+function policyHandlerIdentity(eventName, matcher, handler) {
+  return JSON.stringify(canonical({ eventName, matcher: typeof matcher === 'string' ? matcher : null, handler }));
+}
+
+function policyHandlerIdentities(trustedHooks) {
+  const identities = new Set();
+  const events = trustedHooks && typeof trustedHooks === 'object' && trustedHooks.hooks;
+  if (!events || typeof events !== 'object' || Array.isArray(events)) return identities;
+  for (const [eventName, groups] of Object.entries(events)) {
+    for (const group of Array.isArray(groups) ? groups : []) {
+      for (const handler of group && Array.isArray(group.hooks) ? group.hooks : []) {
+        if (handler && handler.type === 'command') identities.add(policyHandlerIdentity(eventName, group.matcher, handler));
+      }
+    }
+  }
+  return identities;
+}
+
 /**
  * 保证指定 CODEX_HOME 下 Hub 的 Codex hook 已部署且受信任。幂等；
  * 失败只返回 errors，由调用方显示降级，不抛出去拦住会话启动。
+ * trustedHooks：个人策略的 codexHooks（hooks.json 形状）；hooks.json 里与它逐字相同的条目一并信任。
  */
 function ensureCodexHookIntegration({ codexHome = null, sourceScript = null, logger = console, parseToml = null,
-  runner = hookRunner() } = {}) {
+  runner = hookRunner(), trustedHooks = null } = {}) {
   const home = path.resolve(codexHome || defaultCodexHome());
   const parse = parseToml || defaultParseToml(runner);
-  const result = { codexHome: home, hooksChanged: false, trustChanged: false, trusted: [], untrusted: [], errors: [] };
+  const result = { codexHome: home, hooksChanged: false, trustChanged: false, trusted: [], untrusted: [], errors: [],
+    policyTrusted: 0 };
   const script = sourceScript || defaultHookSource(runner);
   const hooksPath = path.join(home, 'hooks.json');
   const configPath = path.join(home, 'config.toml');
@@ -287,10 +313,15 @@ function ensureCodexHookIntegration({ codexHome = null, sourceScript = null, log
     if (result.hooksChanged) writeAtomic(hooksPath, JSON.stringify(hooksFile, null, 2) + '\n');
 
     const trust = [];
+    const policy = policyHandlerIdentities(trustedHooks);
     for (const [eventName, label] of HUB_CODEX_HOOKS) {
-      (hooks[eventName] || []).forEach((group, groupIndex) => {
+      (Array.isArray(hooks[eventName]) ? hooks[eventName] : []).forEach((group, groupIndex) => {
         (group && Array.isArray(group.hooks) ? group.hooks : []).forEach((handler, handlerIndex) => {
-          if (!handler || handler.type !== 'command' || !String(handler.command || '').includes(MARKER)) return;
+          if (!handler || handler.type !== 'command') return;
+          const isHub = String(handler.command || '').includes(MARKER);
+          const isPolicy = !isHub && policy.has(policyHandlerIdentity(eventName, group.matcher, handler));
+          if (!isHub && !isPolicy) return;
+          if (isPolicy) result.policyTrusted += 1;
           trust.push({ key: `${hooksPath}:${label}:${groupIndex}:${handlerIndex}`,
             hash: codexHookTrustHash(label, typeof group.matcher === 'string' ? group.matcher : undefined, handler) });
         });
@@ -302,7 +333,7 @@ function ensureCodexHookIntegration({ codexHome = null, sourceScript = null, log
     if (next.error) throw new Error(next.error);
     result.untrusted = next.skipped || [];
     if (result.untrusted.length) {
-      result.errors.push(`config.toml 里有 ${result.untrusted.length} 条 Hub hook 的信任记录写法无法安全改写，请在 Codex /hooks 中手动信任`);
+      result.errors.push(`config.toml 里有 ${result.untrusted.length} 条 Hub 或个人策略 hook 的信任记录写法无法安全改写，请在 Codex /hooks 中手动信任`);
     }
     if (next.changed) {
       verifyTrustEdit(configText, next.text, trust.filter(entry => !result.untrusted.includes(entry.key)), parse);

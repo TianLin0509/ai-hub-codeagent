@@ -92,6 +92,12 @@ function readPolicy(env,dataDir) {
   if(policy.version!==1)throw new Error('未知的个人上下文策略版本');
   return policy;
 }
+// 个人策略里的 Codex hook（用户本人写下并同步到各 Codex home 的守卫）。
+// Hub 据此只信任这些原样条目，来源不明的手工 hook 不替用户信任。
+function codexPolicyHooks(env,dataDir) {
+  const hooks=readPolicy(env,dataDir)?.codexHooks;
+  return hooks&&typeof hooks==='object'&&!Array.isArray(hooks)?hooks:null;
+}
 function codexSharedConfig(env,dataDir) {
   const policy=readPolicy(env,dataDir);if(!policy)return {};
   // Endpoint, provider credentials and history ownership can never come from
@@ -109,4 +115,4 @@ function codexTomlValue(value) {
   if(value && typeof value==='object')return '{'+Object.entries(value).map(([k,v])=>JSON.stringify(k)+'='+codexTomlValue(v)).join(',')+'}';
   throw new Error('不支持的 Codex 默认配置值');
 }
-module.exports={contextHome,loadUserContext,syncNativeUserContext,codexSharedConfig,claudeSharedConfig,codexTomlValue};
+module.exports={contextHome,loadUserContext,syncNativeUserContext,codexPolicyHooks,codexSharedConfig,claudeSharedConfig,codexTomlValue};

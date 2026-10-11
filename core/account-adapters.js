@@ -76,9 +76,12 @@ function createAccountAdapters({dataDir,homeDir=os.homedir(),env=process.env,run
    return {state:usage?'signed_in':'unknown',message:'Kimi 官方用量接口有响应；具体额度仍在侧栏展示',source:'Kimi 用量接口'};
   }
   if(row.provider==='gemini'){
-   const present=fs.existsSync(path.join(row.home,'oauth_creds.json'));
-   const api=!!(env.GEMINI_API_KEY||env.GOOGLE_API_KEY||env.GOOGLE_GENAI_USE_VERTEXAI);
-   return {state:present||api?'configured':'login_required',message:present?'发现 Gemini CLI 登录记录；有效性需在官方 CLI 确认':api?'使用已配置的 Gemini 授权方式':'未发现 Gemini 登录记录，请完成官方登录',source:'Gemini 本地记录，不是有效性证明'};
+   if(isolated&&!env.AI_HUB_ANTIGRAVITY_COMMAND)return {state:'unknown',message:'隔离 Hub 不读取真实 Antigravity 账号',source:'隔离保护'};
+   const e=cliEnv(row),r=await runImpl(require('./antigravity-config').resolveCommand(e),['models'],e,30000);
+   const output=r.stdout+'\n'+r.stderr;
+   if(r.code===0&&require('./antigravity-model-catalog').parseModels(r.stdout).length)return {state:'signed_in',message:'Antigravity 官方 CLI 已返回账号可用模型；当前剩余额度请在会话输入 /usage',source:'agy models'};
+   if(/please sign in|not signed in|sign in to view/i.test(output))return {state:'login_required',message:'请用 Google 账号完成 Antigravity 官方登录；旧 Gemini CLI 凭据不能证明这里已登录',source:'agy models'};
+   throw Error('Antigravity 状态检查失败，请在官方终端确认登录或网络');
   }
   if(row.provider==='token-plan'){
    const svc=require('../main/usage/token-plan-usage').createTokenPlanUsageService({env:cliEnv(row),...(isolated?{configDir:path.join(homeDir,'.bailian')}:{})});
@@ -101,7 +104,7 @@ function createAccountAdapters({dataDir,homeDir=os.homedir(),env=process.env,run
   if(row.provider==='codex'){if(isolated)throw Error('隔离 Hub 不打开真实 Codex 授权');return codexLogin.login(row,e);}
   else if(row.provider==='claude'){command=resolveClaudeExe(e);args=['auth','login'];}
   else if(row.provider==='kimi'){command='kimi.exe';args=['login'];}
-  else if(row.provider==='gemini'){command='gemini';args=[];}
+  else if(row.provider==='gemini'){command=require('./antigravity-config').resolveCommand(e);args=[];}
   else if(row.provider==='token-plan'){command='bl';args=['auth','login','--console'];}
   else if(row.provider==='feishu'){external();command=getConfig().notifications?.feishuCliPath||require('./completion-notifier').resolveDefaultFeishuCliPath(e);args=['auth','login'];}
   else throw Error('此连接没有登录入口');

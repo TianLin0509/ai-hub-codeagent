@@ -42,7 +42,7 @@ const CODEX_WEB_KINDS = [];
 // ---------------------------------------------------------------------------
 const KIND_LABELS = {
   claude: 'Claude',
-  gemini: 'Gemini',
+  gemini: 'Antigravity',
   codex: 'Codex',
   deepseek: 'DeepSeek',
   kimi: 'Kimi',
@@ -71,7 +71,7 @@ const CLAUDE_FAMILY = ['claude', 'claude-resume', 'deepseek-legacy', 'deepseek-l
 //   AI CLI 都是 TUI alt-screen；powershell 等普通 shell 不是。
 //   普通模式发送 prompt 时这些 kind 需要 ≥400ms 延迟才能让 paste-detect 完成。
 // ---------------------------------------------------------------------------
-const PASTE_SENSITIVE_KINDS = ['claude', 'claude-resume', 'gemini', 'codex', 'codex-resume', 'deepseek', 'deepseek-resume', 'kimi', 'kimi-resume', ...CODEAGENT_KINDS];
+const PASTE_SENSITIVE_KINDS = ['claude', 'claude-resume', 'gemini', 'gemini-resume', 'codex', 'codex-resume', 'deepseek', 'deepseek-resume', 'kimi', 'kimi-resume', ...CODEAGENT_KINDS];
 
 // ---------------------------------------------------------------------------
 // 跑在 Claude CLI 上、复用 Stop hook + transcript JSONL 的 kind。

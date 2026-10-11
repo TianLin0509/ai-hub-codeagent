@@ -1,7 +1,7 @@
 'use strict';
 const {promptFingerprint}=require('./prompt-submission-receipts');
 const {nativeSessionIdentity}=require('./session-capabilities');
-const sources=new Set(['kimi_wire_turn_prompt','gemini_user_message','user_message','item_completed_user_message']);
+const sources=new Set(['kimi_wire_turn_prompt','gemini_user_message', 'antigravity_user_message','user_message','item_completed_user_message']);
 
 // Event-driven evidence, scoped to this Hub's live provider bindings. Terminal
 // repaint or a historical transcript replay is never proof of new work.

@@ -333,7 +333,7 @@ function createKeyboardShortcuts({
         : []),
       { label: '创建当前会话分支', sub: 'Ctrl+Shift+B', run: () => { void forkActiveSession(); } },
       { label: '新建 Claude 会话', sub: 'new', run: () => createSession('claude') },
-      { label: '新建 Gemini 会话', sub: 'new', run: () => createSession('gemini') },
+      { label: '新建 Antigravity 会话', sub: 'new', run: () => createSession('gemini') },
       { label: '新建 Codex 会话', sub: 'new', run: () => createSession('codex') },
       { label: '新建 Kimi Code 会话', sub: 'new', run: () => createSession('kimi') },
       { label: '新建 DeepSeek 会话', sub: 'new', run: () => createSession('deepseek') },

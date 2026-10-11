@@ -242,10 +242,11 @@ const CLI_PROVIDERS = {
   'claude-cli': { cmd: 'claude', args: ['-p'] },
   'codex-cli': { cmd: 'codex', args: ['exec'] },
   'kimi-cli': { cmd: 'kimi', args: ['-p'] },
-  'gemini-cli': { cmd: 'gemini', args: ['-p'] },
+  'gemini-cli': { cmd: 'agy', args: [] },
 };
 
 function callCliLlm(provider, prompt, timeoutMs) {
+  if(provider==='gemini-cli')return require('./antigravity-headless').runPrompt(prompt,{timeoutMs});
   const spec = CLI_PROVIDERS[provider];
   if (!spec) return Promise.reject(new Error(`未知 CLI provider: ${provider}`));
   return new Promise((resolve, reject) => {

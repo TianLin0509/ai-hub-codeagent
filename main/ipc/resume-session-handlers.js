@@ -87,6 +87,8 @@ function createResumeSessionHandler(deps) {
     const isAgentLeague = false;
 
     let resumeOpts = {};
+    // 旧版 Hub 可先建侧栏会话，但未必保存 autonomous；专用拍图会话恢复时补齐后台档位。
+    if(meta.purpose==='hub-photo-assistant')resumeOpts={noInheritCursor:true,autonomous:true};
     if (meta.purpose === 'hub-assistant') {
       if (!require('../../core/hub-assistant/backends').BACKENDS.includes(meta.kind) || typeof deps.prepareAssistantResume !== 'function') {
         throw new Error('助理恢复配置不可用，未启动替代会话');
@@ -204,7 +206,10 @@ function createResumeSessionHandler(deps) {
       && (isDevSeat || meta.nativeRuntime?.connection === 'unstarted');
     const isFileFlowMember = require('../../core/dev-file-workflow').enabled(managedMeeting)
       && managedMeeting.subSessions?.includes(meta.hubId);
-    const freshUnboundAgentLeague = unstartedCodex || codexNeverRan || (isAgentLeague || isFileFlowMember) && (
+    const antigravityNeverRan = isGemini && meta.kind === 'gemini'
+      && meta.geminiProjectHash === 'antigravity' && !meta.geminiChatId
+      && !meta.transcriptPath && !meta.lastRunStartedAt && !meta.lastCompletedAt;
+    const freshUnboundAgentLeague = unstartedCodex || codexNeverRan || antigravityNeverRan || (isAgentLeague || isFileFlowMember) && (
       codexMissingSid
       || (isClaudeCliResumable && !meta.ccSessionId)
       || (isGemini && !meta.geminiChatId)

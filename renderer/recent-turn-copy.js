@@ -27,7 +27,7 @@ function assistantSender(entry = {}) {
     claude: 'Claude',
     codex: 'Codex',
     deepseek: 'DeepSeek',
-    gemini: 'Gemini',
+    gemini: 'Antigravity',
     kimi: 'Kimi',
   };
   const baseKind = String(entry.kind || '')

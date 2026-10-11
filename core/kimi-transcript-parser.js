@@ -89,6 +89,10 @@ function parseKimiWireRecords(records) {
   let turnOutputTokens = 0;
   let turnContextTokens = 0;
   let outputUsageComplete = true;
+  // A step's model call runs from its llm.request to its first tool.call (the
+  // call finished streaming) or its step.end; tool execution comes after.
+  let generation = null;
+  let call = null;
   let toolCalls = [];
   const steps = new Map();
 
@@ -119,6 +123,8 @@ function parseKimiWireRecords(records) {
       turnOutputTokens = 0;
       turnContextTokens = 0;
       outputUsageComplete = true;
+      generation = null;
+      call = null;
       const text = (blocksText(record.input) || lastUserText).trim();
       if (text && (!record.origin || record.origin.kind === 'user')) {
         turns.push({
@@ -129,6 +135,10 @@ function parseKimiWireRecords(records) {
           source: 'kimi_wire',
         });
       }
+      continue;
+    }
+    if (record.type === 'llm.request') {
+      call = { startedAt: toMs(record), endedAt: null };
       continue;
     }
     if (record.type !== 'context.append_loop_event' || !record.event) continue;
@@ -156,6 +166,7 @@ function parseKimiWireRecords(records) {
       continue;
     }
     if (event.type === 'tool.call') {
+      if (call && call.endedAt == null) call.endedAt = toMs(record);
       step.hadTool = true;
       steps.set(stepKey, step);
       toolCalls.push({
@@ -175,8 +186,16 @@ function parseKimiWireRecords(records) {
     const stepUsage = kimiStepUsage(event.usage);
     if (!event.usage || !Number.isSafeInteger(event.usage.output) || event.usage.output < 0) outputUsageComplete = false;
     if (stepUsage) {
+      const stepOutput = Math.max(0, stepUsage.outputTokens - (ended.usage?.outputTokens || 0));
+      if (stepOutput > 0 || call) {
+        // Without its request time a step's tokens cannot be timed.
+        generation = require('./turn-speed-metrics').addGenerationCall(generation, call
+          ? { startedAt: call.startedAt, endedAt: call.endedAt ?? toMs(record), outputTokens: stepOutput }
+          : { outputTokens: stepOutput });
+        call = null;
+      }
       turnInputTokens += Math.max(0, stepUsage.inputTokens - (ended.usage?.inputTokens || 0));
-      turnOutputTokens += Math.max(0, stepUsage.outputTokens - (ended.usage?.outputTokens || 0));
+      turnOutputTokens += stepOutput;
       turnContextTokens = stepUsage.inputTokens;
       ended.usage = stepUsage;
       steps.set(event.uuid || stepKey, ended);
@@ -196,6 +215,7 @@ function parseKimiWireRecords(records) {
       toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
       model: currentModel || undefined,
       outputUsageComplete,
+      generation,
       usage: (turnInputTokens > 0 || turnOutputTokens > 0) ? {
         input_tokens: turnInputTokens,
         output_tokens: turnOutputTokens,

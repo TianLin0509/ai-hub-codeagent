@@ -23,8 +23,7 @@
 }
 .terminal-panel .fi-content-stack > * { flex-shrink: 0; }
 .terminal-panel .composer { position: relative; }
-.terminal-panel .composer-quick-replies,
-.terminal-panel .fi-stuck {
+.terminal-panel .composer-quick-replies {
   position: absolute;
   bottom: calc(100% + 8px);
   left: 0;

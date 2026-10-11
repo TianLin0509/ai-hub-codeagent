@@ -7,6 +7,35 @@ const { AcpClient } = require('../main/acp-client');
 const { createNativeRuntime, reduceNativeRuntime, TERMINAL } = require('./codex-native-runtime');
 const BACKEND = 'acp';
 
+// Output tokens for the turn speed. DSH and ZCode return them with the prompt
+// result. Qwen does not; its own usage log in the isolated home records each
+// call's output and API duration, which is exactly the generation time.
+function acpTurnUsage(options, threadId, nativeResult, startedAt, completedAt) {
+  const reported = nativeResult?.usage;
+  if (Number.isSafeInteger(reported?.outputTokens) && reported.outputTokens >= 0)
+    return { hubUsage: { input_tokens: Number.isSafeInteger(reported.inputTokens) ? reported.inputTokens : 0,
+      output_tokens: reported.outputTokens } };
+  if (options.kind !== 'qwen' || !options.home || !threadId) return {};
+  let inputTokens = 0, outputTokens = 0, activeMs = 0, calls = 0;
+  // Qwen names the log by local month.
+  const months = new Set([startedAt, completedAt].map(at => { const d = new Date(at);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`; }));
+  for (const month of months) {
+    let raw = '';
+    try { raw = fs.readFileSync(path.join(options.home, '.qwen', 'usage', `token-usage-${month}.jsonl`), 'utf8'); } catch { continue; }
+    for (const line of raw.split('\n')) {
+      let row; try { row = JSON.parse(line); } catch { continue; }
+      const at = Date.parse(row.timestamp);
+      if (row.sessionId !== threadId || (row.source && row.source !== 'main') || !(at >= startedAt && at <= completedAt + 1000)) continue;
+      if (!Number.isSafeInteger(row.outputTokens) || !Number.isFinite(row.apiDurationMs)) return {};
+      inputTokens += Number.isSafeInteger(row.inputTokens) ? row.inputTokens : 0;
+      outputTokens += row.outputTokens; activeMs += row.apiDurationMs; calls++;
+    }
+  }
+  return calls ? { hubUsage: { input_tokens: inputTokens, output_tokens: outputTokens },
+    hubGeneration: { outputTokens, activeMs, calls, method: 'api-duration' } } : {};
+}
+
 class AcpSession extends EventEmitter {
   constructor(options) {
     super();
@@ -226,9 +255,13 @@ class AcpSession extends EventEmitter {
       if (!update.toolCallId) throw new Error('ACP 工具更新缺少 ID');
       const id = this.active.turnId + ':tool:' + update.toolCallId;
       const prior = this.items.get(id) || { id, type: 'acpTool', hubStartedAt: Date.now() };
+      const now = Date.now(), ended = ['completed', 'failed'].includes(update.status);
       this.items.set(id, { ...prior, ...update, id, type: 'acpTool',
         status: update.status === 'in_progress' || update.status === 'pending' ? 'inProgress' : update.status || prior.status,
-        result: update.content || prior.result, isError: update.status === 'failed' });
+        result: update.content || prior.result, isError: update.status === 'failed',
+        // Speed timing: a pending tool may still be streaming its arguments.
+        hubRunningAt: prior.hubRunningAt ?? (update.status === 'in_progress' ? now : ended ? prior.hubStartedAt : undefined),
+        ...(ended ? { hubCompletedAt: prior.hubCompletedAt ?? now } : {}) });
       if (update.sessionUpdate === 'tool_call') this.segment++;
       changedItem = this.items.get(id);
       this.backstage.item(this.active.turnId,changedItem,false);
@@ -395,7 +428,8 @@ class AcpSession extends EventEmitter {
     clearTimeout(active.cancelTimer);
     if (this.runtime.turnId !== active.turnId) this.apply({ type: 'started', threadId: this.threadId, turn: { id: active.turnId } });
     const completedAt = Date.now();
-    const turn = { ...this.history.get(active.turnId), status, items: [...this.items.values()], hubCompletedAt: completedAt, error };
+    const turn = { ...this.history.get(active.turnId), status, items: [...this.items.values()], hubCompletedAt: completedAt, error,
+      ...acpTurnUsage(this.options, this.threadId, nativeResult, active.at, completedAt) };
     this.history.set(active.turnId, turn);
     try { this.persist(); }
     catch (storageError) {
@@ -442,7 +476,7 @@ class AcpSession extends EventEmitter {
       .map(card => ({ ...card, source: BACKEND, kind: this.options.kind,
         ...(card.role==='assistant' ? (()=>{
           const turn=this.history.get(card.providerTurnId),context=turn?.contextUsage;
-          return {...(turn?.model ? {model:turn.model}:{}),...(context ? {usage:{context_tokens:context.used,context_window:context.size}}:{})};
+          return {...(turn?.model ? {model:turn.model}:{}),...(context ? {usage:{...card.usage,context_tokens:context.used,context_window:context.size}}:{})};
         })():{}),
         ...(card.toolCalls ? {toolCalls:card.toolCalls.map(tool=>({
           ...(options.toolPreviews && tool.input.type==='acpTool'
@@ -637,4 +671,4 @@ class AcpSession extends EventEmitter {
     }
   }
 }
-module.exports = { AcpSession, BACKEND };
+module.exports = { AcpSession, BACKEND, acpTurnUsage };

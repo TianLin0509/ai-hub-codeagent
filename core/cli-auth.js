@@ -41,12 +41,10 @@ function cliAuthStatus({ env = process.env, config = {}, now = Date.now() } = {}
     state: claudeFile?.__unreadable ? 'unreadable' : !creds ? 'missing' : creds.refreshToken && (!refreshUntil || refreshUntil > now) ? 'authorized' : 'expired',
     ...(refreshUntil ? { expiresAt: refreshUntil } : {}),
   });
-  const gemini = readJson(path.join(home, '.gemini', 'oauth_creds.json'));
   out.push({
-    id: 'gemini', kind: 'gemini', name: 'Gemini CLI', site: 'google',
-    account: readJson(path.join(home, '.gemini', 'google_accounts.json'))?.active || '',
-    // The access token expires hourly by design; the refresh token is what keeps it signed in.
-    state: gemini?.__unreadable ? 'unreadable' : gemini?.refresh_token ? 'authorized' : gemini ? 'expired' : 'missing',
+    id: 'gemini', kind: 'gemini', name: 'Antigravity CLI', site: 'google', account: '',
+    // agy owns its credential storage. Old Gemini OAuth is not login evidence.
+    state: 'unknown',
   });
   const kimi = readJson(path.join(env.KIMI_CODE_HOME || path.join(home, '.kimi-code'), 'credentials', 'kimi-code.json'));
   out.push({ id: 'kimi', kind: 'kimi', name: 'Kimi Code', site: 'kimi', account: '', state: kimi?.__unreadable ? 'unreadable' : kimi?.refresh_token ? 'authorized' : kimi ? 'expired' : 'missing' });

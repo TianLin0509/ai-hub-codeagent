@@ -4188,11 +4188,7 @@ function measureFloatingBarVisualHeight(bar) {
   return Math.ceil(Math.max(0, bottom - top));
 }
 
-// 「消息没提交」必须看得见（2026-09-03）。
-//   闭环发送已经把静默卡死的概率压到很低，但只要还有残余概率，就不能让它无声无息 ——
-//   用户上一次的体验就是"以为发出去了，几十秒后才发现 AI 根本没动"。
-//   这里不自动重发：能否安全重发取决于原文还在不在 CLI 输入框里，
-//   那个判断在主进程的 resendCurrentPrompt 里做（含指纹比对），点按钮才触发。
+// Submission receipts remain internal; receipt uncertainty never creates a banner.
 const { beginPromptDelivery, applyPromptReceipt } = require('./prompt-delivery-state.js');
 const floatingPromptDeliveries = new Map();
 
@@ -4201,14 +4197,9 @@ function updateFloatingPromptReceipt(receipt) {
   const state = floatingPromptDeliveries.get(receipt.sessionId);
   if (!applyPromptReceipt(state, receipt)) return;
   paintNativePromptReceipts(receipt.sessionId);
-  if (state.status === 'content-mismatch' && !state.dismissed) notifyPromptContentMismatch(state);
   for (const bar of document.querySelectorAll('.floating-input-bar')) {
     if (bar.dataset.sessionId !== receipt.sessionId) continue;
-    if (['confirmed', 'delivered', 'queued'].includes(state.status)) clearFloatingInputStuck(bar);
-    else if (!state.dismissed) {
-      if (state.status === 'content-mismatch') clearFloatingInputStuck(bar);
-      markFloatingInputStuck(bar, receipt.sessionId);
-    }
+    clearFloatingInputStuck(bar);
   }
 }
 
@@ -4247,67 +4238,10 @@ function clearFloatingInputStuck(bar) {
   if (existing) existing.remove();
 }
 
-// 当前项目规则要求未确认结果可见。补发绑定本次提交身份，由主进程
-// 核对回执和当前输入行；不能把上一轮运行或未知结果当作已经收到。
-function markFloatingInputStuck(bar, sessionId) {
-  const delivery = floatingPromptDeliveries.get(sessionId);
-  if (!bar || !delivery || delivery.dismissed || ['pending', 'confirmed', 'delivered', 'queued'].includes(delivery.status)) {
-    clearFloatingInputStuck(bar); return;
-  }
-  let row = bar.querySelector('.fi-stuck');
-  if (row?.dataset.submissionId !== delivery.clientSubmissionId) { clearFloatingInputStuck(bar); row = null; }
-  if (!row) {
-    row = document.createElement('div'); row.className = 'fi-stuck';
-    row.dataset.submissionId = delivery.clientSubmissionId;
-    const label = document.createElement('span'); label.className = 'fi-stuck-label';
-    const resend = document.createElement('button'); resend.type = 'button';
-    resend.className = 'fi-stuck-resend'; resend.textContent = '补发';
-    resend.title = '先核对本次接收回执和 CLI 输入行，再决定是否补回车';
-    resend.addEventListener('click', async (event) => {
-      event.stopPropagation();
-      if (floatingPromptDeliveries.get(sessionId) !== delivery || delivery.status === 'content-mismatch' || row.dataset.busy === 'true') return;
-      row.dataset.busy = 'true';
-      resend.disabled = true; resend.textContent = '核对中…';
-      try {
-        const result = await ipcRenderer.invoke('session:resend-prompt', { sessionId, clientSubmissionId: delivery.clientSubmissionId });
-        if (floatingPromptDeliveries.get(sessionId) !== delivery) return;
-        if (result?.receipt) updateFloatingPromptReceipt(result.receipt);
-        if (delivery.status === 'confirmed' || result?.mode === 'already-submitted') { clearFloatingInputStuck(bar); return; }
-        if (row.isConnected) label.textContent = result?.message || '仍未确认，请到后台核对是否收到；未重复发送正文';
-      } catch (error) {
-        if (row.isConnected) label.textContent = '核对未完成，请到后台查看是否收到';
-      } finally {
-        delete row.dataset.busy;
-        if (row.isConnected) { resend.textContent = '补发'; resend.disabled = delivery.status === 'content-mismatch' || isNativeAgent(sessions.get(sessionId)); }
-      }
-    });
-    const dismiss = document.createElement('button'); dismiss.type = 'button';
-    dismiss.className = 'fi-stuck-dismiss'; dismiss.textContent = '忽略';
-    dismiss.addEventListener('click', (event) => {
-      event.stopPropagation(); delivery.dismissed = true;
-      for (const other of document.querySelectorAll('.floating-input-bar')) if (other.dataset.sessionId === sessionId) clearFloatingInputStuck(other);
-    });
-    row.append(label, resend, dismiss);
-    const stack = bar.querySelector('.fi-content-stack') || bar;
-    stack.insertBefore(row, stack.firstChild);
-  }
-  row.querySelector('.fi-stuck-label').textContent = delivery.status === 'content-mismatch'
-    ? '接收内容与原文的换行或空白不同，请到后台核对'
-    : '暂未确认 agent 收到消息，请核对后台或点击补发';
-  row.querySelector('.fi-stuck-resend').disabled = row.dataset.busy === 'true' || delivery.status === 'content-mismatch' || isNativeAgent(sessions.get(sessionId));
-}
-
-// 明确失败还要归还原文并解释原因，不能仅显示未确认状态。
 function reportFloatingSendFailure(sessionId, inputBox, text, reason) {
   const restored = !!inputBox && !readContenteditablePlainText(inputBox) && !!text;
   if (restored) { replaceContenteditableText(inputBox, text); saveFloatingInputDraft(sessionId, inputBox); }
   showToast(`发送失败：${reason}。${restored ? '原文已放回输入框；' : ''}请先在终端核对是否已收到，再决定是否重发`, 'error');
-}
-
-function notifyPromptContentMismatch(delivery) {
-  if (!delivery || delivery._mismatchNotified) return;
-  delivery._mismatchNotified = true;
-  showToast('终端收到的内容与原文在换行或空白上不一致，请在终端核对；不会自动补发', 'error');
 }
 
 function lockFloatingInputBarGeometry(bar) {
@@ -5229,10 +5163,8 @@ function mountFloatingInput(sessionId, termContainer, terminal, pane = {}) {
       if (result?.receipt) updateFloatingPromptReceipt(result.receipt);
       if (delivery.status === 'confirmed' || delivery.status === 'content-mismatch') return;
       if (result && result.ok && result.sendStatus !== 'stuck') return;
-      if (result?.sendStatus === 'content-mismatch') { notifyPromptContentMismatch(delivery); return; }
-      // PTY 会话明确「未发送」（例如 CLI 启动选择框还挂着）：原文放回输入框、说明原因，
-      // 不亮「补发」——补发只会把同一段文字塞进同一个选择框。主进程的失败回执可能
-      // 比这里先到、已在本会话的各个输入栏亮起提示，这里一并清掉。
+      if (result?.sendStatus === 'content-mismatch') return;
+      // CLI 还不能接收输入时，恢复明确未发送的原文并说明原因。
       if (!result?.ok && result?.notSent && session?.agentRuntime === 'pty') {
         delivery.dismissed = true;
         updateFloatingPromptReceipt({ sessionId, clientSubmissionId, status: 'failed' });
@@ -5245,8 +5177,7 @@ function mountFloatingInput(sessionId, termContainer, terminal, pane = {}) {
       }
       const reason = result && result.ok ? 'no-ack' : (result && result.error) || 'send-failed';
       console.warn(`[floating-input] prompt not acknowledged for ${sessionId.slice(0, 8)}: ${reason}`);
-      // 明确「未发送」：先标成已处理，否则下面这条失败回执会在同一会话的所有输入栏
-      // （含分屏里的另一栏）点亮「补发」——没发出去的东西不存在补发。
+      // 明确未发送的结果单独处理，不当作送达未知。
       if (result?.notSent && (isNativeAgent(session) || session?.agentRuntime === 'pty')) delivery.dismissed = true;
       updateFloatingPromptReceipt({ sessionId, clientSubmissionId, status: result?.ok || result?.unconfirmed ? 'unconfirmed' : 'failed' });
       // PTY 会话也可能明确「未发送」（例如 CLI 启动选择框还挂着）：原文放回输入框，
@@ -5265,13 +5196,12 @@ function mountFloatingInput(sessionId, termContainer, terminal, pane = {}) {
           return;
         }
       }
-      // 明确的失败不能只显示未确认横幅：输入框在发送前已清空，
+      // 明确失败仍要告知：输入框在发送前已清空，
       // 这里说明原因并把原文放回（可能已部分写进终端，所以提示先核对，不自动重发）。
       if (!result?.ok && !result?.unconfirmed) {
         reportFloatingSendFailure(sessionId, inputBox, text, result?.message || result?.error || '发送失败');
         return;
       }
-      markFloatingInputStuck(bar, sessionId);
     }).catch((err) => {
       if (nativeCommand) {
         if (feedbackSequence === commandFeedbackSequence) commandFeedback.show(text.trim(), err.message || '命令提交失败', true);
@@ -5286,7 +5216,6 @@ function mountFloatingInput(sessionId, termContainer, terminal, pane = {}) {
       if (isNativeAgent(session)) showToast('发送未完成：' + err.message, 'error');
       else reportFloatingSendFailure(sessionId, inputBox, text, err && err.message || '发送通道异常');
       updateFloatingPromptReceipt({ sessionId, clientSubmissionId, status: 'failed' });
-      markFloatingInputStuck(bar, sessionId);
     });
   }
 
@@ -5395,10 +5324,6 @@ function mountFloatingInput(sessionId, termContainer, terminal, pane = {}) {
   bar.addEventListener('click', (e) => e.stopPropagation());
   bar.addEventListener('mousedown', (e) => e.stopPropagation());
 
-  const restoredDelivery = floatingPromptDeliveries.get(sessionId);
-  if (restoredDelivery && ['unconfirmed', 'failed', 'content-mismatch'].includes(restoredDelivery.status)) {
-    markFloatingInputStuck(bar, sessionId);
-  }
 
   return {
     dispose() {
@@ -8777,6 +8702,14 @@ ipcRenderer.on('session-created', async (_e, { session }) => {
     return;
   }
   if (session.purpose === 'hub-assistant') {
+    scheduleSessionListRender();
+    return;
+  }
+  // 手机拍图在后台创建或唤醒；只在用户已经选中它时切入，保留其他会话的输入。
+  if (session.purpose === 'hub-photo-assistant') {
+    if (wasDormant && activeSessionId === session.id) {
+      await selectSession(session.id, { forceScrollBottom: pendingResume?.forceScrollBottom === true });
+    }
     scheduleSessionListRender();
     return;
   }

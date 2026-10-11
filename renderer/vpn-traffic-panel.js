@@ -13,7 +13,8 @@ const RANGES = [
 const APP_LABELS = {
   'claude.exe': 'Claude Code',
   'codex.exe': 'Codex',
-  'gemini.exe': 'Gemini CLI',
+  'gemini.exe': 'Gemini CLI（旧）',
+  'agy.exe': 'Antigravity CLI',
   'kimi.exe': 'Kimi CLI',
   'chrome.exe': 'Chrome',
   'msedge.exe': 'Edge',

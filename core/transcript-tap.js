@@ -2146,7 +2146,7 @@ class TranscriptTap extends EventEmitter {
     super();
     this._claude = new ClaudeTap({ parserService: opts.parserService });
     this._codex = new CodexTap({ parserService: opts.parserService });
-    this._gemini = new GeminiTap();
+    this._gemini = new (require('./antigravity-tap').GoogleCliTap)(new GeminiTap());
     this._kimi = new KimiTap({ parserService: opts.parserService });
     for (const b of [this._claude, this._codex, this._gemini, this._kimi]) {
       b.on('turn-complete', (ev) => this.emit('turn-complete', ev));
@@ -2354,7 +2354,7 @@ class TranscriptTap extends EventEmitter {
       return this._claude;
     }
     if (isCodexCliKind(kind)) return this._codex;
-    if (kind === 'gemini') return this._gemini;
+    if (kind === 'gemini' || kind === 'gemini-resume') return this._gemini;
     if (isKimiCliKind(kind)) return this._kimi;
     return null;
   }

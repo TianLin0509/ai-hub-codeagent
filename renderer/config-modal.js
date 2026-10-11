@@ -28,8 +28,8 @@ function createConfigModalController({
       statusClass: 'subscription',
     },
     gemini: {
-      title: 'Gemini 设置',
-      hint: '使用当前本机 Gemini CLI 登录状态。代理设置会影响新建 Gemini 会话。',
+      title: 'Antigravity 设置',
+      hint: '使用 Google 订阅登录 Antigravity CLI。代理设置会影响新建 Antigravity 会话，输入 /usage 查看额度。',
       status: '订阅',
       statusClass: 'subscription',
     },

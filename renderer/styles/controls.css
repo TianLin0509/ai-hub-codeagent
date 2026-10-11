@@ -117,9 +117,7 @@
 .hub-new-instance:not(:disabled):active,
 .rail-usage-button:not(:disabled):active,
 .mp-btn:not(:disabled):active,
-.mp-tab:not(:disabled):active,
-.fi-stuck-resend:not(:disabled):active,
-.fi-stuck-dismiss:not(:disabled):active {
+.mp-tab:not(:disabled):active {
   transform: translateY(1px);
 }
 
@@ -154,9 +152,7 @@
 .hub-new-instance:focus-visible,
 .rail-usage-button:focus-visible,
 .mp-btn:focus-visible,
-.mp-tab:focus-visible,
-.fi-stuck-resend:focus-visible,
-.fi-stuck-dismiss:focus-visible {
+.mp-tab:focus-visible {
   outline: 2px solid var(--ctl-focus-ring);
   outline-offset: 2px;
 }
@@ -203,8 +199,8 @@
 }
 
 /* 注：仓库里没有任何地方写 data-busy，所以"正在办"用 cursor:wait 这条留给
-   真有状态源的时候再加。现有的两处（.fi-stuck-resend:disabled 与
-   .launch-split #btn-new:disabled）本来就是 wait，不在本层管辖范围，保持原样。 */
+   真有状态源的时候再加。.launch-split #btn-new:disabled 本来就是 wait，
+   不在本层管辖范围，保持原样。 */
 
 /* -------------------------------------------------------------------------
    5 · 数字：等宽数字位
@@ -245,8 +241,6 @@
   .rail-usage-button:not(:disabled):active,
   .mp-btn:not(:disabled):active,
   .mp-tab:not(:disabled):active,
-  .fi-stuck-resend:not(:disabled):active,
-  .fi-stuck-dismiss:not(:disabled):active,
   .composer-rail .floating-input-send:not(:disabled):active,
   .floating-input-send:not(:disabled):active,
   .mr-send-btn:not(:disabled):active {
