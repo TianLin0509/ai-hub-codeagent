@@ -15,7 +15,13 @@ function refresh(ipcRenderer) {
   return pending;
 }
 
-function isInstalled() { return installed === true; }
+// 只保留 CodeAgent 的发行版（公司纯净版）不必等检测结果，一律按「装了」处理默认值。
+const codeAgentOnly = (() => {
+  const { kindAllowed } = require('../core/distribution');
+  return kindAllowed('codeagent') && !kindAllowed('claude');
+})();
+
+function isInstalled() { return codeAgentOnly || installed === true; }
 
 function rememberKind(kind) {
   try { if (kind) localStorage.setItem(LAST_KIND_KEY, String(kind)); } catch {}

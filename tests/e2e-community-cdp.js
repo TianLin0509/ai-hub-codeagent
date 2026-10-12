@@ -78,9 +78,12 @@ async function main() {
     hub = await launchIsolatedHub({ dataDir: data, port: await freePort(), label: 'community', extraEnv: env,
       ...(packaged ? { executablePath: customExecutable || path.resolve('dist/win-unpacked/AI Hub Community.exe') } : {}) });
     cdp = await connectFirstPage(hub);
-    await until('document.querySelectorAll(".community-provider").length === 5', 'first-run provider detection');
-
     const marker = JSON.parse(fs.readFileSync(path.resolve('community-edition.json'), 'utf8'));
+    // 只保留部分 AI 的发行版（公司纯净版只留 CodeAgent）：首页只检测这些，会话流程改走下面的裁剪检查。
+    const kinds = Array.isArray(marker.kinds) && marker.kinds.length ? marker.kinds : null;
+    const providerCount = kinds ? require(path.resolve('core/community-setup')).PROVIDERS.filter(p => kinds.includes(p.id)).length : 5;
+    await until(`document.querySelectorAll(".community-provider").length === ${providerCount}`, 'first-run provider detection');
+
     let title = '';
     for (let i = 0; i < 20 && !title.includes('AI Hub Community'); i++) { title = windowTitle(hub.pid || hub.child?.pid); await sleep(250); }
     assert.match(title, new RegExp(`AI Hub Community v${marker.version.replace(/\./g, '\\.')}（上游 ${marker.upstreamVersion.replace(/\./g, '\\.')}）`), title);
@@ -88,7 +91,7 @@ async function main() {
 
     assert.equal(await cdp.eval('document.querySelectorAll("#btn-research,#btn-study,#study-panel,[data-action=sync-chatgpt],[data-action=sync-company],[data-kind=chatgpt]").length'), 0);
     assert.equal(await cdp.eval('document.querySelectorAll(".community-provider[data-installed=\\"1\\"]").length'), 0);
-    report.checks.push('Clean machine: five providers (incl. CodeAgent) reported as not installed; no private entry points on the page');
+    report.checks.push(`Clean machine: ${providerCount} providers reported as not installed; no private entry points on the page`);
     await shot('01-first-run');
 
     const settingsPath = path.join(home, '.claude', 'settings.json');
@@ -99,6 +102,24 @@ async function main() {
     assert.equal(settings.statusLine, undefined, 'no Node on PATH, so no status line is registered');
     report.checks.push('Hooks deployed as PowerShell commands (path with a space); global permission mode untouched; no Node-dependent status line');
 
+    if (kinds) {
+      await click('#home-create-session');
+      await until('document.querySelector("#new-session-submit")?.getBoundingClientRect().width > 0', 'new session form');
+      const offered = await cdp.eval('[...document.querySelectorAll(".new-session-option[data-kind]")].map(b => b.dataset.kind)');
+      assert.deepEqual(offered, kinds, 'launch center offers only the allowed kinds');
+      assert.equal(await cdp.eval(`!!document.querySelector('[data-launch-intent="resume"]')`), kinds.some(k => ['claude', 'codex', 'gemini', 'deepseek', 'kimi'].includes(k)));
+      if (marker.features && marker.features.quotaBar === false) assert.equal(await cdp.eval('!!document.getElementById("rail-usage")'), false, 'no quota strip');
+      if (marker.features && marker.features.accounts === false) assert.equal(await cdp.eval('document.getElementById("btn-rail-accounts").getBoundingClientRect().width'), 0, 'accounts entry hidden');
+      await click(`.new-session-option[data-kind="${kinds[0]}"]`);
+      await click('#new-session-submit');
+      await until('document.querySelector("#new-session-error")?.innerText.includes("未找到")', 'missing CLI message');
+      assert.equal(await cdp.eval('sessions.size'), 0);
+      await shot('02-trimmed-launch-center');
+      report.checks.push(`Launch center offers only ${kinds.join(', ')}; creating one without its CLI shows "未找到" and starts nothing; quota strip and accounts entry follow the edition switches`);
+      assert.ok(hub.log().some(line => line.includes('hook server listening')), 'hook listener must start');
+      report.passed = true;
+      return;
+    }
     // A missing CLI stays in the form with guidance and creates nothing.
     await click('#home-create-session');
     await until('document.querySelector("#new-session-submit")?.getBoundingClientRect().width > 0', 'new session form');

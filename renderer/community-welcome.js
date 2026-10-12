@@ -28,6 +28,8 @@
       + '<p id="community-advisory" class="community-setup-note" hidden></p>';
     host.append(section);
     section.querySelector('#community-accounts').onclick = () => document.getElementById('btn-rail-accounts')?.click();
+    // 没有账号页的发行版（公司纯净版）不显示这个按钮。
+    if (!require('../core/distribution').featureEnabled('accounts')) section.querySelector('#community-accounts').remove();
     section.querySelector('#community-guide').onclick = () => shell.openExternal(GUIDE);
     async function refresh() {
       const target = section.querySelector('#community-providers');

@@ -79,7 +79,10 @@ function probePowerShellPolicy(env = process.env) {
 function inspectSetup({ root = path.resolve(__dirname, '..'), env = process.env, platform = process.platform,
   version = process.versions.node, packaged = false, probePolicy = false, knownPolicy = undefined } = {}) {
   const electron = path.join(root, 'node_modules', 'electron', 'dist', platform === 'win32' ? 'electron.exe' : 'electron');
-  const providers = PROVIDERS.map(p => ({ ...p, installed: !!findCommand(p.command, env, platform), auth: 'not_checked' }));
+  // 只保留部分 AI 的发行版（公司纯净版只留 CodeAgent）只检查这些。
+  const { kindAllowed } = require('./distribution');
+  const providers = PROVIDERS.filter(p => kindAllowed(p.id))
+    .map(p => ({ ...p, installed: !!findCommand(p.command, env, platform), auth: 'not_checked' }));
   // CLI status hooks run through Windows PowerShell, so no Python or Node is needed for them.
   const requirements = {
     windows: platform === 'win32',
@@ -88,7 +91,7 @@ function inspectSetup({ root = path.resolve(__dirname, '..'), env = process.env,
     ...(packaged ? {} : { node22: Number(String(version).split('.')[0]) >= 22 }),
   };
   const advisories = [];
-  if (providers.find(p => p.id === 'claude').installed && platform === 'win32' && !findGitBash(env)) {
+  if (providers.find(p => p.id === 'claude')?.installed && platform === 'win32' && !findGitBash(env)) {
     advisories.push('Claude Code 在 Windows 上需要 Git for Windows（Git Bash）；未找到时 Claude 会话无法执行工具。');
   }
   const policy = knownPolicy !== undefined ? knownPolicy : probePolicy ? probePowerShellPolicy(env) : null;

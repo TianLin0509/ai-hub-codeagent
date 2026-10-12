@@ -332,16 +332,18 @@ function createKeyboardShortcuts({
         ? [{ label: '预览文件或路径', sub: 'Ctrl+O', run: () => openPreviewQuickOpen() }]
         : []),
       { label: '创建当前会话分支', sub: 'Ctrl+Shift+B', run: () => { void forkActiveSession(); } },
-      { label: '新建 Claude 会话', sub: 'new', run: () => createSession('claude') },
-      { label: '新建 Antigravity 会话', sub: 'new', run: () => createSession('gemini') },
-      { label: '新建 Codex 会话', sub: 'new', run: () => createSession('codex') },
-      { label: '新建 Kimi Code 会话', sub: 'new', run: () => createSession('kimi') },
-      { label: '新建 DeepSeek 会话', sub: 'new', run: () => createSession('deepseek') },
-      { label: '新建 PowerShell 终端', sub: 'new', run: () => createSession('powershell') },
+      { label: '新建 Claude 会话', sub: 'new', kind: 'claude', run: () => createSession('claude') },
+      { label: '新建 Antigravity 会话', sub: 'new', kind: 'gemini', run: () => createSession('gemini') },
+      { label: '新建 Codex 会话', sub: 'new', kind: 'codex', run: () => createSession('codex') },
+      { label: '新建 Kimi Code 会话', sub: 'new', kind: 'kimi', run: () => createSession('kimi') },
+      { label: '新建 DeepSeek 会话', sub: 'new', kind: 'deepseek', run: () => createSession('deepseek') },
+      { label: '新建 PowerShell 终端', sub: 'new', kind: 'powershell', run: () => createSession('powershell') },
+      // 只保留部分 AI 的发行版（公司纯净版只留 CodeAgent）补上它自己的入口；不允许的入口在下面滤掉。
+      ...(require('../core/distribution').allowedKinds ? [{ label: '新建 CodeAgent 会话', sub: 'new', kind: 'codeagent', run: () => createSession('codeagent') }] : []),
       { label: '切换侧栏', sub: 'cmd', run: () => toggleSidebar() },
       { label: '回到主界面', sub: 'cmd', run: () => escapeToHome() },
     ];
-    return actions;
+    return actions.filter(action => !action.kind || require('../core/distribution').kindAllowed(action.kind));
   }
 
   function _cmdkFuzzy(q, text) {

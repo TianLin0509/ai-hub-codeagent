@@ -1,6 +1,6 @@
 {
   "name": "ai-hub-community",
-  "version": "0.5.10",
+  "version": "1.0.0",
   "description": "Local multi-agent desktop workspace using your own AI accounts",
   "main": "main-bootstrap.js",
   "scripts": {
@@ -54,7 +54,8 @@
       "installerIcon": "claude-wx.ico",
       "uninstallerIcon": "claude-wx.ico",
       "createDesktopShortcut": true,
-      "artifactName": "AIHubCommunity-Setup-${version}.${ext}"
+      "artifactName": "AIHubCommunity-Setup-${version}.${ext}",
+      "differentialPackage": false
     },
     "files": [
       "main-bootstrap.js",
@@ -71,7 +72,9 @@
       "!node_modules/node-pty/src/**",
       "!node_modules/node-pty/scripts/**",
       "!node_modules/node-pty/typings/**",
-      "!node_modules/node-pty/binding.gyp"
+      "!node_modules/node-pty/binding.gyp",
+      "!node_modules/node-pty/prebuilds/darwin-*/**",
+      "!node_modules/node-pty/prebuilds/win32-arm64/**"
     ],
     "asarUnpack": [
       "core/claude-fast-settings.json",

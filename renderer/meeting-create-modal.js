@@ -6,7 +6,7 @@ const { checkDevWorkspace } = require('./dev-workspace-guard.js');
 const { KIND_LABELS, GROUP_MEMBER_KINDS } = require('../core/ai-kinds.js');
 const { MODEL_OPTIONS_BY_KIND, modelOptionsFor } = require('../core/model-options.js');
 
-const MODEL_KINDS = new Set(Object.keys(MODEL_OPTIONS_BY_KIND));
+const MODEL_KINDS = new Set(Object.keys(MODEL_OPTIONS_BY_KIND).filter(require('../core/distribution').kindAllowed));
 
 const DEFAULT_SLOTS = [
   { kind: 'claude' },
@@ -462,7 +462,7 @@ function _ensureModal() {
           ${_renderSceneChoices('dev')}
         </div>
         <div class="mcm-scene-hint" id="mcm-scene-hint" style="display:none; font-size:12px; color:#888; margin:-6px 0 12px; line-height:1.6;"></div>
-        <div class="mcm-orch-row" id="mcm-orch-row">
+        <div class="mcm-orch-row" id="mcm-orch-row"${ORCHESTRATOR_KINDS.some(require('../core/distribution').kindAllowed) ? '' : ' style="display:none"'}>
           <label class="mcm-orch-switch"><input type="checkbox" id="mcm-orch-toggle" role="switch"><span class="mcm-orch-track" aria-hidden="true"></span><strong>编排员</strong></label>
           <span class="mcm-orch-hint" id="mcm-orch-hint">打开后成员 1 当编排员：你只和它对话，它使用你选好的成员，自主分工、设计工作流并汇报进展；通过与否由审核位决定。</span>
           <div class="mcm-orch-options" id="mcm-orch-options" hidden>
@@ -473,7 +473,7 @@ function _ensureModal() {
         </div>
         <div class="mcm-member-caption">
           <strong>成员配置</strong>
-          <span>开发群聊第一位实现、第二位独立验证与合并。需要第三视角时再添加 DeepSeek。可继续加人，同一种 AI 也能多开。每位成员可独立选择模型、思考强度、速度与 MCP。</span>
+          <span>开发群聊第一位实现、第二位独立验证与合并。${require('../core/distribution').kindAllowed('deepseek') ? '需要第三视角时再添加 DeepSeek。' : ''}可继续加人，同一种 AI 也能多开。每位成员可独立选择模型、思考强度、速度与 MCP。</span>
         </div>
         <div class="mcm-slots"></div>
         <button type="button" class="mcm-add-member" id="mcm-add-member">+ 添加成员</button>

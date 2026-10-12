@@ -24,7 +24,9 @@ const ALL_AI_KINDS = ['claude', 'gemini', 'codex', 'deepseek', 'kimi', 'qwen', '
 // Offered by the group-creation and writing-member pickers.
 // 2026-10-12: Antigravity (gemini kind) rejoins as a full member: bracketed-paste
 // submit, PreInvocation/Stop hooks, pre-trusted folders and native branches.
-const GROUP_MEMBER_KINDS = ['claude', 'codex', 'deepseek', 'qwen', 'deepseek-acp', 'glm', 'codeagent', 'gemini'];
+// 发行目标只保留部分 AI 时（公司纯净版只留 CodeAgent），选成员时只列这些。
+const GROUP_MEMBER_KINDS = ['claude', 'codex', 'deepseek', 'qwen', 'deepseek-acp', 'glm', 'codeagent', 'gemini']
+  .filter(require('./distribution').kindAllowed);
 const WEB_STYLE_KINDS = [];
 // DeepSeek V4 Pro / Flash 原生支持 Responses API，并适配 Codex 0.144.0+。
 // 新 DeepSeek 会话因此也属于 Codex CLI runtime；老会话恢复时

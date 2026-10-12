@@ -1,5 +1,7 @@
 'use strict';
-const {ALL_AI_KINDS,getKindLabel}=require('../core/ai-kinds');
+// 只保留部分 AI 的发行版（公司纯净版）只按这些 AI 筛选和对比。
+const {getKindLabel}=require('../core/ai-kinds');
+const ALL_AI_KINDS=require('../core/ai-kinds').ALL_AI_KINDS.filter(require('../core/distribution').kindAllowed);
 const {coverage,related,isActive}=require('../core/capability-view-model');
 const {presentation,mcpSharing,ORIGINS}=require('../core/capability-presentation');
 const { SERVICES } = require('../core/tool-account-catalog');
@@ -57,7 +59,7 @@ function createCapabilityPanel({document,ipcRenderer,escapeHtml:esc,getActiveSes
     if(!r)return '<div class="cp-placeholder">'+svg('plugin')+'<h3>探索你的 AI 能力</h3><p>选择左侧条目，查看来源、覆盖范围和状态。</p></div>';
     const sources=r.sources || [];
     const deps = r.accountDependency;
-    const accountInfo = deps ? `<div class="cp-sharing-hint"><h4>账号与登录</h4><p>${esc(deps.services.map(id => SERVICES[id]?.name || id).join('、') || (deps.state === 'unknown' ? '账号依赖待核对' : '此工具本身无需额外登录'))}</p>${deps.services.length || deps.state === 'unknown' ? button('在账号页查看接入状态', 'data-cp-action="accounts"') : ''}<small>本机登记不等于授权有效；共享登录状态在账号页核对。</small></div>` : '';
+    const accountInfo = deps ? `<div class="cp-sharing-hint"><h4>账号与登录</h4><p>${esc(deps.services.map(id => SERVICES[id]?.name || id).join('、') || (deps.state === 'unknown' ? '账号依赖待核对' : '此工具本身无需额外登录'))}</p>${(deps.services.length || deps.state === 'unknown') && require('../core/distribution').featureEnabled('accounts') ? button('在账号页查看接入状态', 'data-cp-action="accounts"') : ''}<small>本机登记不等于授权有效；共享登录状态在账号页核对。</small></div>` : '';
     return `<div class="cp-detail-head"><span class="cp-glyph ${r.type}">${svg(r.type)}</span>${badge(TYPE_LABEL[r.type] || r.type)}${status(r)}${originBadge(r)}</div><h2>${esc(r.displayName||r.name)}</h2><p class="cp-description">${esc(r.summary || '尚无用途说明')}</p><p class="cp-caption">${esc(r.summarySource||'')}</p>
       ${tab!=='runtime'?`<div class="cp-origin-detail"><strong>${esc(r.origin?.label||'来源待确认')}</strong><p>${esc(r.origin?.evidence||'未提供来源信息')}</p>${noteForm(r)}</div><details class="cp-original"><summary>原始名称与说明</summary><code>${esc(r.name)}</code><p>${esc(r.description||'原条目未提供说明')}</p></details>${r.type==='mcp'?`<div class="cp-sharing-hint"><h4>${esc(mcpSharing(r).title)}</h4><p>${esc(mcpSharing(r).text)}</p><small>此处为共享建议，未向其他 AI 写入连接配置。</small></div>`:''}`:''}
       ${accountInfo}${r.conflict?'<div class="cp-notice warn">同名入口的正文不同。可能是专用适配，请核对后再统一。</div>':''}

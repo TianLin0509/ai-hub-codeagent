@@ -6509,9 +6509,11 @@ if (typeof document !== 'undefined') (function () {
     // 但不去重、不封顶：同一种 AI 可以加多个（两个 Claude 跑不同模型/角色是有效用法）。
     // 历史会议里的 Kimi 等成员继续可读可运行，只是不再从群聊入口新增；Antigravity 2026-10-12 起重新开放。
     const _CLI_SUFFIX = { claude: 'Claude Code', gemini: 'Antigravity CLI', codex: 'Codex CLI', deepseek: 'DeepSeek · Codex', kimi: 'Kimi Code' };
-    const availableKinds = meeting.groupChat
-      ? ['claude', 'codex', 'deepseek', 'qwen', 'deepseek-acp', 'glm', 'gemini']
-      : ALL_AI_KINDS;
+    // 只保留部分 AI 的发行版（公司纯净版只留 CodeAgent）：只列允许的；主仓库与公开版列表不变。
+    const { allowedKinds, kindAllowed } = require('../core/distribution');
+    const availableKinds = (meeting.groupChat
+      ? ['claude', 'codex', 'deepseek', 'qwen', 'deepseek-acp', 'glm', 'gemini', ...(allowedKinds ? ['codeagent'] : [])]
+      : ALL_AI_KINDS).filter(kindAllowed);
     const kinds = availableKinds.map(k => ({
       kind: k,
       label: _CLI_SUFFIX[k] || getKindLabel(k),

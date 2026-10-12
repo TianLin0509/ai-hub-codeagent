@@ -3,11 +3,16 @@
   "target": "company",
   "repo": "TianLin0509/ai-hub-codeagent",
   "features": {
-    "assistant": false
+    "assistant": false,
+    "quotaBar": false,
+    "accounts": false
   },
   "rulesChannel": "company",
-  "version": "0.5.10",
-  "upstreamVersion": "1.6.438",
-  "upstreamCommit": "9a009a19db1c59b91e444462e058aff8e31ef2b8",
+  "kinds": [
+    "codeagent"
+  ],
+  "version": "1.0.0",
+  "upstreamVersion": "1.6.440",
+  "upstreamCommit": "f16b2b9ba03a20bca7ff3206fc64bd3407d08e0a",
   "upstreamDirty": false
 }

@@ -73,7 +73,10 @@ test('native-only installs: detection, account check and login all start the sam
   for (const file of [codex, claude]) { fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, 'fixture'); }
   assert.equal(fs.existsSync(path.join(env.APPDATA, 'npm', 'codex.cmd')), false);
   const setup = inspectSetup({ root, env, platform: 'win32', packaged: true });
-  assert.ok(setup.providers.find(p => p.id === 'codex').installed);
+  // 只保留部分 AI 的发行版（公司纯净版只留 CodeAgent）首页不检测 Codex；账号适配器本身照旧。
+  const codexProvider = setup.providers.find(p => p.id === 'codex');
+  if (require('../core/distribution').kindAllowed('codex')) assert.ok(codexProvider.installed);
+  else assert.equal(codexProvider, undefined);
   assert.equal(requireCommand('codex', env), codex);
 
   const calls = [];
