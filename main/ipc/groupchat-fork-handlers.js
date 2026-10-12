@@ -25,8 +25,8 @@ const {
 } = require('../../core/session-capabilities.js');
 
 // 群聊入口开放的 runtime。与 renderer/meeting-room.js 的 showAddSubMenu 一致：
-// 历史群聊里的 Gemini/Kimi 成员继续可读可跑，只是不再从这里新增。
-const GROUP_FORKABLE_KINDS = new Set(['claude', 'codex', 'deepseek', 'qwen', 'deepseek-acp', 'glm']);
+// 历史群聊里的 Kimi 成员继续可读可跑，只是不再从这里新增；Antigravity 2026-10-12 起重新开放。
+const GROUP_FORKABLE_KINDS = new Set(['claude', 'codex', 'deepseek', 'qwen', 'deepseek-acp', 'glm', 'gemini']);
 
 function baseKind(kind) {
   return String(kind || '').replace(/-resume$/, '');

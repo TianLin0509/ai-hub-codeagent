@@ -4,9 +4,12 @@ function modelCommandType(kind, prompt) {
   if (isCodexCliKind(kind) && /^\s*\/model\s*$/i.test(prompt)) return 'codex-picker';
   // Code Agent 的 /model 是自己的选择界面，确认文案与 Claude 不同，不当成 Claude 的行内切换。
   if (isClaudeFamily(kind) && !isCodeAgentKind(kind) && /^\s*\/model\s+\S+\s*$/i.test(prompt)) return 'claude-inline';
+  if (/^gemini(?:-resume)?$/.test(String(kind || '')) && /^\s*\/model\s+\S+\s*$/i.test(prompt)) return 'agy-inline';
   return null;
 }
 function modelCommandAcknowledged(type, screen, freshOutput) {
+  // Only output produced after this Enter counts: an earlier switch leaves the same text on screen.
+  if (type === 'agy-inline') return /Model set to\s+\S/i.test(freshOutput);
   if (type === 'codex-picker') return /Select Model and Effort/i.test(screen)
     && /^\s*[›>]?\s*\d+\.\s+(?:gpt-|o\d|deepseek-v4-)/im.test(screen);
   return type === 'claude-inline' && (/(?:set model to|model changed|model switched|now using)/i.test(freshOutput)

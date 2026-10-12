@@ -1380,7 +1380,9 @@
     try {
       // 与群聊成员同一条准确性门：提交前等真实 Codex 模型目录并重新归一化，
       // 避免快速点击把 fallback 中该模型不支持的 effort 送进 PTY。
-      await loadModelCatalog(selectedKind);
+      // Antigravity 的清单只增加可选模型，默认模型始终有效；`agy models` 要起完整服务、
+      // 刷新登录（5–15 秒），创建会话不等它。
+      if (selectedKind !== 'gemini') await loadModelCatalog(selectedKind);
       paintTuning();
       if (workspaceMode === 'scratch') workspace = await createScratch('未命名任务');
       else if (workspaceMode === 'default') workspace = await createDefaultWorkspace('未命名任务');

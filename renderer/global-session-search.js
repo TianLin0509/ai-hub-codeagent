@@ -703,6 +703,7 @@ function createGlobalSessionSearch(options) {
       // Search can now be entered from the full-width writing workspace.
       // Reveal the existing preview only after its navigation succeeds.
       window.__writingHide?.();
+      window.__rulesHide?.();
       close({restoreFocus:false});
     }
   }

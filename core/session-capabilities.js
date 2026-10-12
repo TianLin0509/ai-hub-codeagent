@@ -71,6 +71,9 @@ function supportsForkSession(session) {
   if (!session || session.purpose === 'xresearch-research') return false;
   if (session.agentRuntime === 'pty' && sessionProviderFamily(session) === 'acp') return session.kind.replace(/-resume$/, '') === 'qwen';
   if (session.runtimeBackend === 'acp') return session.kind === 'qwen' || !!session.acpCapabilities?.sessionCapabilities?.fork;
+  // Antigravity clones its native conversation (core/antigravity-fork.js); old
+  // Gemini CLI history has no conversation store to clone.
+  if (sessionProviderFamily(session) === 'gemini') return require('./antigravity-config').isAntigravity(session);
   return ['claude', 'codex'].includes(sessionProviderFamily(session));
 }
 

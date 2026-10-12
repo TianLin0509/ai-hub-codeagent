@@ -192,6 +192,8 @@ const MODEL_SWITCH_STRATEGY_BY_KIND = Object.freeze({
   qwen: 'acp-native',
   'deepseek-acp': 'acp-native',
   glm: 'acp-native',
+  // agy 1.3.3: `/model <id>` switches in place and prints "Model set to <label>".
+  gemini: 'agy-inline',
 });
 
 function modelSwitchStrategy(kind) {

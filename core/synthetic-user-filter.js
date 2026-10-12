@@ -111,6 +111,7 @@ const INJECTED_BLOCKS = [
   /<plugins_instructions>[\s\S]*?<\/plugins_instructions>/gi,
   /<permissions instructions>[\s\S]*?<\/permissions instructions>/gi,
   /<ai-hub-workspace-rules\b[^>]*>[\s\S]*?<\/ai-hub-workspace-rules>/gi,
+  /<ai-hub-rules\b[^>]*>[\s\S]*?<\/ai-hub-rules>/gi,
   // Hub 附加的梦境索引：搜索和造梦素材都不收，否则下一轮造梦会读回自己的索引。
   /<ai-hub-dream-index\b[^>]*>[\s\S]*?<\/ai-hub-dream-index>/gi,
 ];

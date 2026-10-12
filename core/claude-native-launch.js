@@ -22,7 +22,16 @@ function buildClaudeNativeArgs(options) {
     if (!PERMISSIONS.has(options.permissionMode)) throw new Error('Unsupported Claude permission mode');
     args.push('--permission-mode', options.permissionMode);
   }
-  if (options.appendSystemPromptFile) args.push('--append-system-prompt-file', literal(options.appendSystemPromptFile, 'system prompt file'));
+  // systemPromptFile 换掉 Claude Code 自带的编程助手系统提示（写作成员用，见 core/writing/member-opts.js）
+  if (options.systemPromptFile) args.push('--system-prompt-file', literal(options.systemPromptFile, 'system prompt file'));
+  else if (options.appendSystemPromptFile) args.push('--append-system-prompt-file', literal(options.appendSystemPromptFile, 'system prompt file'));
+  if (options.disableSlashCommands === true) args.push('--disable-slash-commands');
+  // 浏览器扩展会往系统提示里加一段浏览器操作说明（2026-10-12 写作成员实测约 4100 字）
+  if (options.noChrome === true) args.push('--no-chrome');
+  if (Array.isArray(options.tools) && options.tools.length) {
+    if (options.tools.some(tool => !/^[A-Za-z][A-Za-z0-9_]*$/.test(String(tool)))) throw new Error('Invalid Claude tool name');
+    args.push('--tools', options.tools.join(','));
+  }
   if (options.settingsFile) args.push('--settings', literal(options.settingsFile, 'settings file'));
   if (options.mcpConfigPaths?.length) {
     args.push('--mcp-config', ...options.mcpConfigPaths.map(value => literal(value, 'MCP config path')));
@@ -85,7 +94,7 @@ function mergeClaudeSettingsFile(file, patch) {
 
 function claudeNativeResumeConfig(options) {
   const result = {};
-  for (const key of ['permissionMode', 'mcpConfigFile', 'appendSystemPromptFile', 'addDirs', 'settingSources']) {
+  for (const key of ['permissionMode', 'mcpConfigFile', 'appendSystemPromptFile', 'systemPromptFile', 'disableSlashCommands', 'claudeNoChrome', 'claudeTools', 'addDirs', 'settingSources']) {
     if (options[key] !== undefined) result[key] = Array.isArray(options[key]) ? [...options[key]] : options[key];
   }
   return result;

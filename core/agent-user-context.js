@@ -29,35 +29,40 @@ function writeAtomic(file, content) {
   try { fs.writeFileSync(tmp, content, {encoding:'utf8',flag:'wx'}); fs.renameSync(tmp,file); }
   finally { if (fs.existsSync(tmp)) fs.unlinkSync(tmp); }
 }
-function syncNativeUserContext({kind, nativeHome, env=process.env, dataDir}) {
+// instructions:false —— 只同步守卫 hooks，不写个人规则正文（写作成员的专用配置目录，见 core/writing/codex-writing-home.js）
+function syncNativeUserContext({kind, nativeHome, env=process.env, dataDir, instructions=true}) {
   const source = loadUserContext(env,dataDir);
   if (!source || !nativeHome) return null;
   if (env.CLAUDE_HUB_HOME_DIR && dataDir) {
     const relative=path.relative(path.dirname(path.resolve(dataDir)),path.resolve(nativeHome));
     if(relative==='..'||relative.startsWith('..'+path.sep)||path.isAbsolute(relative))throw new Error('原生规则目标超出隔离 Hub 目录，未同步');
   }
-  const filename = kind === 'claude' ? 'CLAUDE.md' : kind === 'gemini' ? 'GEMINI.md' : kind === 'qwen' ? 'QWEN.md' : 'AGENTS.md';
-  const file = path.join(nativeHome,filename), receipt = path.join(nativeHome,'.hub-user-context.json');
-  const old = fs.existsSync(file) ? fs.readFileSync(file,'utf8') : null;
-  if (old !== source.content) {
-    let previous;
-    try { previous = JSON.parse(fs.readFileSync(receipt,'utf8')); }
-    catch(e) { if(e.code !== 'ENOENT') throw e; }
-    // Adopt copies created by the user's explicit synchronization manifest.
-    if (!previous && old !== null) {
-      const manifest = path.join(source.home,'.agents','user-context-targets.json');
-      if(fs.existsSync(manifest)) {
-        const target = JSON.parse(fs.readFileSync(manifest,'utf8')).targets?.find(r=>path.resolve(r.path).toLowerCase()===path.resolve(file).toLowerCase());
-        if(target?.last_sha256) previous={digest:target.last_sha256};
+  let ruleFile=null;
+  if (instructions !== false) {
+    const filename = kind === 'claude' ? 'CLAUDE.md' : kind === 'gemini' ? 'GEMINI.md' : kind === 'qwen' ? 'QWEN.md' : 'AGENTS.md';
+    const file = path.join(nativeHome,filename), receipt = path.join(nativeHome,'.hub-user-context.json');
+    const old = fs.existsSync(file) ? fs.readFileSync(file,'utf8') : null;
+    if (old !== source.content) {
+      let previous;
+      try { previous = JSON.parse(fs.readFileSync(receipt,'utf8')); }
+      catch(e) { if(e.code !== 'ENOENT') throw e; }
+      // Adopt copies created by the user's explicit synchronization manifest.
+      if (!previous && old !== null) {
+        const manifest = path.join(source.home,'.agents','user-context-targets.json');
+        if(fs.existsSync(manifest)) {
+          const target = JSON.parse(fs.readFileSync(manifest,'utf8')).targets?.find(r=>path.resolve(r.path).toLowerCase()===path.resolve(file).toLowerCase());
+          if(target?.last_sha256) previous={digest:target.last_sha256};
+        }
       }
+      if (old !== null && hash(old) !== previous?.digest) throw new Error('个人规则存在独立修改，未覆盖：' + file);
+      if(fs.existsSync(file) && fs.lstatSync(file).isSymbolicLink()) throw new Error('个人规则为链接，未覆盖：'+file);
+      writeAtomic(file,source.content);
     }
-    if (old !== null && hash(old) !== previous?.digest) throw new Error('个人规则存在独立修改，未覆盖：' + file);
-    if(fs.existsSync(file) && fs.lstatSync(file).isSymbolicLink()) throw new Error('个人规则为链接，未覆盖：'+file);
-    writeAtomic(file,source.content);
+    const record={source:source.source,digest:source.digest};
+    const serialized=JSON.stringify(record,null,2)+'\n';
+    if(!fs.existsSync(receipt)||fs.readFileSync(receipt,'utf8')!==serialized) writeAtomic(receipt,serialized);
+    ruleFile=file;
   }
-  const record={source:source.source,digest:source.digest};
-  const serialized=JSON.stringify(record,null,2)+'\n';
-  if(!fs.existsSync(receipt)||fs.readFileSync(receipt,'utf8')!==serialized) writeAtomic(receipt,serialized);
   if(kind==='codex'){
     const policyHooks=readPolicy(env,dataDir)?.codexHooks;
     // PTY 模式下 Hub 自己的 hook 是 Codex 状态与卡片绑定的来源（codex-hook-integration）。
@@ -81,7 +86,7 @@ function syncNativeUserContext({kind, nativeHome, env=process.env, dataDir}) {
       if(!fs.existsSync(hookReceipt)||fs.readFileSync(hookReceipt,'utf8')!==saved)writeAtomic(hookReceipt,saved);
     }
   }
-  return {path:file,digest:source.digest};
+  return {path:ruleFile,digest:source.digest};
 }
 function readPolicy(env,dataDir) {
   const home=contextHome(env,dataDir);

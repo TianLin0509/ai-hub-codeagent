@@ -28,6 +28,8 @@ module.exports = Object.freeze({
   editionVersion: community ? String(marker.version || '') : null,
   upstreamVersion: community ? String(marker.upstreamVersion || '') : null,
   // 发行目标可以关掉个别功能（target.json 的 features，例如公司版关掉助理）；未列出的功能一律开启。
+  // 「规则」页的通用规则从哪个频道拉：公司版 target.json 写 company，其余都是 public。
+  rulesChannel: (marker && marker.rulesChannel) || 'public',
   featureEnabled: name => !(marker && marker.features && marker.features[name] === false),
   readMarker,
 });

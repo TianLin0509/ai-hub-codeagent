@@ -178,6 +178,11 @@ function terminalAcceptsModelCommand(screen, strategy) {
     const last = prompts[prompts.length - 1] || '';
     return /^›\s*Ask Codex to do anything\s*$/i.test(last);
   }
+  if (strategy === 'agy-inline') {
+    // agy draws its input row as `>` between two rules; earlier `> text` lines are echoes.
+    const prompts = lines.filter(line => line.startsWith('>'));
+    return /^>\s*$/.test(prompts[prompts.length - 1] || '');
+  }
   if (strategy === 'claude-inline') {
     const prompts = lines.filter(line => line.startsWith('❯'));
     const last = prompts[prompts.length - 1] || '';
@@ -325,6 +330,8 @@ function createModelUiController({
       menu.appendChild(settings);
     } else if (strategy === 'acp-native') {
       menuNote(menu,'阿里云套餐模型 · 选择后由原生 Harness 确认，再更新显示。');
+    } else if (strategy === 'agy-inline') {
+      menuNote(menu, '当前 Google 账号的 Antigravity 模型 · 在 CLI 内原地切换，收到“Model set to”回执后更新显示。');
     } else if (strategy === 'codex-picker') {
       const live = options.some(option => option.source === 'codex-app-server');
       menuNote(menu, `${live ? '当前账号实时目录' : 'Codex CLI 本地缓存'} · `
@@ -415,7 +422,7 @@ function createModelUiController({
   const commandScreens = new Map();
   const commandText = id => commandScreens.get(id)?.text() ?? getTerminalScreenText(id);
   async function beginCommandScreen(sessionId, session) {
-    if (!openCommandScreen || !['codex-picker','claude-inline'].includes(modelSwitchStrategy(session.kind))
+    if (!openCommandScreen || !['codex-picker','claude-inline','agy-inline'].includes(modelSwitchStrategy(session.kind))
         || ['codex-app-server','claude-stream-json','acp'].includes(session.runtimeBackend)) return;
     if (isSessionBusy(session)) throw new Error('当前回答仍在运行，请结束后再切换');
     const reader = await openCommandScreen(sessionId);
@@ -458,6 +465,17 @@ function createModelUiController({
     if (!result?.ok || result.notSent || result.sendStatus === 'stuck') {
       throw new Error(result?.message || 'CLI 尚未确认模型命令，请查看终端');
     }
+  }
+
+  async function switchAntigravityModel(sessionId, session, option) {
+    if (isSessionBusy(session)) throw new Error('当前回答仍在运行，请结束后再切换模型');
+    if (!terminalAcceptsModelCommand(commandText(sessionId), 'agy-inline')) {
+      throw new Error('Antigravity 输入框有未发送内容或当前不在主提示符；请先处理后再切换模型');
+    }
+    // session:send-prompt resolves only after agy printed a fresh "Model set to" line;
+    // a rejected model never prints it and comes back as stuck.
+    await submitSlashCommand(sessionId, `/model ${option.id}`, 'agy-inline');
+    return { modelId: option.id, displayName: option.label };
   }
 
   async function switchCodexModel(sessionId, session, option, { effortOverride = null } = {}) {
@@ -624,6 +642,8 @@ function createModelUiController({
           if(!r?.ok)throw new Error(r?.message || '原生 Harness 未确认模型');return r.result;})()
         : strategy === 'codex-picker'
         ? await switchCodexModel(sessionId, session, option)
+        : strategy === 'agy-inline'
+        ? await switchAntigravityModel(sessionId, session, option)
         : await switchClaudeModel(sessionId, session, option);
       const confirmed = await confirmSwitch(sessionId, switched);
       const model = confirmed.model || { id: switched.modelId, displayName: switched.displayName };

@@ -35,7 +35,7 @@ function createAccountAdapters({dataDir,homeDir=os.homedir(),env=process.env,run
  const cleanEnv={...env,PYTHONUTF8:'1',PYTHONIOENCODING:'utf-8'};
  for(const key of ['CLAUDECODE','ANTHROPIC_API_KEY','ANTHROPIC_AUTH_TOKEN','ANTHROPIC_BASE_URL','OPENAI_API_KEY','OPENAI_BASE_URL','CODEX_API_KEY'])delete cleanEnv[key];
  function external(){if(isolated)throw Error('隔离 Hub 不访问真实工具账号');}
- function cliEnv(row){const e={...cleanEnv};if(isolated&&row.home){const rel=path.relative(homeDir,path.resolve(row.home));if(rel.startsWith('..')||path.isAbsolute(rel))throw Error('隔离账号路径超出测试 home');}if(row.provider==='codex')e.CODEX_HOME=path.resolve(row.home);if(row.provider==='claude')e.CLAUDE_CONFIG_DIR=row.home;if(row.provider==='kimi')e.KIMI_CODE_HOME=row.home;if(isolated){e.HOME=homeDir;e.USERPROFILE=homeDir;e.BAILIAN_CONFIG_DIR=path.join(homeDir,'.bailian');}return e;}
+ function cliEnv(row){const e={...cleanEnv};if(isolated&&row.home){const rel=path.relative(homeDir,path.resolve(row.home));if(rel.startsWith('..')||path.isAbsolute(rel))throw Error('隔离账号路径超出测试 home');}if(row.provider==='codex')e.CODEX_HOME=path.resolve(row.home);if(row.provider==='claude')e.CLAUDE_CONFIG_DIR=row.home;if(row.provider==='kimi')e.KIMI_CODE_HOME=row.home;if(row.provider==='gemini')Object.assign(e,require('./antigravity-config').cliEnv(e,getConfig().proxy));if(isolated){e.HOME=homeDir;e.USERPROFILE=homeDir;e.BAILIAN_CONFIG_DIR=path.join(homeDir,'.bailian');}return e;}
  async function tool(tool,action,accountId){external();const root=tool==='images'?toolsRoot:bridgeRoot;if(!fs.existsSync(root))throw Error('原工具未安装');return jsonResult(await runImpl(python,[path.resolve(__dirname,'../scripts/account-tool-adapter.py'),tool,action,root,...(accountId?[accountId]:[])],cleanEnv,45000));}
  const imageAccounts=async()=>{
   const data=await tool('images','status');return (data.accounts||[]).map(a=>({id:a.id,loginGroup:a.login_group||a.id,enabled:!!a.enabled,workerAlive:Date.now()/1000-a.heartbeat<20,accountLabel:String(a.account_name||'').slice(0,80),
@@ -77,11 +77,12 @@ function createAccountAdapters({dataDir,homeDir=os.homedir(),env=process.env,run
   }
   if(row.provider==='gemini'){
    if(isolated&&!env.AI_HUB_ANTIGRAVITY_COMMAND)return {state:'unknown',message:'隔离 Hub 不读取真实 Antigravity 账号',source:'隔离保护'};
-   const e=cliEnv(row),r=await runImpl(require('./antigravity-config').resolveCommand(e),['models'],e,30000);
-   const output=r.stdout+'\n'+r.stderr;
-   if(r.code===0&&require('./antigravity-model-catalog').parseModels(r.stdout).length)return {state:'signed_in',message:'Antigravity 官方 CLI 已返回账号可用模型；当前剩余额度请在会话输入 /usage',source:'agy models'};
-   if(/please sign in|not signed in|sign in to view/i.test(output))return {state:'login_required',message:'请用 Google 账号完成 Antigravity 官方登录；旧 Gemini CLI 凭据不能证明这里已登录',source:'agy models'};
-   throw Error('Antigravity 状态检查失败，请在官方终端确认登录或网络');
+   // Every Antigravity launch checks this first. `agy models` boots a full server
+   // (5-15 s), so share the model-catalog call and its 10-minute cache.
+   const r=await require('./antigravity-model-catalog').readModelCatalog({env:cliEnv(row),runImpl});
+   if(r.ok)return {state:'signed_in',message:'Antigravity 官方 CLI 已返回账号可用模型；当前剩余额度请在会话输入 /usage',source:'agy models'};
+   if(r.loginRequired)return {state:'login_required',message:'请用 Google 账号完成 Antigravity 官方登录；旧 Gemini CLI 凭据不能证明这里已登录',source:'agy models'};
+   throw Error('Antigravity 状态检查失败，请在官方终端确认登录或网络：'+(r.error||'未知原因'));
   }
   if(row.provider==='token-plan'){
    const svc=require('../main/usage/token-plan-usage').createTokenPlanUsageService({env:cliEnv(row),...(isolated?{configDir:path.join(homeDir,'.bailian')}:{})});
@@ -104,7 +105,7 @@ function createAccountAdapters({dataDir,homeDir=os.homedir(),env=process.env,run
   if(row.provider==='codex'){if(isolated)throw Error('隔离 Hub 不打开真实 Codex 授权');return codexLogin.login(row,e);}
   else if(row.provider==='claude'){command=resolveClaudeExe(e);args=['auth','login'];}
   else if(row.provider==='kimi'){command='kimi.exe';args=['login'];}
-  else if(row.provider==='gemini'){command=require('./antigravity-config').resolveCommand(e);args=[];}
+  else if(row.provider==='gemini'){command=require('./antigravity-config').resolveCommand(e);args=[];require('./antigravity-model-catalog').resetModelCatalogCache();}
   else if(row.provider==='token-plan'){command='bl';args=['auth','login','--console'];}
   else if(row.provider==='feishu'){external();command=getConfig().notifications?.feishuCliPath||require('./completion-notifier').resolveDefaultFeishuCliPath(e);args=['auth','login'];}
   else throw Error('此连接没有登录入口');

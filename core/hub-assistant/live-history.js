@@ -19,6 +19,13 @@ function nativeId(meta){
 }
 function finalLineFilter(prefix,context){const e=inspectCodexEnvelope(prefix);if(e.recordType==='response_item'){if(!e.payloadType)return context.final?false:null;if(e.payloadType!=='message')return false;if(!e.role)return context.final?false:null;return e.role==='assistant';}return codexLineFilter(prefix,context,'turns');}
 function claudeHeaderMatches(file,identity){const fd=fs.openSync(file,'r');try{const buffer=Buffer.alloc(1024*1024),n=fs.readSync(fd,buffer,0,buffer.length,0);for(const line of buffer.subarray(0,n).toString('utf8').split('\n')){try{const row=JSON.parse(line);if(row.sessionId)return row.sessionId===identity;}catch{}}return false;}finally{fs.closeSync(fd);}}
+function claudeUserSubmission(row,identity){
+  // Claude emits image dimensions as a user-shaped, meta turn companion.
+  // It belongs to the current request, including when cold-scanning backwards.
+  if(row.sessionId!==identity||row.type!=='user'||row.isSidechain||row.isMeta||row.turnCompanion)return false;
+  const body=row.message?.content;
+  return typeof body==='string'||Array.isArray(body)&&body.some(c=>c.type==='text')&&!body.some(c=>c.type==='tool_result');
+}
 function readFinals(meta,{cursor=null,tailBytes=1024*1024,maxReadBytes=8*1024*1024,startOffset}={}){
   const identity=nativeId(meta),file=meta?.transcriptPath;
   const empty={available:false,records:[],identity,cursor};
@@ -30,6 +37,7 @@ function readFinals(meta,{cursor=null,tailBytes=1024*1024,maxReadBytes=8*1024*10
   if(cursor&&(cursor.identity!==identity||cursor.path!==file||cursor.offset>stat.size))return{...empty,issue:'绑定或文件发生变化，关注游标需核对'};
   const start=cursor?.offset??startOffset??Math.max(0,stat.size-tailBytes),end=Math.min(stat.size,start+maxReadBytes);
   let turnId=cursor?.turnId||null,clientSubmissionId=cursor?.clientSubmissionId||null,claudeIdentitySeen=false,lastFilter=null;const finals=[];
+  let clientSubmissionIds=cursor?.clientSubmissionIds?.slice()||(clientSubmissionId?[clientSubmissionId]:[]);
   const scanner=new JsonlByteScanner(row=>{
     const p=row.payload||{};
     if(meta.kind==='codex'){
@@ -45,17 +53,24 @@ function readFinals(meta,{cursor=null,tailBytes=1024*1024,maxReadBytes=8*1024*10
       }
     }else{
       if(row.sessionId===identity)claudeIdentitySeen=true;
-      if(row.sessionId===identity&&row.type==='user'&&!row.isSidechain){
+      if(claudeUserSubmission(row,identity)){
         const body=row.message?.content;
         const blocks=Array.isArray(body)?body:[];
         if(typeof body==='string'||blocks.some(c=>c.type==='text')&&!blocks.some(c=>c.type==='tool_result')){
           const text=typeof body==='string'?body:blocks.filter(c=>c.type==='text').map(c=>c.text||'').join('\n');
           clientSubmissionId=require('../assistant-context-display').assistantContextDisplay(text,'hub-assistant')?.clientSubmissionId||null;
+          clientSubmissionIds=clientSubmissionId?[clientSubmissionId]:[];
         }
+      }
+      // Actual Claude 2.1.296 mid-turn delivery is a queued_command attachment,
+      // not another user row. Enqueue records alone are not delivery evidence.
+      if(row.sessionId===identity&&!row.isSidechain&&row.type==='attachment'&&row.attachment?.type==='queued_command'){
+        const id=require('../assistant-context-display').assistantContextDisplay(row.attachment.prompt,'hub-assistant')?.clientSubmissionId;
+        if(id&&!clientSubmissionIds.includes(id))clientSubmissionIds.push(id);
       }
       if(row.sessionId!==identity||row.type!=='assistant'||row.isSidechain||row.message?.stop_reason!=='end_turn')return;
       const text=(row.message.content||[]).filter(c=>c.type==='text').map(c=>c.text||'').join('\n').trim();
-      if(text)finals.push({turnId:row.message.id||row.uuid,messageId:row.uuid||row.message.id,text,timestamp:Date.parse(row.timestamp)||null,recordType:'assistant_end_turn',clientSubmissionId});
+      if(text)finals.push({turnId:row.message.id||row.uuid,messageId:row.uuid||row.message.id,text,timestamp:Date.parse(row.timestamp)||null,recordType:'assistant_end_turn',clientSubmissionId,clientSubmissionIds:clientSubmissionIds.slice()});
     }
   },{startOffset:start,discardLeadingPartialLine:cursor?.skipPartial||!cursor&&startOffset==null&&start>0,lineFilter:meta.kind==='codex'?(prefix,ctx)=>{const decision=finalLineFilter(prefix,ctx);lastFilter={index:ctx.lineIndex,decision};return decision;}:undefined});
   const fd=fs.openSync(file,'r');try{const buffer=Buffer.alloc(65536);for(let at=start;at<end;){const n=fs.readSync(fd,buffer,0,Math.min(buffer.length,end-at),at);if(!n)break;scanner.push(buffer.subarray(0,n));at+=n;}}finally{fs.closeSync(fd);}
@@ -69,27 +84,27 @@ function readFinals(meta,{cursor=null,tailBytes=1024*1024,maxReadBytes=8*1024*10
   for(const entry of finals){const key=hash(JSON.stringify([identity,entry.turnId||entry.messageId,entry.text]));if(seen.has(key))continue;seen.add(key);
     records.push({...entry,ref:'E'+key.slice(0,16),id:key,notificationKey:hash(JSON.stringify([identity,entry.turnId||entry.messageId])),sessionId:meta.id||meta.hubId,title:meta.title||meta.name||'未命名会话',provider:meta.kind,nativeSessionId:identity,transcriptPath:file,role:'assistant',sourceType:'bound-native-final',evidenceMeaning:'目标助手的最新原文自述，业务结果是否验收需另行核实'});
   }
-  return{available:true,identity,records,cursor:{identity,path:file,offset:skipPartial?end:stats.safeOffset,turnId,clientSubmissionId,skipPartial},truncated:start>0&&!cursor||end<stat.size,backlog:end<stat.size,observedAt:Date.now()};
+  return{available:true,identity,records,cursor:{identity,path:file,offset:skipPartial?end:stats.safeOffset,turnId,clientSubmissionId,clientSubmissionIds,skipPartial},truncated:start>0&&!cursor||end<stat.size,backlog:end<stat.size,observedAt:Date.now()};
 }
 // Locate complete record boundaries backwards using fixed byte blocks. Large
 // tool bodies are not decoded: only their JSON prefix is inspected. Once the
 // latest final is found, include its preceding task_started so its native turn
 // identity is the same after a cold restart as during incremental reading.
 function coldFinalStart(meta,size){
-  const fd=fs.openSync(meta.transcriptPath,'r'),block=Buffer.alloc(65536);let lineEnd=null,found=null;
+  const fd=fs.openSync(meta.transcriptPath,'r'),block=Buffer.alloc(65536);let lineEnd=null,found=null,pendingStart=null;
   const inspect=(start,end)=>{
     const prefix=Buffer.alloc(Math.min(65536,end-start));fs.readSync(fd,prefix,0,prefix.length,start);const text=prefix.toString('utf8');
     const envelope=meta.kind==='codex'?inspectCodexEnvelope(text):null;
     if(found!=null&&envelope?.recordType==='event_msg'&&envelope.payloadType==='task_started')return start;
-    if(found!=null){
-      if(meta.kind==='claude'&&/"type"\s*:\s*"user"/.test(text)){
-        const bytes=Buffer.alloc(end-start);fs.readSync(fd,bytes,0,bytes.length,start);
-        try{const row=JSON.parse(bytes.toString('utf8')),c=row.message?.content;
-          if(row.sessionId===nativeId(meta)&&!row.isSidechain&&(typeof c==='string'||Array.isArray(c)&&c.some(b=>b.type==='text')&&!c.some(b=>b.type==='tool_result')))return start;
-        }catch{}
-      }
-      return null;
+    // A cold reader can attach while Claude is still working, before any final.
+    // Recover that turn's initial prompt as well as its mid-turn attachments.
+    if(meta.kind==='claude'&&/"type"\s*:\s*"user"/.test(text)){
+      const bytes=Buffer.alloc(end-start);fs.readSync(fd,bytes,0,bytes.length,start);
+      try{const row=JSON.parse(bytes.toString('utf8'));
+        if(claudeUserSubmission(row,nativeId(meta))){if(found!=null)return start;pendingStart??=start;}
+      }catch{}
     }
+    if(found!=null)return null;
     const candidate=meta.kind==='codex'
       ?envelope?.recordType==='response_item'&&envelope.payloadType==='message'&&envelope.role==='assistant'||envelope?.recordType==='event_msg'&&envelope.payloadType==='item_completed'&&/agentmessage/i.test(String(envelope.itemType||'').replace(/_/g,''))
       :/"type"\s*:\s*"assistant"/.test(text);
@@ -107,7 +122,7 @@ function coldFinalStart(meta,size){
       end=start;
     }
     if(lineEnd>0){const answer=inspect(0,lineEnd);if(answer!=null)return answer;}
-    return found;
+    return found??pendingStart;
   }finally{fs.closeSync(fd);}
 }
 class LiveHistory{

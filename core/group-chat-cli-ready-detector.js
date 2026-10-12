@@ -49,10 +49,14 @@ const MARKERS = {
 const CHOICE_DIALOG_BLOCKERS = [/press enter to confirm/i, /Use ↑\/↓ to move/i, /Enter to confirm\s*[·|]\s*Esc to\b/i];
 
 // Code Agent 的选择框底栏是 "Select ↑ ↓ | Confirm Enter | 退出 Esc"；未带 --disable-update 时启动即弹「版本更新提醒」。
+// agy 1.3.3 first-run onboarding (color scheme, then Terms & data use). Answering it
+// is the user's choice; Hub must report it instead of waiting for an input frame.
+const AGY_DIALOG_BLOCKERS = [/Choose your color scheme/i, /Terms of Service & Data Use/i];
+
 const CODEAGENT_DIALOG_BLOCKERS = [/版本更新提醒/, /Quick safety check/i, /Confirm Enter\s*\|/i];
 
 const BLOCKERS = {
-  gemini: [/not signed in/i, /Select login method/i, /sign in to continue/i, /Do you trust the contents of this project/i, /esc to dismiss/i, ...CHOICE_DIALOG_BLOCKERS],
+  gemini: [/not signed in/i, /Select login method/i, /sign in to continue/i, /Do you trust the contents of this project/i, /esc to dismiss/i, ...AGY_DIALOG_BLOCKERS, ...CHOICE_DIALOG_BLOCKERS],
   claude: [...CHOICE_DIALOG_BLOCKERS],
   codeagent: [...CODEAGENT_DIALOG_BLOCKERS, ...CHOICE_DIALOG_BLOCKERS],
   codex: [/Do you trust the contents of this directory/i, /Booting MCP server/i, /esc to interrupt/i, ...CHOICE_DIALOG_BLOCKERS],
@@ -72,7 +76,10 @@ const BLOCKERS = {
 // 其余阻断词（Kimi 未登录、Codex 的信任弹窗）是**终态**：它们不会自己好，
 // 而且登录页上本来就同时渲染着状态栏 marker —— 用「谁更新」判会直接放行，所以不许过期。
 const STALEABLE_BLOCKERS = {
-  gemini: [/Do you trust the contents of this project/i, /esc to dismiss/i, ...CHOICE_DIALOG_BLOCKERS],
+  // agy 1.3.3 prints "You are currently not signed in. ⣷ Signing in..." on every
+  // launch while it refreshes the hourly token, then draws the input frame. A real
+  // logout ends on "Select login method" / "sign in to continue", which stay absolute.
+  gemini: [/not signed in/i, /Do you trust the contents of this project/i, /esc to dismiss/i, ...AGY_DIALOG_BLOCKERS, ...CHOICE_DIALOG_BLOCKERS],
   // 选择框答完就消失：之后出现的输入行标记说明它已被新画面盖掉。
   claude: [...CHOICE_DIALOG_BLOCKERS],
   codeagent: [...CODEAGENT_DIALOG_BLOCKERS, ...CHOICE_DIALOG_BLOCKERS],
@@ -175,7 +182,8 @@ function isReady(sessionId, kind, buf, options = {}) {
 function isChoiceDialogVisible(kind, buf) {
   const text = terminalText(buf);
   const dialogAt = _lastMatchIndex(text, kind === 'codeagent'
-    ? [...CODEAGENT_DIALOG_BLOCKERS, ...CHOICE_DIALOG_BLOCKERS] : CHOICE_DIALOG_BLOCKERS);
+    ? [...CODEAGENT_DIALOG_BLOCKERS, ...CHOICE_DIALOG_BLOCKERS]
+    : kind === 'gemini' ? [/Do you trust the contents of this project/i, ...AGY_DIALOG_BLOCKERS, ...CHOICE_DIALOG_BLOCKERS] : CHOICE_DIALOG_BLOCKERS);
   if (dialogAt < 0) return false;
   const need = MARKERS[kind] || [];
   return !(_lastIncludesIndex(text, need) > dialogAt);

@@ -2,7 +2,7 @@
 const {randomUUID}=require('node:crypto');
 const fs=require('node:fs'),path=require('node:path');
 const PURPOSE='hub-photo-assistant',KEY='photoAssistant';
-const ROLE='你是用户的拍图助理。读取本轮照片，按用户要求看图、解题或解释。用中文先给结论，再讲清关键步骤，回答适合眼镜语音朗读。题干、符号或图像看不清时明确指出需要重拍的位置，不猜测缺失内容。新照片按当前内容处理；用户明确追问时衔接本会话前文。';
+const ROLE='你是用户的拍图助理。读取本轮照片，按用户要求看图、解题或解释。每道题控制在100字以内，先说“答案是XX，置信度XX%”，再给简短理由与资料出处，适合眼镜朗读。工作中收到新照片时继续逐题处理，合并回答时按照片先后逐题列出并点明题目。题干、符号或图像看不清时明确指出需要重拍的位置，不猜测缺失内容。新照片按当前内容处理；用户明确追问时衔接本会话前文。';
 function isPhotoRequest(row){return typeof row?.shared==='string'&&/^\d{6}-capture-[0-9a-f-]{36}\.jpg$/i.test(row.shared);}
 class PhotoAssistant{
  constructor(assistant){this.a=assistant;this.creating=null;}
@@ -43,7 +43,6 @@ class PhotoAssistant{
  }
  async send(request){
   const ready=await this.ensureSession();
-  if(this.a.sessionBusy(ready.sessionId))throw Object.assign(Error('拍图助理正在处理上一张照片，请稍候'),{notSent:true});
   const receipt=await this.a.deps.sendPrompt(ready.sessionId,request.text,request.requestId||randomUUID());
   return{ok:receipt?.ok!==false,sessionId:ready.sessionId,receipt};
  }

@@ -20,11 +20,23 @@ function parserForKind(kind) {
   throw new Error(`Unsupported transcript parser kind: ${kind}`);
 }
 
+// The agy parser also reads transcript_full.jsonl and the Hub completion receipt
+// written at Stop. Without them in the key, a cached turn stays "in progress".
+function antigravitySiblingSignature(kind, transcriptPath) {
+  if (kind !== 'gemini') return '';
+  const match = /[\\/]antigravity-cli[\\/]brain[\\/]([^\\/]+)[\\/]/i.exec(transcriptPath);
+  if (!match) return '';
+  const agy = require('./antigravity-config.js');
+  const sig = file => { try { const st = fs.statSync(file); return `${st.size}:${st.mtimeMs}`; } catch { return 'missing'; } };
+  return '|' + sig(require('node:path').join(require('node:path').dirname(transcriptPath), 'transcript_full.jsonl'))
+    + '|' + (agy.UUID.test(match[1]) ? sig(agy.receiptsFile(match[1])) : 'none');
+}
+
 function parseTask(message) {
   const { id, kind, transcriptPath, opts = {} } = message || {};
   if (!id || !transcriptPath) throw new Error('Invalid transcript worker request');
   const stat = fs.statSync(transcriptPath);
-  const signature = `${stat.size}:${stat.mtimeMs}`;
+  const signature = `${stat.size}:${stat.mtimeMs}` + antigravitySiblingSignature(kind, transcriptPath);
   const key = `${kind}\0${transcriptPath}`;
   const cached = cache.get(key,signature,opts);
   if (cached) {

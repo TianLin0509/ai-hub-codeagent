@@ -81,7 +81,9 @@ class AcpSession extends EventEmitter {
   }
   loadHistory() {
     const saved = this.historyStore()?.read(saved => {
-      if (saved.backend !== BACKEND || saved.kind !== this.options.kind || saved.profileId !== this.options.profileId
+      // 套餐线路与 DeepSeek 备用线路是同一个会话换计费来源，视为同一配置域（core/token-plan-fallback.js）。
+      if (saved.backend !== BACKEND || saved.kind !== this.options.kind
+          || !require('./token-plan-fallback').sameProfileDomain(saved.profileId, this.options.profileId)
           || path.resolve(saved.cwd) !== path.resolve(this.options.cwd)) throw new Error('ACP 历史配置域不匹配');
     });
     if (!saved) return;
@@ -174,8 +176,20 @@ class AcpSession extends EventEmitter {
         this.apply({ type: 'submission', submission: { ...submission, status: 'unknown', error: '进程中断前轮次无终态，请核对原生会话' } });
       }
       if (this.options.model) await this.configure({ model: this.options.model, effort: this.options.effort }, true);
+      // DSH 恢复会话时，提问用的是会话里「上次选定」的模型，只有设思考强度才会改写这条记录；
+      // 换了计费线路（Token Plan ↔ DeepSeek API）后旧模型名在新线路上不存在，所以按新线路的模型补设一次思考强度。
+      if (resumeId && this.options.kind === 'deepseek-acp' && this.saved?.profileId && this.saved.profileId !== this.options.profileId) {
+        const thought = this.configOptions.find(o => o.category === 'thought_level');
+        const offered = (thought?.options || []).flatMap(o => o.options || [o]).map(o => o.value);
+        const effort = offered.includes(this.options.effort) ? this.options.effort : offered.includes('high') ? 'high' : offered[0];
+        if (effort) await this.configure({ effort }, true);
+      }
       if(resumeId)for(const saved of this.saved?.configOptions || []) {
-        if(saved.category==='thought_level' || (saved.category==='mode' && this.options.permissionPolicy!=='bypass'))await this.configure({configId:saved.id,value:saved.currentValue},true);
+        if(!(saved.category==='thought_level' || (saved.category==='mode' && this.options.permissionPolicy!=='bypass')))continue;
+        // 换线路后（如 Token Plan → DeepSeek API）原档位可能不再提供：跳过并记一笔，不让旧档位卡住整个会话。
+        const offered=this.configOptions.find(o=>o.id===saved.id)?.options?.flatMap(o=>o.options || [o]).some(o=>o.value===saved.currentValue);
+        if(saved.category==='thought_level' && !offered){this.backstage.note(this.label,'未恢复思考强度 '+saved.currentValue+'：当前线路不提供');continue;}
+        await this.configure({configId:saved.id,value:saved.currentValue},true);
       }
       if ((!resumeId || this.options.permissionPolicy==='bypass') && this.options.defaultMode) {
         const mode=this.configOptions.find(o=>o.category==='mode');
@@ -333,7 +347,11 @@ class AcpSession extends EventEmitter {
         return {ok:true,mode:'acp-command',sendStatus:'ok',commandOutput};
       }
       if(command==='quota')return {ok:true,mode:'acp-command',sendStatus:'ok',
-        commandOutput:'当前使用阿里云 Token Plan。套餐余量请到百炼控制台查看，Hub 尚未读取账单权益；不会调用其他供应商的额度接口。'};
+        commandOutput:require('./token-plan-fallback').isDeepSeekRouteProfile(this.options.profileId)
+          ? '阿里云百炼 Token Plan 额度已用完，本会话临时改用 DeepSeek API（按量计费）；额度重置后发下一条消息时自动切回套餐。'
+          : this.options.kind === 'deepseek-acp'
+            ? '当前使用阿里云百炼 Token Plan。套餐余量见侧栏用量；用完后本会话会自动改用 DeepSeek API（需在设置里配置 DeepSeek Key）。'
+            : '当前使用阿里云百炼 Token Plan。套餐余量见侧栏用量；用完后等重置，本会话不改走 API。'};
       if(command==='status' || command==='help') {
         const commandOutput=command==='status' ? `${this.options.kind} · ${this.currentModel}\n原生会话：${this.threadId}\n套餐：${this.options.profileId}`
           : '原生命令：'+(this.commands || []).map(c=>'/'+c.name+' '+(c.description || '')).join('\n');

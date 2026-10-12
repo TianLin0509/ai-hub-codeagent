@@ -411,6 +411,9 @@ function registerSessionIpc(ipcMain, deps) {
         ? isClaudeModelSelection(modelId)
         : kind==='deepseek'&&!session.deepseekLegacyClaude
           ? require('../../core/deepseek-codex-profile').DEEPSEEK_CODEX_MODELS.includes(modelId)
+        // agy slugs; the CLI itself already accepted it with "Model set to".
+        : kind === 'gemini'
+          ? /^(?:gemini|claude|gpt-oss)[\w.-]+$/.test(modelId)
         : false;
     if (!valid) return { ok: false, error: 'invalid-model', message: '该模型不属于当前 CLI 的会话模型目录' };
     if (kind === 'codex') modelId = require('../../core/model-options').normalizeCodexSessionModel(modelId);
@@ -513,16 +516,18 @@ function registerSessionIpc(ipcMain, deps) {
   ipcMain.handle('restart-session', (_e, sessionId) => restartSession(sessionId));
 
   // overrides 只用于 PTY 原生会话的「按新模型/深度重启并接着原会话历史」（助理切换模型）。
-  function restartSession(sessionId, overrides = null) {
+  // options.relaunch：ACP 会话不原地重连，而是休眠后按原会话重新启动，让启动参数重新计算
+  //   （Token Plan 额度用完时改走 DeepSeek API 靠这个，见 main/token-plan-fallback-controller.js）。
+  function restartSession(sessionId, overrides = null, options = {}) {
     if (ensureLaunchAuth) {
       const old=sessionManager.getSession(sessionId);
       if (old) return ensureLaunchAuth(old.kind,{...old,...overrides,model:sessionModelId(old)})
-        .then(()=>restartAuthorizedSession(sessionId,overrides))
+        .then(()=>restartAuthorizedSession(sessionId,overrides,options))
         .catch(error=>({ok:false,error:error.code || 'restart-failed',message:error.message}));
     }
-    return restartAuthorizedSession(sessionId,overrides);
+    return restartAuthorizedSession(sessionId,overrides,options);
   }
-  function restartAuthorizedSession(sessionId, overrides = null) {
+  function restartAuthorizedSession(sessionId, overrides = null, options = {}) {
     const old = sessionManager.getSession(sessionId);
     if (!old) {
       return { ok: false, error: 'session-not-found', message: '会话不存在或已经休眠' };
@@ -532,7 +537,8 @@ function registerSessionIpc(ipcMain, deps) {
     if (overrides && (old.runtimeBackend === 'codex-app-server' || old.runtimeBackend === 'claude-stream-json' || (nativeCodex && !nativeCodex.isCliProvider) || sessionManager.getNativeClaude?.(sessionId))) {
       return { ok: false, error: 'restart-overrides-unsupported', message: '原生后端会话不支持按新模型重启' };
     }
-    if (old.purpose !== 'xresearch-research' && (old.runtimeBackend === 'codex-app-server' || (nativeCodex && !nativeCodex.isCliProvider))) {
+    const relaunchAcp = options.relaunch === true && old.runtimeBackend === 'acp';
+    if (old.purpose !== 'xresearch-research' && !relaunchAcp && (old.runtimeBackend === 'codex-app-server' || (nativeCodex && !nativeCodex.isCliProvider))) {
       const native = nativeCodex;
       if (!native) return {ok:false,error:'unmanaged-codex',message:'旧 Codex 进程尚未接管；请先在原会话结束工作并关闭，再恢复'};
       return native.reconnect({useLaunchAccount:true}).then(()=>sessionManager.getSession(sessionId))

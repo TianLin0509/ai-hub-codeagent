@@ -321,13 +321,15 @@ function createNativeClaudeDriver(id, kind, opts, cwd, env, legacy) {
   const settingsFile = prepareClaudeSettingsOverlay(settings, {
     directory: path.join(hubDataDir, 'native-agent-settings'), sessionId: id + '-' + require('crypto').randomUUID(),
     overrides: { ...require('./agent-user-context').claudeSharedConfig(env,hubDataDir),fastMode: !legacy && shouldUseClaudeFastSettings(cv, opts),
+      ...(opts.claudeOutputStyle ? { outputStyle: String(opts.claudeOutputStyle) } : {}),
       ...(['hub-assistant','hub-photo-assistant'].includes(opts.purpose) && opts.autonomous === true ? {skipDangerousModePermissionPrompt:true} : {}) },
   });
   const launchArgs = buildClaudeNativeArgs({ model: legacy ? normalizeLegacyDeepSeekClaudeModel(opts.model) : opts.model,
     effort: legacy || process.env.CLAUDE_HUB_NO_EFFORT_MAX === '1' ? null
       : (opts.effort || 'max'),
     permissionMode: opts.permissionMode || 'bypassPermissions',
-    appendSystemPromptFile: opts.appendSystemPromptFile, settingsFile,
+    appendSystemPromptFile: opts.appendSystemPromptFile, systemPromptFile: opts.systemPromptFile,
+    disableSlashCommands: opts.disableSlashCommands === true, noChrome: opts.claudeNoChrome === true, tools: opts.claudeTools, settingsFile,
     addDirs: claudeNativeAddDirs(opts.addDirs), settingSources: opts.settingSources,
     mcpConfigPaths: mcp.configPaths || [], strictMcpConfig: mcp.profile !== 'full' });
   const journal = new NativeAgentJournal({ directory: path.join(hubDataDir, 'native-agent-submissions'), sessionId: id });
@@ -387,7 +389,8 @@ function buildClaudePtyLaunch(id, kind, opts, cwd, env, cv) {
     effort: process.env.CLAUDE_HUB_NO_EFFORT_MAX === '1' ? null
       : (CLAUDE_EFFORT_LEVELS.has(opts.effort) ? opts.effort : 'max'),
     permissionMode: opts.permissionMode || 'bypassPermissions',
-    appendSystemPromptFile: opts.appendSystemPromptFile, settingsFile,
+    appendSystemPromptFile: opts.appendSystemPromptFile, systemPromptFile: opts.systemPromptFile,
+    disableSlashCommands: opts.disableSlashCommands === true, noChrome: opts.claudeNoChrome === true, tools: opts.claudeTools, settingsFile,
     addDirs: claudeNativeAddDirs(opts.addDirs), settingSources: opts.settingSources,
     mcpConfigPaths: mcp.configPaths || [], strictMcpConfig: mcp.profile !== 'full' });
   const { findNativeClaudeHistory } = require('./claude-native-history');
@@ -1321,6 +1324,12 @@ class SessionManager extends EventEmitter {
     if (this._isShuttingDown || this.restartPending) {
       throw new Error('Hub is shutting down; refusing to create a new PTY');
     }
+    // 「规则」页的通用规则：Claude 在启动时写进系统提示。随消息粘贴进去会被 CLI 包成
+    // <pasted_content> 并标注「未必是用户本人写的」，约束力打折扣（2026-10-12 真实 Haiku 实测）。
+    // 已带其他系统提示文件的会话（DeepSeek 记忆等）不改，仍随第一条消息送。
+    const hubRulesSystem = (kind === 'claude' || kind === 'claude-resume') ? this.hubRulesSystemPrompt(opts) : null;
+    if (hubRulesSystem) opts = { ...opts, appendSystemPromptFile: hubRulesSystem.file };
+    else if (this.memoryService?.hubRules?.isSystemPromptFile(opts.appendSystemPromptFile)) opts = { ...opts, appendSystemPromptFile: undefined };
     const id = opts.id || uuid();
     const freshLaunch = require('./session-history-state').isFreshLaunch(kind, opts);
     const isAcp = isAcpKind(kind);
@@ -1636,17 +1645,30 @@ class SessionManager extends EventEmitter {
       }
     }
 
+    // 写作成员换到只为写作准备的 Codex 配置目录：没有全局个人规则、记忆、技能清单与插件
+    // （2026-10-11 用户要求写作成员的上下文完全为写作而生，见 core/writing/codex-writing-home.js）。
+    //   - 升级前建的写作会话，记录还在原账号目录里：恢复它时留在原目录，免得按 id 找不到
+    //   - 换账号后恢复写作会话：原历史在另一个账号的写作目录里，沿用 Hub 的跨账号恢复（-c sqlite_home）
+    //   - 原生回退后端会按全局账号把 CODEX_HOME 换回账号目录，写作目录在那里接不住，原生模式不换
+    // 准备失败时会话照常启动，但在状态栏写明「写作上下文降级」，不静默。
+    let writingCodexHome = null;
+    let writingContextWarning = null;
+
     const isNativeClaude = (isClaude && nativeAgentRuntime) || isDeepSeekLegacy;
     // 个人规则同步与运行时无关：PTY 与原生的 Claude 都读同一个 CLAUDE_CONFIG_DIR。
     const contextKind = isCodexRuntime ? 'codex' : (isClaude || isDeepSeekLegacy) ? 'claude' : isKimi ? 'kimi' : isGemini ? 'gemini' : null;
     if(opts.assistantMcpEntry) require('./hub-assistant/project-tools').configureProjectTools(kind,{...opts,id},spawnCwd);
-    if (contextKind) {
+    // 写作成员不加载个人规则（Claude 关了 CLAUDE.md，Codex 用写作专用目录），不必往原配置目录同步规则；
+    // Codex 写作目录仍要同步个人守卫 hooks（instructions:false 只同步守卫）。
+    if (contextKind && !(opts.purpose === 'writing' && contextKind !== 'codex')) {
       const contextHome = contextKind === 'codex' ? sessionEnv.CODEX_HOME || path.join(os.homedir(),'.codex')
         : contextKind === 'claude' ? sessionEnv.CLAUDE_CONFIG_DIR || path.join(os.homedir(),'.claude')
         : contextKind === 'kimi' ? sessionEnv.KIMI_CODE_HOME || path.join(os.homedir(),'.kimi-code') : path.join(sessionEnv.GEMINI_CLI_HOME || os.homedir(),'.gemini');
-      require('./agent-user-context').syncNativeUserContext({kind:contextKind,nativeHome:contextHome,env:sessionEnv,dataDir:getHubDataDir()});
+      require('./agent-user-context').syncNativeUserContext({kind:contextKind,nativeHome:contextHome,env:sessionEnv,dataDir:getHubDataDir(),
+        instructions: !writingCodexHome});
     }
     if (followsGlobalAccount) codexSessionsRoot = opts.codexSessionsRoot;
+    if (writingCodexHome) codexSessionsRoot = path.join(writingCodexHome, 'sessions');
     if (isCodexRuntime) {
 
       for (const key of ['CODEX_THREAD_ID','CODEX_SESSION_ID','CLAUDE_HUB_SESSION_ID',
@@ -1681,10 +1703,37 @@ class SessionManager extends EventEmitter {
         resumeTranscriptPath: codeagentLaunch.sessionId ? opts.resumeTranscriptPath : undefined };
     }
     let antigravityLaunch = null;
+    let antigravityForkCleanup = null;
     if (isGemini) {
       const agy = require('./antigravity-config');
-      antigravityLaunch = agy.launchCommand({...opts,useResume:opts.useResume||kind==='gemini-resume'}, sessionEnv);
+      // agy finds hooks.json, trust list and brain under USERPROFILE; an isolated Hub
+      // installs them under its own home, so the CLI must look there too. Login
+      // lives in the OS keyring and is unaffected.
+      if (sessionEnv.CLAUDE_HUB_HOME_DIR) sessionEnv.USERPROFILE = sessionEnv.HOME = agy.home(sessionEnv);
+      if (!opts.geminiChatId && (opts.useResume || kind === 'gemini-resume')) {
+        // agy --continue does not reliably pick this folder's conversation (live check
+        // 2026-10-12). "Continue latest" opens the newest native conversation by exact
+        // id; a woken session that never bound an id starts fresh rather than guessing.
+        const latest = kind === 'gemini-resume' ? agy.latestConversation(sessionEnv) : null;
+        opts = latest
+          ? {...opts, geminiChatId: latest.conversationId, geminiProjectHash: agy.ENGINE,
+            resumeTranscriptPath: latest.transcriptPath, useResume: true}
+          : {...opts, useResume: false};
+      }
       agy.installHooks(sessionEnv, getHubDataDir(), id);
+      // Pre-trust only saves a prompt; an unreadable settings.json must not block sessions.
+      try { agy.ensureWorkspaceTrusted(spawnCwd, sessionEnv); }
+      catch (error) { console.warn('[antigravity] workspace pre-trust skipped:', error.message); }
+      if (opts.antigravityForkFrom && !opts.geminiChatId) {
+        // Branch = a cloned native conversation resumed under its own id. Cloned
+        // last among the throwing steps; antigravityForkCleanup undoes it if spawn fails.
+        agy.launchArgs({...opts, geminiChatId: undefined, useResume: false});
+        const fork = require('./antigravity-fork').forkConversation(opts.antigravityForkFrom, {env: sessionEnv});
+        antigravityForkCleanup = fork.dispose;
+        opts = {...opts, geminiChatId: fork.conversationId, geminiProjectHash: agy.ENGINE,
+          resumeTranscriptPath: fork.transcriptPath, useResume: true};
+      }
+      antigravityLaunch = agy.launchCommand(opts, sessionEnv);
       opts = {...opts,geminiProjectHash:agy.ENGINE,geminiProjectRoot:spawnCwd};
     }
     // Every native driver is owned directly by this Hub; no cross-Hub broker.
@@ -1737,7 +1786,7 @@ class SessionManager extends EventEmitter {
       // cursor makes Windows ConPTY more prone to transient cursor ghosts.
       conptyInheritCursor: (isCodexRuntime || isKimi) ? false : !opts.noInheritCursor,
     });
-    } catch (error) { codexEditorInput?.dispose(); throw error; }
+    } catch (error) { codexEditorInput?.dispose(); antigravityForkCleanup?.(); throw error; }
 
     let currentModel = null;
     if (isClaude) {
@@ -1803,6 +1852,10 @@ class SessionManager extends EventEmitter {
       ...(isAcp ? {runtimeBackend:'acp',nativeRuntime:ptyProcess.runtime,acpSid:opts.acpSid || null,
         cliRuntime:isProviderCli?{...ptyProcess.runtime,source:'provider-cli',observedAt:Date.now()}:null,
         acpProfileId:ptyProcess.options.profileId,acpCapabilities:{},acpConfigOptions:[]} : {}),
+      // Token Plan 额度用完期间新开或恢复的套餐会话：DeepSeek 旧 Harness 直接走 DeepSeek API，卡片上说清楚在花哪份钱；
+      // 千问 / GLM 不改道，卡片上写明等重置。
+      ...(isAcp && ptyProcess.options.tokenPlanRoute === 'deepseek' ? {nativeActionError:require('./token-plan-fallback').deepseekRouteNotice(ptyProcess.options.model,getHubDataDir())}
+        : isAcp && ptyProcess.options.tokenPlanWait ? {nativeActionError:require('./token-plan-fallback').waitNotice(getHubDataDir(),ptyProcess.options.tokenPlanWait)} : {}),
       connectionIssue: null,
       lastMessageTime: opts.lastMessageTime || now,
       lastOutputPreview: opts.lastOutputPreview || '',
@@ -1822,6 +1875,8 @@ class SessionManager extends EventEmitter {
       // switch into a newly-created session.
       completionNotificationEnabled: opts.completionNotificationEnabled === true,
       ...(opts.purpose ? { purpose: String(opts.purpose) } : {}),
+      ...(writingContextWarning ? { writingContextWarning } : {}),
+      ...(hubRulesSystem ? { hubRulesSystem: { version: hubRulesSystem.version, label: hubRulesSystem.label } } : {}),
       ...(opts.researchSessionId ? { researchSessionId: String(opts.researchSessionId) } : {}),
       ...(opts.hiddenFromSidebar ? { hiddenFromSidebar: true } : {}),
       currentModel,
@@ -3097,6 +3152,22 @@ class SessionManager extends EventEmitter {
   //   往 PTY 写启动命令重新拉起 CLI；不带 resume，启动新 session（context 干净）。
   //   命令前导空格抑制 shell 历史记录，避免污染。
   // 返回 true 已写命令，false 找不到 session 或 kind 不支持。
+  // 返回要写进 Claude 系统提示的规则文件；不适用时返回 null（见 _createSession 的说明）。
+  hubRulesSystemPrompt(opts = {}, purpose = opts.purpose) {
+    const store = this.memoryService?.hubRules;
+    if (!store) return null;
+    const { SKIP_PURPOSES } = require('./hub-rules');
+    if (SKIP_PURPOSES.has(purpose)) return null;
+    if (opts.appendSystemPromptFile && !store.isSystemPromptFile(opts.appendSystemPromptFile)) return null;
+    try {
+      const rules = store.injection();
+      return rules ? { file: store.systemPromptFile(rules), version: rules.version, label: rules.label } : null;
+    } catch (error) {
+      console.warn('[hub-rules] 规则写入系统提示失败，改为随第一条消息送达：', error && error.message);
+      return null;
+    }
+  }
+
   relaunchCli(sessionId, options = {}) {
     const s = this.sessions.get(sessionId);
     if (s && ['codex-app-server','acp'].includes(s.info.runtimeBackend)) {
@@ -3200,8 +3271,12 @@ class SessionManager extends EventEmitter {
         });
       const mcpFlag = mcpPlan && mcpPlan.args ? mcpPlan.args : '';
       const relaunchPermissionFlag = claudePermissionModeArg({ autonomous });
+      // 原地重拉是一个全新的 Claude 进程，按当前规则重新写进系统提示。
+      const relaunchRules = this.hubRulesSystemPrompt({}, s.info && s.info.purpose);
+      if (s.info) s.info.hubRulesSystem = relaunchRules ? { version: relaunchRules.version, label: relaunchRules.label } : undefined;
+      const rulesFlag = relaunchRules ? ` --append-system-prompt-file "${relaunchRules.file}"` : '';
       const addDirFlag = claudeNativeAddDirs([]).map(dir => ` --add-dir "${dir}"`).join('');
-      cmd = ` claude --model ${modelId || DEFAULT_MODEL_BY_KIND.claude}${effortFlag}${relaunchPermissionFlag}${fastFlag}${mcpFlag}${addDirFlag}${isolation}\r\n`;
+      cmd = ` claude --model ${modelId || DEFAULT_MODEL_BY_KIND.claude}${effortFlag}${relaunchPermissionFlag}${fastFlag}${mcpFlag}${addDirFlag}${rulesFlag}${isolation}\r\n`;
     } else if (kind === 'deepseek' || kind === 'deepseek-resume') {
       const mcpPlan = meetingId ? buildClaudeMeetingMcpArgs({
         mcpConfigFile: s.claudeMcpConfigFile,
@@ -3234,7 +3309,8 @@ class SessionManager extends EventEmitter {
   // Returns the public shape used by renderer IPC and 'session-updated' events.
   _toPublic(info) {
     return {
-      ...(isAcpKind(info.kind) ? {cliRuntime:info.cliRuntime||null} : {}),
+      // 千问 / GLM 走终端时没有 runtimeBackend，卡片提示（如 Token Plan 改道说明）也要随更新送到界面。
+      ...(isAcpKind(info.kind) ? {cliRuntime:info.cliRuntime||null,nativeActionError:info.nativeActionError || null} : {}),
       ...(isAcpKind(info.kind) ? {acpSid:info.acpSid,acpProfileId:info.acpProfileId,
         acpCapabilities:info.acpCapabilities,acpConfigOptions:info.acpConfigOptions} : {}),
       ...(info.runtimeBackend ? {runtimeBackend:info.runtimeBackend,nativeRuntime:info.nativeRuntime,
@@ -3305,6 +3381,7 @@ class SessionManager extends EventEmitter {
       ...(info.provider ? { provider: info.provider } : {}),
       ...(info.nativeSession ? { nativeSession: info.nativeSession } : {}),
       ...(info.purpose ? { purpose: info.purpose } : {}),
+      writingContextWarning: info.writingContextWarning || null,
       ...(info.researchSessionId ? { researchSessionId: info.researchSessionId } : {}),
       ...(info.hiddenFromSidebar ? { hiddenFromSidebar: true } : {}),
       completionNotificationEnabled: info.completionNotificationEnabled === true,

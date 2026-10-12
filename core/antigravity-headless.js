@@ -1,7 +1,7 @@
 'use strict';
 const {spawn}=require('child_process');
-const {resolveCommand}=require('./antigravity-config');
-function runPrompt(prompt,{env=process.env,timeoutMs=90000,spawnImpl=spawn}={}){
+const {resolveCommand,cliEnv}=require('./antigravity-config');
+function runPrompt(prompt,{env=cliEnv(process.env),timeoutMs=90000,spawnImpl=spawn}={}){
   return new Promise((resolve,reject)=>{
     const child=spawnImpl(resolveCommand(env),['--input-format','stream-json','--output-format','stream-json'],{env,windowsHide:true,stdio:['pipe','pipe','pipe']});
     let done=false,buffer='',stderr='',result=null;

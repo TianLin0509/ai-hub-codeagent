@@ -134,6 +134,21 @@ function classifyProviderFailure(input = {}) {
         /ACP 未在期限内返回执行证据.*消息结果待核对/],
     },
     {
+      // DeepSeek 旧 Harness 成员：Hub 已把它改道到 DeepSeek API（main/token-plan-fallback-controller.js），重试即可恢复。
+      code: 'token_plan_quota_rerouted', category: 'quota', retryable: true, autoRetry: true,
+      action: 'retry_on_deepseek_api', summary: 'Token Plan 额度已用完，已改走 DeepSeek API',
+      assistantText: true,
+      patterns: [/\btoken_plan_quota_rerouted\b/],
+    },
+    {
+      // 千问 / GLM 成员：不改道，等额度重置，不自动重试。
+      code: 'token_plan_quota', category: 'quota', retryable: true, autoRetry: false,
+      action: 'wait_for_reset', summary: 'Token Plan 额度已用完，等重置',
+      assistantText: true,
+      // 只认 Token Plan 自己的原文与 Hub 标记；其他供应商的 insufficient_quota 仍按普通额度错误处理。
+      patterns: [/token-plan[\s\S]{0,40}quota has been exhausted/i, /\btoken_plan_quota\b/],
+    },
+    {
       code: 'quota_exceeded', category: 'quota', retryable: true, autoRetry: false,
       action: 'wait_or_switch_account', summary: '额度已用尽',
       assistantText: true,

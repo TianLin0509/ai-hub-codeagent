@@ -61,7 +61,12 @@ class CodexEditorInput {
     p.carry = last >= 0 && /^\x1b(?:\[\??[\d;]*)?$/.test(text.slice(last)) ? text.slice(last) : '';
   }
 
-  async load(text, write, { timeoutMs = 8000, attachments = [], preservePunctuation = false } = {}) {
+  // Codex 0.159 first paints a placeholder composer and accepts keys only after its
+  // startup bootstrap (an online model-list refresh: 3-5 s on a fresh CODEX_HOME).
+  // A Ctrl+G in that window is dropped, not queued (2026-10-12, writing-tab first
+  // prompt failed 4 of 4). Until Codex takes the request -- the helper claims it or
+  // the TUI suspends for the editor -- press again.
+  async load(text, write, { timeoutMs = 8000, startupMs = 20000, repressMs = 2000, attachments = [], preservePunctuation = false } = {}) {
     text = String(text || '');
     if ((!preservePunctuation && text.length < MIN_LENGTH) || /^\s*\//.test(text) || attachments.length) return false;
     if (this.closed || this.failed) throw inputError('长文本输入通道未就绪，请重开此会话后重试；正文未提交');
@@ -72,24 +77,39 @@ class CodexEditorInput {
     const p = { id, carry: '', suspended: false, resumed: false, frame: false };
     this.pending = p;
     try {
-      atomicJson(request, { id, text, digest, expiresAt: start + timeoutMs });
+      // Only an untouched handoff leaves the channel usable; its cancel marker must not block this one.
+      try { fs.unlinkSync(path.join(this.directory, 'cancelled.json')); } catch (error) { if (error.code !== 'ENOENT') throw error; }
+      atomicJson(request, { id, text, digest, expiresAt: start + startupMs + timeoutMs });
       write('\x07');
-      while (Date.now() - start < timeoutMs) {
+      let pressedAt = Date.now(), presses = 1, engagedAt = 0;
+      for (;;) {
         if (this.closed) throw inputError('会话已关闭，长文本未提交');
+        const now = Date.now();
+        if (!engagedAt && (p.suspended || !fs.existsSync(request))) engagedAt = now;
+        if (now >= (engagedAt ? engagedAt + timeoutMs : start + startupMs)) break;
         const ack = readJson(receipt);
         if (ack?.id === id) {
           if (!ack.ok || ack.digest !== digest) throw inputError(ack.message || '长文本回填校验失败，正文未提交');
           if (p.frame) {
-            this.lastTransfer = { id, chars: text.length, milliseconds: Date.now() - start, digest };
+            this.lastTransfer = { id, chars: text.length, milliseconds: Date.now() - start, digest, presses };
             return true;
           }
         }
+        if (!engagedAt && now - pressedAt >= repressMs) { write('\x07'); pressedAt = now; presses += 1; }
         await sleep(10);
       }
+      if (!engagedAt) {
+        throw Object.assign(inputError(`Codex 在 ${Math.round(startupMs / 1000)} 秒内没有响应长文本输入（按了 ${presses} 次 Ctrl+G），正文未提交；稍后重试即可`), { untouched: true });
+      }
+      console.warn('[codex-editor-input] handoff timeout after Codex took the request', JSON.stringify({
+        ms: Date.now() - start, presses, claimed: !fs.existsSync(request), suspended: p.suspended, resumed: p.resumed, frame: p.frame,
+      }));
       throw inputError('未确认 Codex 已接收长文本并恢复输入，未发回车；请重开此会话后重试');
     } catch (error) {
-      this.failed = true;
-      // A late helper must never consume a cancelled request or a newer draft.
+      // Codex never took the request, so nothing reached it and a later message may use the channel.
+      // Once it did, the native draft state is unknown: keep the channel closed until the session reopens.
+      if (!error.untouched) this.failed = true;
+      // A late helper must never consume this cancelled request.
       this.cancel(id);
       throw Object.assign(error, { notSent: true });
     } finally {

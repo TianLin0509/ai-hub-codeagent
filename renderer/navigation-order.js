@@ -1,12 +1,20 @@
 'use strict';
 const STORAGE_KEY = 'hub.navigationOrder.v1';
 
+// 用户保存过的顺序优先；后来新增的按钮（如 2026-10-12 的「规则」）插到它在默认顺序里
+// 的后一个按钮前面，默认排在最后的新按钮仍然接在末尾。
 function normalizeNavigationOrder(saved, available) {
   const allowed = new Set(available), seen = new Set();
-  return [...(Array.isArray(saved) ? saved : []), ...available].filter(id => {
+  const order = (Array.isArray(saved) ? saved : []).filter(id => {
     if (!allowed.has(id) || seen.has(id)) return false;
     seen.add(id); return true;
   });
+  const missing = available.filter(id => !seen.has(id));
+  for (const id of missing.reverse()) {
+    const next = available.slice(available.indexOf(id) + 1).find(other => order.includes(other));
+    order.splice(next ? order.indexOf(next) : order.length, 0, id);
+  }
+  return order;
 }
 
 function installNavigationOrder(doc = globalThis.document) {

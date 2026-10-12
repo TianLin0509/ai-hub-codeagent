@@ -45,7 +45,7 @@ function planSessionFork({ source, siblingPool = [], meeting = null, rendererTit
     return {
       ok: false,
       error: 'unsupported-kind',
-      message: '仅支持 Claude Code、DeepSeek 和 Codex 会话创建分支（Kimi CLI 无 fork 能力）',
+      message: '仅支持 Claude Code、DeepSeek、Codex 和 Antigravity 会话创建分支（Kimi CLI 无 fork 能力；旧 Gemini CLI 历史也不能分支）',
     };
   }
   const identity = nativeSessionIdentity(source);
@@ -93,6 +93,9 @@ function planSessionFork({ source, siblingPool = [], meeting = null, rendererTit
   if (providerFamily === 'acp') {
     kind = source.kind.replace(/-resume$/, '');
     needsAcpFork = true;
+  } else if (providerFamily === 'gemini') {
+    kind = 'gemini';
+    opts.antigravityForkFrom = nativeSessionId;
   } else if (providerFamily === 'claude') {
     // 公司 Code Agent 与 Claude 同属 Claude 家族，分支必须仍是 Code Agent，不能变成 Claude 会话。
     kind = isDeepSeek ? 'deepseek' : String(source.kind || '').startsWith('codeagent') ? 'codeagent' : 'claude';

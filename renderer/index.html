@@ -19,6 +19,7 @@
   <link rel="stylesheet" href="orchestration-ui.css">
   <link rel="stylesheet" href="workflow-config-modal.css">
   <link rel="stylesheet" href="dev-workbench.css">
+  <link rel="stylesheet" href="rules.css">
   <link rel="stylesheet" href="styles/home-workbench.css">
   <link rel="stylesheet" href="launch-center.css">
   <link rel="stylesheet" href="memory-panel.css">
@@ -113,6 +114,8 @@
       <div class="rail-drawer-head"><strong>导航</strong><button type="button" id="rail-pin" class="rail-pin" aria-label="取消固定并收起导航" aria-pressed="true" title="取消固定并收起导航"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 3h6l-1 6 3 3v2H7v-2l3-3-1-6ZM12 14v7"/></svg></button></div>
       <div class="rail-navigation">
       <button type="button" class="btn-shell-nav active" id="btn-home" title="主页" aria-current="page"><span class="btn-icon" aria-hidden="true"><img class="rail-artwork" src="assets/navigation/sticker-v2/home.png" alt="" aria-hidden="true" /></span><span class="btn-label">主页</span></button>
+      <!-- 规则 Tab（2026-10-12）：Hub 里的 Agent 默认带上的规则。放在主页和助理之间，公开版、公司版都有。 -->
+      <button type="button" class="btn-shell-nav" id="btn-rules" data-rules-entry title="规则 · Agent 默认带上的规则" aria-label="规则"><span class="btn-icon" aria-hidden="true"><img class="rail-artwork" src="assets/navigation/sticker-v2/rules.png" alt="" aria-hidden="true" /></span><span class="btn-label">规则</span></button>
       <button type="button" class="btn-shell-nav" id="btn-assistant" title="助理 · 进展与下一步" aria-label="助理" aria-controls="terminal-panel"><span class="btn-icon" aria-hidden="true"><img src="assets/assistant/penguin.png" alt="" /></span><span class="btn-label">助理</span></button>
       <button type="button" class="btn-shell-nav" id="btn-ran" data-ran-entry title="开发看板 · 各任务走到哪一步了"><span class="btn-icon" aria-hidden="true"><img class="rail-artwork" src="assets/navigation/sticker-v2/dev.png" alt="" aria-hidden="true" /></span><span class="btn-label">开发</span></button>
       <div class="rail-separator" aria-hidden="true"></div>
@@ -367,6 +370,8 @@
         <button class="mr-send-btn" id="mr-send-btn" title="发送" aria-label="发送"><svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 4l7 7h-4v9h-6v-9H5z"/></svg></button>
       </div>
     </div>
+    <!-- 规则面板：骨架由 renderer/rules.js 自构建。 -->
+    <div id="rules-panel"></div>
     <!-- 开发看板：Hub 第五主区视图。一个群聊=一个任务，数据全部推导自 Hub 自己的会议列表，骨架由 renderer/ran.js 自构建。 -->
     <div id="ran-panel"></div>
     <!-- 2026-05-05 maintainer：preview-splitter + preview-panel 从 terminal-panel 之后挪到
@@ -746,6 +751,7 @@
   <script src="meeting-room.js"></script>
   <script src="workflow-config-modal.js"></script>
   <script src="community-welcome.js"></script>
+  <script src="rules.js"></script>
   <script src="dev-progress.js"></script>
   <script src="ran.js"></script>
 

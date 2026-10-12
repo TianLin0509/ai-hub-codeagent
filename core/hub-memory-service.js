@@ -29,6 +29,7 @@ const SCAN_SKIP = new Set([
 const SCAN_MAX_DIRS = 4000;
 const SCAN_MAX_FILES = 500;
 const RECEIPT_LIMIT = 30;
+const { SKIP_PURPOSES: HUB_RULES_SKIP_PURPOSES, PREAMBLE: HUB_RULES_PREAMBLE } = require('./hub-rules');
 // A context drop below half of its observed peak means the runtime compacted.
 // The same judgement is shared with group-chat rules (core/context-compaction.js).
 const { checkCompaction } = require("./context-compaction");
@@ -301,7 +302,7 @@ class HubMemoryService {
         return records;
       } catch (e) { if (e.code !== 'ENOENT') warnings.push(label + '读取失败：' + e.message); return []; }
     };
-    const history = (await Promise.all([readReceipts(':workspace', 'Hub 共享规则回执'), readReceipts('', 'Hub 索引回执')])).flat();
+    const history = (await Promise.all([readReceipts(':hub-rules', 'Hub 规则页回执'), readReceipts(':workspace', 'Hub 共享规则回执'), readReceipts('', 'Hub 索引回执')])).flat();
     // Evidence is bound to the native session identity/epoch, never to a cwd alone.
     const current = history.filter(r => r.identity === identity);
     const native = await nativeTask;
@@ -891,6 +892,40 @@ class HubMemoryService {
     atomicJSON(receiptFile, this.trimReceipts(history));
     return this.submitIndex(sid, text, options, record, receiptFile, send);
   }
+  // 「规则」页的通用规则 / 我的规则（core/hub-rules.js）：和共享工作区规则同一套回执，
+  // 每个原生会话送一次；规则换版或上下文被压缩后，下一条消息再送一次。
+  async withHubRules(sid,prompt,kind,options,send) {
+    const s=this.sessionManager.getSession(sid);
+    if(!this.hubRules || !s || HUB_RULES_SKIP_PURPOSES.has(s.purpose) || String(prompt).trimStart().startsWith('/') || !isAiKind(String(kind).replace(/-resume$/,'')))return send(prompt);
+    const receiptFile=path.join(this.root,'context',hash(sid+':hub-rules')+'.json');
+    const history=readJSON(receiptFile,[]),submissionId=options.clientSubmissionId||options.submissionReceipt?.clientSubmissionId;
+    const id='hubrules-'+(submissionId||randomUUID());
+    const retry=submissionId && history.find(r=>r.id===id);
+    if(retry){if(retry.identity!==contextIdentity(s))throw new Error('同一提交编号的原生会话已变化，请重新提交');if(retry.userFingerprint!==hash(prompt))throw new Error('同一提交编号的规则消息已变化');return this.submitIndex(sid,prompt+retry.appendix,options,retry,receiptFile,send);}
+    let rules=null;
+    try{rules=this.hubRules.injection();}catch(error){this.logger.error('[hub-rules] 读取规则失败：',error);}
+    if(!rules)return send(prompt);
+    // Claude 启动时已把同一版写进系统提示（session-manager 的 hubRulesSystemPrompt），压缩后也还在，不再随消息送。
+    if(s.hubRulesSystem?.version===rules.version)return send(prompt);
+    const identity=contextIdentity(s),content=rules.content,version=rules.version;
+    const delivered=history.find(r=>r.status==='sent'&&r.identity===identity);
+    if(delivered?.version===version&&!this.compactedSince(delivered,s,receiptFile))return send(prompt);
+    if(!/^[\w-]+$/.test(id))throw new Error('提交编号无效');
+    const appendix=`\n\n<ai-hub-rules ref="${id}">\n${HUB_RULES_PREAMBLE(rules.label)}\n${content}\n</ai-hub-rules>`;
+    const record={id,kind:'hub-rules',label:rules.label,content,version,identity,createdAt:Date.now(),status:'pending',
+      appendix,userFingerprint:hash(prompt),fingerprint:hash(prompt+appendix),reason:delivered?(delivered.version===version?'compacted':'changed'):'new'};
+    history.unshift(record);atomicJSON(receiptFile,this.trimReceipts(history));
+    return this.submitIndex(sid,prompt+appendix,options,record,receiptFile,send);
+  }
+  // 规则页「送达情况」：每个会话最近一次带规则的消息。
+  hubRulesDeliveries() {
+    const sessions=this.sessionManager.getAllSessions?.()||[];
+    return sessions.filter(s=>isAiKind(String(s.kind).replace(/-resume$/,''))).map(s=>{
+      const record=readJSON(path.join(this.root,'context',hash(s.id+':hub-rules')+'.json'),[])[0];
+      if(!record&&s.hubRulesSystem)return {sessionId:s.id,title:s.title||s.name||s.kind,kind:s.kind,status:'system',label:s.hubRulesSystem.label,at:s.createdAt||null,reason:'launch'};
+      return {sessionId:s.id,title:s.title||s.name||s.kind,kind:s.kind,status:record?.status||null,label:record?.label||null,at:record?.sentAt||record?.createdAt||null,reason:record?.reason||null};
+    });
+  }
   async withWorkspaceRules(sid,prompt,kind,options,send) {
     const s=this.sessionManager.getSession(sid);
     // 写作群成员（purpose=writing）不追加共享工作区规则：产物命名之类的工程规则会把 AI 腔带进文章
@@ -973,8 +1008,8 @@ class HubMemoryService {
   }
   confirmSend(e) {
     if(typeof e.text!=='string')return;
-    for(const match of e.text.matchAll(/<ai-hub-(dream-index|workspace-rules) ref="([\w-]+)">/g))
-      this.confirmOneSend(e,match[2],match[1]==='workspace-rules'?':workspace':'');
+    for(const match of e.text.matchAll(/<ai-hub-(dream-index|workspace-rules|rules) ref="([\w-]+)">/g))
+      this.confirmOneSend(e,match[2],match[1]==='workspace-rules'?':workspace':match[1]==='rules'?':hub-rules':'');
   }
   confirmOneSend(e,ref,suffix) {
     const sid = e.sessionId || e.hubSessionId;

@@ -16,6 +16,9 @@ const os = require('os');
 const path = require('path');
 const { detectHostShellTakeover, detectCodexThreadEnded } = require('./host-shell-detector.js');
 const { isClaudeFamily, isCodexCliKind, isCodeAgentKind } = require('./ai-kinds.js');
+// Antigravity (agy) owns the gemini kind; it honours bracketed paste and reports
+// work start through its PreInvocation hook, like Claude/Codex.
+const isAntigravityKind = kind => /^gemini(?:-resume)?$/.test(String(kind || ''));
 const { stripAnsi } = require('./ansi-utils.js');
 const {
   RUNTIME_RUNNING,
@@ -97,7 +100,7 @@ async function writePromptToSession(sessionManager, sid, prompt, kind) {
 }
 
 function noteSubmittedPrompt(sid, kind, actualPrompt) {
-  if (!isCodexCliKind(kind) && !isClaudeFamily(kind)) return;
+  if (!isCodexCliKind(kind) && !isClaudeFamily(kind) && !isAntigravityKind(kind)) return;
   const tap = _deps && _deps.transcriptTap;
   if (!tap || typeof tap.notePrompt !== 'function') return;
   try { tap.notePrompt(sid, kind, actualPrompt); }
@@ -105,7 +108,7 @@ function noteSubmittedPrompt(sid, kind, actualPrompt) {
 }
 
 function observeAgentTurnStart(sessionManager, sid, kind) {
-  if (!isCodexCliKind(kind) && !isClaudeFamily(kind)) return null;
+  if (!isCodexCliKind(kind) && !isClaudeFamily(kind) && !isAntigravityKind(kind)) return null;
   const tap = _deps && _deps.transcriptTap;
   const canObserveSession = sessionManager
     && typeof sessionManager.on === 'function'
@@ -416,10 +419,17 @@ async function sendToPtyImpl(sid, prompt, kind, options = {}) {
   }
   const { sessionManager } = _deps;
   if (sessionManager.restartPending) throw Object.assign(new Error('Hub 正在重启，未发送新任务'), {notSent:true});
+  // 「规则」页的通用规则先附上，再附工作区规则；两者各自留回执，换版或压缩后补发。
+  if (!options.hubRulesPrepared && sessionManager.memoryService?.withHubRules) {
+    return sessionManager.memoryService.withHubRules(sid,prompt,kind,options,
+      text=>sendToPtyImpl(sid,text,kind,{...options,hubRulesPrepared:true}));
+  }
   if (!options.workspaceRulesPrepared && sessionManager.memoryService?.withWorkspaceRules) {
     return sessionManager.memoryService.withWorkspaceRules(sid,prompt,kind,options,
       text=>sendToPtyImpl(sid,text,kind,{...options,workspaceRulesPrepared:true}));
   }
+  // Token Plan 额度已用完时，套餐会话先改走 DeepSeek API 再发（重启后是新的会话对象）。
+  if (sessionManager.tokenPlanFallback && sessionManager.getNativeSession?.(sid)) await sessionManager.tokenPlanFallback.beforeSend(sid);
   const native = (sessionManager.getNativeSession?.(sid) || sessionManager.getNativeCodex?.(sid));
   if (native) return native.send(prompt, {
     ...options, clientSubmissionId:options.clientSubmissionId || options.submissionReceipt?.clientSubmissionId,
@@ -470,10 +480,10 @@ async function sendToPtyImpl(sid, prompt, kind, options = {}) {
   const createdAt = Number(sessionManager.getSession?.(sid)?.createdAt) || 0;
   const freshlySpawned = createdAt > 0 && Date.now() - createdAt < 60000;
   if (!requireReady && freshlySpawned && !sessionManager.getGroupChatReady(sid)
-      && (isClaudeFamily(kind) || isCodexCliKind(kind)) && _deps.cliReadyDetector) {
+      && (isClaudeFamily(kind) || isCodexCliKind(kind) || isAntigravityKind(kind)) && _deps.cliReadyDetector) {
     if (await waitCliReady(sid, kind, Number(_deps.firstPromptReadyMs) || 20000)) sessionManager.setGroupChatReady(sid, true);
     else {
-      const readyKind = isCodexCliKind(kind) ? 'codex' : isCodeAgentKind(kind) ? 'codeagent' : 'claude';
+      const readyKind = isCodexCliKind(kind) ? 'codex' : isCodeAgentKind(kind) ? 'codeagent' : isAntigravityKind(kind) ? 'gemini' : 'claude';
       // 选择框还挂着时粘贴会被吞掉，回车还会替用户选默认项：宁可不发，也不能替人做选择。
       if (_deps.cliReadyDetector.isChoiceDialogVisible?.(readyKind, sessionManager.getSessionBuffer(sid) || '')) {
         throw Object.assign(new Error('CLI 正在等你在终端里做选择（例如启动提示），消息未发送；处理完后再发送'),
@@ -504,7 +514,7 @@ async function sendToPtyImpl(sid, prompt, kind, options = {}) {
       { notSent:true, code:'cli-exited' });
   }
 
-  if ((options.restartContinuation || sessionManager.restartContinuationSessions?.has(sid)) && ['kimi','kimi-resume','gemini','gemini-resume','deepseek','deepseek-resume'].includes(kind)) {
+  if ((options.restartContinuation || sessionManager.restartContinuationSessions?.has(sid)) && ['kimi','kimi-resume','deepseek','deepseek-resume'].includes(kind)) {
     const receipt=require('./hub-restart-legacy').observeLegacyPrompt(_deps.transcriptTap,sid,prompt,
       20000+Math.ceil(String(prompt).length/2048)*12+computeSettleMs(String(prompt).length));
     const record=result=>{
@@ -543,8 +553,9 @@ async function sendToPtyImpl(sid, prompt, kind, options = {}) {
   //   2026-06-18 maintainer 实测：codex 0.137 也已支持 BP 协议（BP 包裹中文立即提交、不进
   //     [Pasted Content] 粘贴态、不卡输入框）→ codex 改走此 fast-path，一并解决"卡输入框
   //     未提交"(Bug B) + "中文走 .md 文件中转嵌入"(Bug C：BP 直接发中文，不再经 writePromptToSession)。
-  //   gemini 协议仍不识别（marker 被吃但 \r 不提交），保留旧主路径。
-  if (isClaudeFamily(kind) || isCodexCliKind(kind)) {
+  //   2026-10-12：gemini 已换成 Antigravity CLI（agy 1.3.3），实测 BP 包裹的多行中文完整留在输入框、
+  //     单个 \r 提交，开工确认来自 PreInvocation hook → 同走此 fast-path。
+  if (isClaudeFamily(kind) || isCodexCliKind(kind) || isAntigravityKind(kind)) {
     // Capture the provider lifecycle cursor before typing.  Claude
     // UserPromptSubmit and Codex task_started are the same authoritative
     // "agent really began work" signal that drives ordinary-session status.
@@ -785,6 +796,14 @@ async function sendToPtyImpl(sid, prompt, kind, options = {}) {
       }
       return { ok: false, notSent: true, sendStatus: 'rejected', error: 'cli-busy-rejected', enterAttempts, acknowledgementSource: null,
         message: 'Codex 仍在处理上一轮，命令被拒绝、没有执行；请稍后再发' };
+    }
+    // Antigravity left the legacy restart branch for this fast path; keep writing
+    // the restart receipt that hub-restart's resumeGroup waits on.
+    if (isAntigravityKind(kind) && acknowledgement
+        && (options.restartContinuation || sessionManager.restartContinuationSessions?.has(sid))) {
+      sessionManager.restartContinuationReceipts ||= new Map();
+      sessionManager.restartContinuationReceipts.set(sid, { id: options.clientSubmissionId || require('crypto').randomUUID(), status: 'accepted' });
+      sessionManager.restartContinuationSessions?.delete(sid);
     }
     return {
       ok: sendStatus !== 'content-mismatch',

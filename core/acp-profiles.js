@@ -16,14 +16,23 @@ function buildAcpOptions(kind, opts, config, dataDir, baseEnv = process.env) {
   if (!isAcpKind(kind)) throw new Error('未知 ACP Harness');
   const profile = config.acp || {};
   const entry = profile.providers?.[kind];
-  const key = profile.apiKey || baseEnv.AI_HUB_TOKEN_PLAN_KEY;
+  // 套餐额度用完且配了 DeepSeek Key 时，DeepSeek 旧 Harness 整条会话改走 DeepSeek 官方 API；千问 / GLM 等重置（core/token-plan-fallback.js）。
+  const fallback = require('./token-plan-fallback');
+  const route = fallback.resolveRoute({ config, dataDir, kind });
+  const deepseekRoute = route.route === 'deepseek';
+  const key = deepseekRoute ? route.apiKey : profile.apiKey || baseEnv.AI_HUB_TOKEN_PLAN_KEY;
   if (!key) throw new Error('请先配置套餐专属 Key');
   if (!entry?.entryPath || !profile.nodePath || !entry.model) throw new Error('请配置原生 Harness 路径、Node 路径和套餐模型');
   for (const file of [entry.entryPath, profile.nodePath]) {
     if (!path.isAbsolute(file) || !fs.statSync(file).isFile()) throw new Error('Harness 可执行文件不存在或不是绝对路径');
   }
-  const model = opts.model || entry.model;
-  const models = require('./acp-model-catalog').acpModelOptions(kind, model);
+  const catalog = require('./acp-model-catalog');
+  let model = opts.model || entry.model;
+  // 备用期间按原档位换成 DeepSeek（flash 对 flash，其余对 pro）；回到套餐时把备用模型换回该外壳的配置模型。
+  if (deepseekRoute) model = fallback.fallbackModel(model);
+  else if (fallback.FALLBACK_MODELS.includes(model) && !catalog.acpModelOptions(kind).some(m => m.id === model)) model = entry.model;
+  const models = deepseekRoute ? fallback.FALLBACK_MODELS.map(id => ({ id, label: id, source: 'deepseek-api' }))
+    : catalog.acpModelOptions(kind, model);
   if(!/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(model))throw new Error('请填写套餐模型 ID，不可切到其他供应商命名空间');
   let mcpServers=[];
   if(opts.assistantMcpServers) {
@@ -48,10 +57,10 @@ function buildAcpOptions(kind, opts, config, dataDir, baseEnv = process.env) {
       } else throw new Error('MCP 传输类型无效：'+s.name);
     }
   }
-  const baseURL = profile.baseURL || PLAN_BASE_URL;
+  const baseURL = deepseekRoute ? fallback.DEEPSEEK_API_BASE : profile.baseURL || PLAN_BASE_URL;
   // A shared subscription credential must never be routed to an unrelated host.
-  if (baseURL.replace(/\/$/, '') !== PLAN_BASE_URL) throw new Error('套餐 profile 只允许已核对的阿里云 Token Plan 端点');
-  const profileId = 'aliyun-token-plan:' + kind;
+  if (!deepseekRoute && baseURL.replace(/\/$/, '') !== PLAN_BASE_URL) throw new Error('套餐 profile 只允许已核对的阿里云 Token Plan 端点');
+  const profileId = (deepseekRoute ? fallback.DEEPSEEK_ROUTE_PREFIX : fallback.TOKEN_PLAN_ROUTE_PREFIX) + kind;
   const sessionRoot = path.join(dataDir, 'acp', createHash('sha256').update(opts.id).digest('hex'));
   const home = path.join(sessionRoot, 'home');
   if (opts.acpFork) {
@@ -91,7 +100,7 @@ function buildAcpOptions(kind, opts, config, dataDir, baseEnv = process.env) {
       'agent-default-model': { provider: 'bailian-tpp', model },
       'llm-pi-ai': { providers: { 'bailian-tpp': { api: 'openai-completions', baseURL,
         apiKeyEnv: 'BAILIAN_API_KEY', models: models.map(({id}) => ({ id,
-          reasoningEfforts: require('./acp-model-catalog').deepseekReasoningEfforts(id),
+          reasoningEfforts: deepseekRoute ? { high: 'high', max: 'max' } : catalog.deepseekReasoningEfforts(id),
           compat: { thinkingFormat: 'deepseek', supportsDeveloperRole: false } })) } } },
     };
     writeJson(path.join(env.DSH_HOME, 'settings.yaml'), settings);
@@ -126,7 +135,7 @@ function buildAcpOptions(kind, opts, config, dataDir, baseEnv = process.env) {
       ZCODE_BASE_URL: baseURL, ZCODE_ACP_RUNTIME: 'node', ZCODE_ACP_REMOTE: '0' });
     // Explicit custom provider prevents the bridge's built-in GLM quota route.
     writeJson(path.join(home, '.zcode/v2/config.json'), { provider: { 'hub-token-plan': {
-      name: '阿里云 Token Plan', kind: 'openai', enabled: true,
+      name: deepseekRoute ? 'DeepSeek API（Token Plan 额度用完时的备用）' : '阿里云 Token Plan', kind: 'openai', enabled: true,
       options: { baseURL, apiKey: key }, models: { [model]: { name: model } },
     } } });
   }
@@ -134,7 +143,10 @@ function buildAcpOptions(kind, opts, config, dataDir, baseEnv = process.env) {
   require('./agent-user-context').syncNativeUserContext({kind,
     nativeHome:path.join(home,{qwen:'.qwen','deepseek-acp':'.dsh',glm:'.zcode'}[kind]),
     env:baseEnv,dataDir});
-  return { id: opts.id, kind, cwd: opts.cwd, profileId, model, effort: opts.effort,mcpServers,
+  // DeepSeek 线路只提供 high / max；套餐 flash 档的 low 等档位换线路后不存在，交给外壳默认，免得启动时被拒。
+  const effort = deepseekRoute && !['high', 'max'].includes(opts.effort) ? undefined : opts.effort;
+  return { id: opts.id, kind, cwd: opts.cwd, profileId, tokenPlanRoute: route.route,
+    tokenPlanWait: route.waitForReset ? { missingKey: route.missingKey } : null, model, effort,mcpServers,
     permissionPolicy: 'bypass',
     defaultMode: {qwen:'yolo','deepseek-acp':'danger-full-access',glm:'yolo'}[kind],
     resumeId: opts.acpFork?.sessionId || opts.acpSid, forkCli:opts.acpFork?.forkCli===true, restoredRuntime: opts.nativeRuntime, forkHistory: opts.acpFork?.history,

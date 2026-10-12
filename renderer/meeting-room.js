@@ -6507,10 +6507,10 @@ if (typeof document !== 'undefined') (function () {
 
     // 群聊入口只提供 Claude / Codex / DeepSeek 三种 runtime（主力矩阵）。
     // 但不去重、不封顶：同一种 AI 可以加多个（两个 Claude 跑不同模型/角色是有效用法）。
-    // 历史会议里的 Gemini/Kimi 等成员继续可读可运行，只是不再从群聊入口新增。
+    // 历史会议里的 Kimi 等成员继续可读可运行，只是不再从群聊入口新增；Antigravity 2026-10-12 起重新开放。
     const _CLI_SUFFIX = { claude: 'Claude Code', gemini: 'Antigravity CLI', codex: 'Codex CLI', deepseek: 'DeepSeek · Codex', kimi: 'Kimi Code' };
     const availableKinds = meeting.groupChat
-      ? ['claude', 'codex', 'deepseek', 'qwen', 'deepseek-acp', 'glm']
+      ? ['claude', 'codex', 'deepseek', 'qwen', 'deepseek-acp', 'glm', 'gemini']
       : ALL_AI_KINDS;
     const kinds = availableKinds.map(k => ({
       kind: k,

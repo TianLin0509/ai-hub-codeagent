@@ -167,7 +167,7 @@ class HubRestart {
       // PTY Claude / Codex 的语义确认来自 hook（UserPromptSubmit）或 rollout 的 task_started；
       // 只凭屏幕推断的 pty-* 来源仍不算，照旧报待核对、不重发。
       const accepted = ['accepted','submitted','running','completed'].includes(result?.sendStatus)
-        || (['ok','auto_recovered'].includes(result?.sendStatus) && ['codex-app-server','claude-stream-json','acp','kimi_wire_turn_prompt','gemini_user_message','user_message','item_completed_user_message',
+        || (['ok','auto_recovered'].includes(result?.sendStatus) && ['codex-app-server','claude-stream-json','acp','kimi_wire_turn_prompt','gemini_user_message','antigravity_hook','antigravity_user_message','user_message','item_completed_user_message',
           'claude-user-prompt-submit','codex-user-prompt-submit','task_started'].includes(result.acknowledgementSource));
       if (!result?.ok || !accepted) throw new Error(result?.message || result?.error || '续作未得到原生提交确认，未自动重发');
       row.status='continued'; row.message='已确认提交续作';
