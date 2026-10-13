@@ -21,8 +21,9 @@
     claude: 'Claude Code',
     gemini: 'Antigravity CLI',
     codex: 'Codex CLI',
-    chatgpt: 'ChatGPT',
     deepseek: 'DeepSeek',
+    // 2026-10-11：新建 DeepSeek 会话一律跑 Claude Code（旧的 Codex / 旧 Harness 接入从新建入口移除）。
+    'deepseek-claude': 'DeepSeek · Claude Code',
     kimi: 'Kimi Code · K3',
     codeagent: 'CodeAgent · 公司内网',
     powershell: 'PowerShell',
@@ -39,8 +40,11 @@
   // 三个 kind 有"速度/质量"档位可调：Claude 走 CLI 的 --effort，
   // Codex 与新版 DeepSeek（同一条 codex runtime）走 -c model_reasoning_effort。
   // 两边的合法枚举不一样：Claude 是固定表，Codex 按模型目录取值（部分模型有 ultra）。
-  const EFFORT_KINDS = new Set(['claude', 'codex', 'deepseek', 'codeagent']);
-  const MCP_KINDS = new Set(['claude', 'codex', 'deepseek', 'codeagent']);
+  const EFFORT_KINDS = new Set(['claude', 'codex', 'deepseek', 'codeagent', 'deepseek-claude']);
+  const MCP_KINDS = new Set(['claude', 'codex', 'deepseek', 'codeagent', 'deepseek-claude']);
+  // 新建面板上只有一个「DeepSeek」按钮；历史上的 deepseek / deepseek-acp 入口都落到 Claude Code。
+  const DEEPSEEK_PANEL_KINDS = new Set(['deepseek', 'deepseek-acp', 'deepseek-claude']);
+  const deepseekProfile = require('../core/deepseek-claude-profile.js');
   // 这个开关只表示 Claude Code 的 fastMode；Codex 的 fast 是另一套
   // service_tier 机制，由下面独立的速度通道控件承载。
   const FAST_KINDS = new Set(['claude']);
@@ -77,6 +81,30 @@
   let codexAccounts = [];
   let codexAccountId = '';
   let codexBackend = 'subscription';
+  // DeepSeek 接入：上次选的方式（Hub 配置记住，默认 Token Plan）+ 两条线各自是否有 Key。
+  let deepseekRoute = deepseekProfile.DEFAULT_ROUTE;
+  let deepseekRoutes = null;
+  let deepseekRouteTouched = false;
+  function panelKind(kind) {
+    if (DEEPSEEK_PANEL_KINDS.has(kind)) return 'deepseek-claude';
+    return KIND_LABELS[kind] ? kind : null;
+  }
+  // 缺 Key 的一条：置灰并写原因。读不到配置时不预判（创建时主进程会如实报错）。
+  function deepseekRouteStatus(route) {
+    const entry = deepseekRoutes && deepseekRoutes[route];
+    return entry ? { available: entry.available !== false, reason: entry.reason || '' } : { available: true, reason: '' };
+  }
+  async function saveDeepseekRoute(route) {
+    const normalized = deepseekProfile.normalizeRoute(route);
+    if (!normalized) return null;
+    deepseekRoute = normalized;
+    deepseekRouteTouched = true;
+    try {
+      const result = await ipcRenderer.invoke('deepseek:set-route', { route: normalized });
+      if (!result || !result.ok) console.warn('[deepseek-route] remember failed:', result && result.error);
+    } catch (error) { console.warn('[deepseek-route] remember failed:', error && error.message); }
+    return normalized;
+  }
   let accountSaving = false;
   let pendingAccountId = '';
   let accountReadError = '';
@@ -106,6 +134,7 @@
     claude: '思考强度 (--effort)',
     codex: '思考强度 (reasoning effort)',
     deepseek: '思考强度 (reasoning effort)',
+    'deepseek-claude': '思考强度 (--effort)',
   };
   // 用户按 kind 调过的档位记在这里，切回来时不必重选。
   const tuningMemory = new Map();
@@ -117,7 +146,7 @@
     full: 'Full MCP',
   };
 
-  function effortFamily(kind) { return kind === 'claude' ? 'claude' : 'codex'; }
+  function effortFamily(kind) { return kind === 'claude' || kind === 'deepseek-claude' ? 'claude' : 'codex'; }
   function mcpOptionsFor(kind) { return MCP_OPTIONS[effortFamily(kind)] || []; }
   function defaultMcpFor(kind) { return DEFAULT_MCP_BY_KIND[kind] || 'none'; }
   function defaultCodexSpeedFor(kind, modelId) {
@@ -142,7 +171,7 @@
   // Claude 的档位是固定枚举；Codex 的按当前选中的模型来 —— 给 5.5 显示 ultra
   // 会拼出它不认识的值，给 5.6-sol 藏掉 ultra 又是白白少一档。
   function effortOptionsFor(kind, modelId) {
-    if (kind === 'claude') return CLAUDE_EFFORT_OPTIONS;
+    if (kind === 'claude' || kind === 'deepseek-claude') return CLAUDE_EFFORT_OPTIONS;
     // 公司 Code Agent 的 --effort 只有这四档（实测帮助文本），没有 xhigh。
     if (kind === 'codeagent') return [['max', 'max · 最强'], ['high', 'high · 推荐'], ['medium', 'medium'], ['low', 'low · 最快']];
     if (!CODEX_TIER_KINDS.has(kind)) return [];
@@ -190,6 +219,10 @@
         codexAccountId=config.codexSubscriptionProfile || '';
         codexBackend=config.codexBackend;
         accountReadError='';
+      }
+      if (config) {
+        if (!deepseekRouteTouched) deepseekRoute = deepseekProfile.normalizeRoute(config.deepseekRoute) || deepseekProfile.DEFAULT_ROUTE;
+        deepseekRoutes = config.deepseekRoutes || null;
       }
     } catch (error) {
       hubDefaultModels = {};
@@ -713,7 +746,7 @@
     if (!errorEl) return;
     errorEl.textContent = message.replace(/Error invoking remote method '[^']+': (?:Error: )?/, '');
     errorEl.hidden = !message;
-    if (message && (selectedKind === 'chatgpt' || /官方登录界面|登录入口/.test(message))) errorEl.scrollIntoView({ block: 'nearest' });
+    if (message && /官方登录界面|登录入口/.test(message)) errorEl.scrollIntoView({ block: 'nearest' });
   }
 
   // Recent workspaces are the primary way to pick an existing path; the OS folder
@@ -874,11 +907,11 @@
   }
 
   // 「设为默认」按钮的三种状态：已是默认（禁用，用来回答"当前默认是不是它"）、
-  // 可设为默认、以及 chatgpt 这种没有稳定模型 id 的 kind（整个隐藏）。
+  // 可设为默认、以及没有模型的 kind（整个隐藏）。
   function paintDefaultModelButton() {
     const button = document.getElementById('new-session-model-default');
     if (!button) return;
-    const supported = !!selectedModel && selectedKind !== 'chatgpt';
+    const supported = !!selectedModel;
     button.hidden = !supported;
     if (!supported) return;
     const already = isDefaultModel(selectedKind, selectedModel, defaultModelConfig());
@@ -943,9 +976,7 @@
     }
 
     if (!options.some(option => option.id === selectedModel)) {
-      selectedModel = selectedKind === 'chatgpt' && selectedModel.startsWith('chatgpt-web/')
-        ? selectedModel
-        : resolveDefaultModel(selectedKind, defaultModelConfig(), options.map(option => option.id));
+      selectedModel = resolveDefaultModel(selectedKind, defaultModelConfig(), options.map(option => option.id));
     }
     const wanted = options.map(option => `${option.id}\u0000${option.label}`).join('|');
     if (modelSelect.dataset.builtFor !== wanted) {
@@ -953,15 +984,6 @@
         .map(option => `<option value="${escapeHtml(option.id)}">${escapeHtml(option.label)}</option>`)
         .join('');
       modelSelect.dataset.builtFor = wanted;
-    }
-    modelSelect.querySelector('[data-chatgpt-unavailable]')?.remove();
-    if (selectedKind === 'chatgpt' && !options.some(option => option.id === selectedModel)) {
-      const unavailable = document.createElement('option');
-      unavailable.value = selectedModel;
-      unavailable.textContent = '原档位当前不可用，请选择模型';
-      unavailable.disabled = true;
-      unavailable.dataset.chatgptUnavailable = 'true';
-      modelSelect.appendChild(unavailable);
     }
     modelSelect.value = selectedModel;
     paintDefaultModelButton();
@@ -1075,12 +1097,8 @@
 
   function paint() {
     if (!menuEl) return;
-    const webPanel = document.getElementById('chatgpt-web-panel');
-    if (webPanel) webPanel.hidden = selectedKind !== 'chatgpt';
-    const webStatus = document.getElementById('chatgpt-web-status');
-    if (webStatus) webStatus.textContent = chatgptCatalog?.message || '正在读取 Codex Web GPT 配置…';
     menuEl.querySelectorAll('.new-session-option').forEach(button => {
-      const selected = button.dataset.kind === (selectedKind === 'deepseek-acp' ? 'deepseek' : selectedKind);
+      const selected = button.dataset.kind === (DEEPSEEK_PANEL_KINDS.has(selectedKind) ? 'deepseek' : selectedKind);
       button.classList.toggle('selected', selected);
       button.setAttribute('aria-pressed', selected ? 'true' : 'false');
     });
@@ -1093,9 +1111,31 @@
     paintTuning();
 
     const routeField = document.getElementById('new-session-deepseek-route-field');
-    if (routeField) routeField.hidden = !['deepseek','deepseek-acp'].includes(selectedKind);
+    const showRoute = selectedKind === 'deepseek-claude';
+    if (routeField) routeField.hidden = !showRoute;
     const routeSelect = document.getElementById('new-session-deepseek-route');
-    if (routeSelect && routeField && !routeField.hidden) routeSelect.value = selectedKind;
+    if (routeSelect && showRoute) {
+      for (const option of routeSelect.options) {
+        const status = deepseekRouteStatus(option.value);
+        const base = deepseekProfile.ROUTES[option.value] ? deepseekProfile.ROUTES[option.value].label : option.value;
+        option.disabled = !status.available;
+        option.textContent = status.available
+          ? (option.value === deepseekProfile.DEFAULT_ROUTE ? `${base} · 默认` : base)
+          : `${base} · 不可用`;
+        option.title = status.reason || '';
+      }
+      routeSelect.value = deepseekRoute;
+    }
+    const routeNote = document.getElementById('new-session-deepseek-route-note');
+    const routeStatus = deepseekRouteStatus(deepseekRoute);
+    if (routeNote) {
+      routeNote.hidden = !showRoute;
+      routeNote.dataset.state = routeStatus.available ? 'info' : 'error';
+      routeNote.textContent = !showRoute ? ''
+        : routeStatus.available
+          ? 'DeepSeek 在 Claude Code 里运行；两种接入用同一个 CLI，只是计费方式不同。'
+          : `${deepseekProfile.ROUTES[deepseekRoute].label}不可用：${routeStatus.reason}。请改选另一种接入方式，Hub 不会自动替换。`;
+    }
     const existingRow = document.getElementById('new-session-existing-path');
     menuEl.querySelectorAll('[data-project-path]').forEach(button => {
       const selected = workspacePathKey(existingWorkspace?.path) === workspacePathKey(button.dataset.projectPath);
@@ -1118,7 +1158,9 @@
       summary.title = summaryTitle();
     }
     const submit = document.getElementById('new-session-submit');
-    if (submit) submit.disabled = submitting || accountSaving || (selectedKind === 'codex' && !!accountReadError) || (workspaceMode === 'existing' && !existingWorkspace);
+    if (submit) submit.disabled = submitting || accountSaving || (selectedKind === 'codex' && !!accountReadError)
+      || (selectedKind === 'deepseek-claude' && !routeStatus.available)
+      || (workspaceMode === 'existing' && !existingWorkspace);
   }
 
   // The footer states where the session will actually land, so a mis-set
@@ -1144,11 +1186,9 @@
   function summaryText() {
     const parts = [KIND_LABELS[selectedKind] || selectedKind];
     if (selectedKind === 'codex' && codexBackend !== 'api') {const p=codexAccounts.find(x=>x.id===codexAccountId);parts.push(p?(p.email||p.label||p.id):'读取账号中');}
+    if (selectedKind === 'deepseek-claude') parts.push(deepseekProfile.ROUTES[deepseekRoute].label);
     const tuning = tuningTag();
-    if (tuning) {
-      if (selectedKind === 'chatgpt') parts[0] = tuning;
-      else parts.push(tuning);
-    }
+    if (tuning) parts.push(tuning);
     const target = targetPathPreview();
     if (workspaceMode === 'existing' && existingWorkspace) parts.push(workspaceTierLabel(existingWorkspace.tier));
     parts.push(target ? compactPath(target, 46) : '请选择目录');
@@ -1188,8 +1228,9 @@
   function openNewSessionModal(options = {}) {
     if (!menuEl) return;
     const { kindAllowed } = require('../core/distribution');
-    selectedKind = KIND_LABELS[options.kind] && kindAllowed(options.kind) ? options.kind
-      : require('./codeagent-preference').preferredKind(Object.keys(KIND_LABELS).filter(kindAllowed));
+    selectedKind = [panelKind(options.kind), panelKind(require('./codeagent-preference').preferredKind(Object.keys(KIND_LABELS).filter(kindAllowed)))]
+      .find(kind => kind && kindAllowed(kind)) || require('./codeagent-preference').preferredKind(Object.keys(KIND_LABELS).filter(kindAllowed));
+    deepseekRouteTouched = false;
     const requestedWorkspace = options.workspace && typeof options.workspace.path === 'string'
       ? { ...options.workspace }
       : null;
@@ -1197,9 +1238,7 @@
     existingWorkspace = requestedWorkspace;
     void loadPreparedProjects();
     submitting = false;
-    selectedModel = selectedKind === 'chatgpt'
-      ? 'chatgpt-web/high'
-      : resolveDefaultModel(selectedKind, defaultModelConfig());
+    selectedModel = resolveDefaultModel(selectedKind, defaultModelConfig());
     modelTouchedByUser = false;
     applyTuningMemory(selectedKind);
     // 配置可能在别处被改过（设置面板、手改 config.json）。重读一次再决定预选值。
@@ -1210,7 +1249,7 @@
     // 手选的模型若恰好等于出厂默认，又会被这次回读悄悄改掉。
     void loadHubDefaultModels().then(async () => {
       await loadModelCatalog(selectedKind);
-      if (!modelTouchedByUser && selectedKind !== 'chatgpt') {
+      if (!modelTouchedByUser) {
         selectedModel = resolveDefaultModel(
           selectedKind,
           defaultModelConfig(),
@@ -1235,7 +1274,7 @@
     // this controller without going through the unified launcher. Always reset
     // the shell to the session intent before focusing the selected provider.
     window.dispatchEvent(new CustomEvent('launch-center:session-opened'));
-    const selected = menuEl.querySelector(`.new-session-option[data-kind="${selectedKind === 'deepseek-acp' ? 'deepseek' : selectedKind}"]`);
+    const selected = menuEl.querySelector(`.new-session-option[data-kind="${DEEPSEEK_PANEL_KINDS.has(selectedKind) ? 'deepseek' : selectedKind}"]`);
     if (selected) selected.focus();
     void loadRecent().then(paint);
     // 每次打开都向当前 CLI 目录服务取一次（main 有短 TTL），不把模型表冻结到 Hub 启动时。
@@ -1246,7 +1285,6 @@
   // 键按 kind 存而不是全局一份 —— 两家的合法枚举和默认值都不一样。
   function rememberTuning(kind) {
     tuningMemory.set(kind, {
-      ...(kind === 'chatgpt' ? { model: selectedModel } : {}),
       effort: selectedEffort,
       mcpProfile: selectedMcpProfile,
       fastMode: selectedFastMode,
@@ -1256,7 +1294,6 @@
 
   function applyTuningMemory(kind) {
     const saved = tuningMemory.get(kind);
-    if (kind === 'chatgpt') selectedModel = saved?.model || 'chatgpt-web/high';
     selectedEffort = (saved && saved.effort) || defaultEffortFor(kind);
     selectedMcpProfile = (saved && saved.mcpProfile) || defaultMcpFor(kind);
     selectedFastMode = saved && typeof saved.fastMode === 'boolean' ? saved.fastMode : DEFAULT_FAST_MODE;
@@ -1358,16 +1395,22 @@
   // list, effort/mcpProfile for the kinds whose CLI has the corresponding dial.
   // 省略等于沿用 session-manager 的默认值，所以只在"确实有这一档"时才传。
   function tuningOpts() {
-    return buildSessionTuningOpts(selectedKind, selectedModel, {
+    const opts = buildSessionTuningOpts(selectedKind, selectedModel, {
       effort: selectedEffort,
       mcpProfile: selectedMcpProfile,
       fastMode: selectedFastMode,
       codexSpeedTier: selectedCodexTier,
     });
+    if (selectedKind === 'deepseek-claude') opts.deepseekRoute = deepseekRoute;
+    return opts;
   }
 
   async function submitNewSession() {
     if (submitting || accountSaving || (selectedKind === 'codex' && accountReadError)) return null;
+    if (selectedKind === 'deepseek-claude' && !deepseekRouteStatus(deepseekRoute).available) {
+      setError(`${deepseekProfile.ROUTES[deepseekRoute].label}不可用：${deepseekRouteStatus(deepseekRoute).reason}`);
+      return null;
+    }
     setError('');
     let workspace = existingWorkspace;
     if (workspaceMode === 'existing' && !workspace) {
@@ -1378,7 +1421,7 @@
     submitting = true;
     paint();
     const submit = document.getElementById('new-session-submit');
-    if (submit) submit.textContent = selectedKind === 'chatgpt' ? '正在准备 ChatGPT…' : '创建中…';
+    if (submit) submit.textContent = '创建中…';
     try {
       // 与群聊成员同一条准确性门：提交前等真实 Codex 模型目录并重新归一化，
       // 避免快速点击把 fallback 中该模型不支持的 effort 送进 PTY。
@@ -1435,14 +1478,10 @@
       void loadHubDefaultModels().then(()=>loadCodexTuningCatalog()).then(paint).catch(error=>setError(error.message));
     });
 
-    document.getElementById('chatgpt-web-settings')?.addEventListener('click', async () => {
-      try { await ipcRenderer.invoke('chatgpt-web:settings'); } catch (error) { setError(error.message); }
-    });
-    document.getElementById('chatgpt-web-refresh')?.addEventListener('click', () => { void loadModelCatalog('chatgpt').then(paint); });
     menuEl.querySelectorAll('.new-session-option').forEach(button => {
       button.addEventListener('click', () => {
         rememberTuning(selectedKind);
-        selectedKind = button.dataset.kind === 'deepseek' ? (document.getElementById('new-session-deepseek-route')?.value || 'deepseek') : button.dataset.kind || 'claude';
+        selectedKind = panelKind(button.dataset.kind) || 'claude';
         applyTuningMemory(selectedKind);
         setError('');
         paint();
@@ -1464,11 +1503,9 @@
       });
     });
     document.getElementById('new-session-deepseek-route')?.addEventListener('change', event => {
-      rememberTuning(selectedKind);
-      selectedKind = event.target.value === 'deepseek' ? 'deepseek' : 'deepseek-acp';
-      applyTuningMemory(selectedKind);
-      setError(''); paint();
-      void loadModelCatalog(selectedKind).then(paint);
+      setError('');
+      void saveDeepseekRoute(event.target.value).then(paint);
+      paint();
     });
     const modelSelect = document.getElementById('new-session-model');
     document.getElementById('new-session-project-refresh')?.addEventListener('click', loadPreparedProjects);
@@ -1588,6 +1625,10 @@
     loadModelCatalog,
     loadPrimaryModelCatalogs,
     loadSessionDefaults: () => Promise.all([loadHubDefaultModels(), loadPrimaryModelCatalogs()]),
+    // 建群弹窗与新建面板共用 DeepSeek 接入的记忆与可用性。
+    deepseekRouteState: () => ({ route: deepseekRoute, routes: deepseekRoutes }),
+    deepseekRouteStatus: route => deepseekRouteStatus(deepseekProfile.normalizeRoute(route) || deepseekRoute),
+    saveDeepseekRoute,
     workspaceTierLabel,
   };
 

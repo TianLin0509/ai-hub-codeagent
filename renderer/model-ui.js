@@ -97,7 +97,7 @@ function parseCodexModelPicker(screen) {
   if (!/Select Model and Effort/i.test(String(screen || ''))) return null;
   const rows = pickerRows(screen);
   const entries = rows.map(row => {
-    const match = row.text.match(/^((?:gpt-[\w.-]+|o\d[\w.-]*|deepseek-v4-(?:pro|flash)))\b/i);
+    const match = row.text.match(/^((?:gpt-[\w.-]+|o\d[\w.-]*|deepseek-v4-(?:pro|flash)|deepseek-flash))\b/i);
     return match ? { ...row, value: match[1] } : null;
   }).filter(Boolean);
   if (!entries.length) return null;
@@ -563,10 +563,15 @@ function createModelUiController({
     if (!terminalAcceptsModelCommand(commandText(sessionId), 'claude-inline')) {
       throw new Error('Claude 输入框有未发送内容或当前不在主提示符；请先处理后再切换模型');
     }
-    await submitSlashCommand(sessionId, `/model ${option.id}`, 'claude-inline');
+    // DeepSeek on Claude Code：终端里要切的是这条接入方式下的真实模型名（官方 API 的 Flash 叫 deepseek-flash）。
+    const deepseekClaude = String(session.kind || '').replace(/-resume$/, '') === 'deepseek-claude';
+    const commandModel = deepseekClaude
+      ? require('../core/deepseek-claude-profile').wireModel(option.id, session.deepseekActiveRoute || session.deepseekRoute)
+      : option.id;
+    await submitSlashCommand(sessionId, `/model ${commandModel}`, 'claude-inline');
     let acceptedConfirmation=false;
     const confirmation = await waitForScreen(sessionId, screen => {
-      const dialog=require('../core/cli-model-command').parseClaudeModelSwitchConfirmation(screen,option.id);
+      const dialog=require('../core/cli-model-command').parseClaudeModelSwitchConfirmation(screen,commandModel);
       if(dialog&&!acceptedConfirmation){
         acceptedConfirmation=true;
         writeTerminal(sessionId,pickerNavigationInput(dialog.cursor,dialog.number)+'\r');
@@ -577,13 +582,13 @@ function createModelUiController({
         return { modelId: current.currentModel.id, displayName: current.currentModel.displayName || option.label };
       }
       const lower = String(screen || '').toLowerCase();
-      const family = String(option.id).replace(/^claude-/, '').split('-')[0].replace(/\[1m\]$/i, '');
+      const family = String(commandModel).replace(/^claude-/, '').split('-')[0].replace(/\[1m\]$/i, '');
       if (/(invalid model|not available|does not have access|unknown model)/i.test(lower)) {
         const error = new Error('Claude Code 拒绝了该模型或当前账号无权限');
         error.modelRejected = true;
         throw error;
       }
-      const commandEcho = `/model ${String(option.id).toLowerCase()}`;
+      const commandEcho = `/model ${String(commandModel).toLowerCase()}`;
       return lower.includes(commandEcho) && lower.includes(family.toLowerCase())
         && /(set model to|model changed|model switched|now using)/i.test(lower)
         ? { modelId: option.id, displayName: option.label }
@@ -627,7 +632,9 @@ function createModelUiController({
         closeModelPicker();
         return result;
       }
-      if (strategy === 'claude-inline' && typeof ipcRenderer.invoke === 'function') {
+      // 「保护全局默认模型」只针对 Claude 账号的 ~/.claude；DeepSeek 的独立配置目录不需要。
+      if (strategy === 'claude-inline' && typeof ipcRenderer.invoke === 'function'
+          && String(session.kind || '').replace(/-resume$/, '') !== 'deepseek-claude') {
         const prepared = await ipcRenderer.invoke('prepare-session-model-switch', {
           sessionId,
           modelId: option.id,

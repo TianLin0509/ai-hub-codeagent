@@ -40,6 +40,9 @@ function toMaskedConfig(config) {
     claudeApiModel: config.claudeApiModel,
     deepseekApiKey: config.deepseekApiKey ? '***' + config.deepseekApiKey.slice(-4) : '',
     deepseekApiKeySet: !!config.deepseekApiKey,
+    // DeepSeek on Claude Code：上次选的接入方式和两条线各自是否有 Key（只给布尔与原因，不给 Key）。
+    deepseekRoute: config.deepseekRoute || require('../../core/deepseek-claude-profile').DEFAULT_ROUTE,
+    deepseekRoutes: require('../../core/deepseek-claude-profile').routeAvailability(config),
     codexBackend: config.codexBackend,
     codexSubscriptionProfile: config.codexSubscriptionProfile,
     codexSubscriptionProfiles: config.codexSubscriptionProfiles || [],
@@ -397,6 +400,21 @@ function registerConfigIpc(ipcMain, deps) {
     saveConfig(merged);
     clearSessionManagerConfigCache();
     return { ok: true, defaultModels: (merged.models && merged.models.defaults) || {} };
+  });
+
+  // 新建面板 / 建群弹窗里改「DeepSeek 接入」时记住选择；只写 providers.deepseek.route 一个字段。
+  ipcMain.handle('deepseek:set-route', (_e, payload = {}) => {
+    let existing;
+    try { existing = readConfigJsonForUpdate(); }
+    catch (e) { return { ok: false, error: 'config_read_failed' }; }
+    try {
+      const merged = require('../../core/deepseek-claude-profile').withPreferredRoute(existing, payload.route);
+      saveConfig(merged);
+      clearSessionManagerConfigCache();
+      return { ok: true, route: merged.providers.deepseek.route };
+    } catch (error) {
+      return { ok: false, error: error && error.message ? error.message : String(error) };
+    }
   });
 
   ipcMain.handle('save-hub-config', (_e, newConfig) => {

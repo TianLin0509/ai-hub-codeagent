@@ -104,6 +104,28 @@ function registerPromptInspectIpc(ipcMain, deps) {
       return { ok: false, code: 'ASSEMBLE_FAILED', error: (error && error.message) ? error.message : String(error) };
     }
   });
+
+  // 卡片「发送内容」面板（core/prompt-composition.js）：会话启动时写进系统提示的 Hub 规则 +
+  // 规则文件拼装。payload: { sessionId }。只读会话自己的数据，不接受渲染进程传路径。
+  ipcMain.handle('prompt-composition', (_e, payload) => {
+    const req = payload && typeof payload === 'object' ? payload : {};
+    const session = req.sessionId && sessionManager ? sessionManager.getSession(req.sessionId) : null;
+    if (!session) return { ok: false, code: 'NO_SESSION', error: '找不到这个会话（可能已经关闭）' };
+    const { cwd, kind } = resolveTarget({ sessionId: req.sessionId });
+    let systemRules = null;
+    if (session.hubRulesSystem && session.hubRulesSystem.version) {
+      let text = null;
+      try { text = sessionManager.memoryService?.hubRules?.systemPromptText(session.hubRulesSystem.version) ?? null; } catch (_) {}
+      systemRules = { label: session.hubRulesSystem.label || null, text };
+    }
+    let assembly = null, assemblyError = null;
+    if (!cwd) assemblyError = '这个会话没有记录工作目录';
+    else {
+      try { assembly = buildAssembly(buildInspection({ cwd, kind })); }
+      catch (error) { assemblyError = (error && error.message) ? error.message : String(error); }
+    }
+    return { ok: true, data: { kind, cwd, systemRules, assembly, assemblyError } };
+  });
 }
 
 module.exports = { registerPromptInspectIpc };

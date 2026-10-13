@@ -411,12 +411,20 @@ function registerSessionIpc(ipcMain, deps) {
         ? isClaudeModelSelection(modelId)
         : kind==='deepseek'&&!session.deepseekLegacyClaude
           ? require('../../core/deepseek-codex-profile').DEEPSEEK_CODEX_MODELS.includes(modelId)
+        : kind === 'deepseek-claude'
+          ? require('../../core/deepseek-claude-profile').isKnownModel(modelId)
         // agy slugs; the CLI itself already accepted it with "Model set to".
         : kind === 'gemini'
           ? /^(?:gemini|claude|gpt-oss)[\w.-]+$/.test(modelId)
         : false;
     if (!valid) return { ok: false, error: 'invalid-model', message: '该模型不属于当前 CLI 的会话模型目录' };
     if (kind === 'codex') modelId = require('../../core/model-options').normalizeCodexSessionModel(modelId);
+    // DeepSeek on Claude Code：终端里切的是接入方式对应的真实模型名，Hub 记显示用的 id。
+    if (kind === 'deepseek-claude') {
+      const profile = require('../../core/deepseek-claude-profile');
+      modelId = profile.normalizeModel(modelId);
+      payload = { ...payload, displayName: profile.displayName(modelId, session.deepseekActiveRoute || session.deepseekRoute) };
+    }
 
     const displayName = String(payload.displayName || modelId)
       .replace(/[\0\r\n]+/g, ' ')

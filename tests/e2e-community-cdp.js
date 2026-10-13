@@ -85,8 +85,10 @@ async function main() {
     await until(`document.querySelectorAll(".community-provider").length === ${providerCount}`, 'first-run provider detection');
 
     let title = '';
-    for (let i = 0; i < 20 && !title.includes('AI Hub Community'); i++) { title = windowTitle(hub.pid || hub.child?.pid); await sleep(250); }
-    assert.match(title, new RegExp(`AI Hub Community v${marker.version.replace(/\./g, '\\.')}（上游 ${marker.upstreamVersion.replace(/\./g, '\\.')}）`), title);
+    // 产品名和版本标注随发行目标（公司版有自己的名字）。
+    const titlePrefix = `${marker.productName || 'AI Hub Community'}${marker.editionBadge ? ' ' + marker.editionBadge : ''}`;
+    for (let i = 0; i < 20 && !title.includes(titlePrefix); i++) { title = windowTitle(hub.pid || hub.child?.pid); await sleep(250); }
+    assert.ok(title.startsWith(`${titlePrefix} v${marker.version}（上游 ${marker.upstreamVersion}）`), title);
     report.checks.push(`Window title shows the edition and upstream version: ${title.replace(/：PID \d+/, '')}`);
 
     assert.equal(await cdp.eval('document.querySelectorAll("#btn-research,#btn-study,#study-panel,[data-action=sync-chatgpt],[data-action=sync-company],[data-kind=chatgpt]").length'), 0);

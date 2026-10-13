@@ -7,11 +7,16 @@ const { KIND_LABELS, GROUP_MEMBER_KINDS } = require('../core/ai-kinds.js');
 const { MODEL_OPTIONS_BY_KIND, modelOptionsFor } = require('../core/model-options.js');
 
 const MODEL_KINDS = new Set(Object.keys(MODEL_OPTIONS_BY_KIND).filter(require('../core/distribution').kindAllowed));
+const deepseekProfile = require('../core/deepseek-claude-profile.js');
+// 2026-10-11：新建入口里 DeepSeek 一律跑 Claude Code（kind = deepseek-claude）；旧 Codex / 旧 Harness
+// 接入只留给历史会话恢复，ChatGPT 网页路由也不再作为新建成员出现。
+const LEGACY_DEEPSEEK_KINDS = new Set(['deepseek', 'deepseek-acp']);
+const HIDDEN_CREATE_KINDS = new Set(['chatgpt', 'deepseek', 'deepseek-acp']);
 
 const DEFAULT_SLOTS = [
   { kind: 'claude' },
   { kind: 'codex' },
-  { kind: 'deepseek' },
+  { kind: 'deepseek-claude' },
 ];
 // Claude + Codex are the durable default pair. DeepSeek is an explicit third
 // member rather than a cost/latency-bearing default in every room.
@@ -199,7 +204,7 @@ function _escapeHtml(s) {
 function _aiLogo(kind) {
   // *-resume 复用基础 kind 的 svg（assets 里没有 *-resume.svg）
   const base=String(kind).replace(/-resume$/, '');
-  return `assets/ai-logos/${base === 'deepseek-acp' ? 'deepseek' : base}.svg`;
+  return `assets/ai-logos/${base.startsWith('deepseek') ? 'deepseek' : base}.svg`;
 }
 
 function _modelOptions(kind, selected) {
@@ -215,12 +220,23 @@ function _selectOptions(entries, selected) {
   ).join('');
 }
 
+function _deepseekRouteFor(spec) {
+  return deepseekProfile.normalizeRoute(spec && spec.deepseekRoute)
+    || window.WorkspaceController.deepseekRouteState?.().route
+    || deepseekProfile.DEFAULT_ROUTE;
+}
+
 function _normalizeSlotSpec(spec = {}) {
-  const kind = MODEL_KINDS.has(spec.kind) ? spec.kind : 'claude';
-  const followDefault = spec.followDefault ?? !spec.model;
-  const tuning = window.WorkspaceController.resolveSessionTuning(kind, followDefault ? undefined : spec.model, spec);
+  const requestedKind = LEGACY_DEEPSEEK_KINDS.has(spec.kind) ? 'deepseek-claude' : spec.kind;
+  const kind = MODEL_KINDS.has(requestedKind) && requestedKind !== 'chatgpt' ? requestedKind : 'claude';
+  // 旧 DeepSeek 成员模板换到 Claude Code 后，旧的 Codex 模型名不能带过去。
+  const sameRuntime = kind === spec.kind;
+  const followDefault = sameRuntime ? (spec.followDefault ?? !spec.model) : true;
+  const tuning = window.WorkspaceController.resolveSessionTuning(kind, followDefault ? undefined : spec.model,
+    sameRuntime ? spec : {});
   return {
     kind,
+    ...(kind === 'deepseek-claude' ? { deepseekRoute: _deepseekRouteFor(spec) } : {}),
     followDefault,
     model: tuning.model,
     effort: tuning.effort,
@@ -294,8 +310,8 @@ function _slotHtml(i, spec, isGroup) {
   const def = _normalizeSlotSpec(spec || DEFAULT_SLOTS[i] || DEFAULT_SLOTS[0]);
   const tuning = window.WorkspaceController.resolveSessionTuning(def.kind, def.model, def);
   const providerKinds = isGroup ? GROUP_MEMBER_KINDS : Array.from(MODEL_KINDS);
-  const aiOptions = providerKinds.filter(k => k !== 'deepseek-acp').map(k =>
-    `<option value="${_escapeHtml(k)}"${k === (def.kind === 'deepseek-acp' ? 'deepseek' : def.kind) ? ' selected' : ''}>${_escapeHtml(KIND_LABELS[k] || k)}</option>`
+  const aiOptions = providerKinds.filter(k => !HIDDEN_CREATE_KINDS.has(k)).map(k =>
+    `<option value="${_escapeHtml(k)}"${k === def.kind ? ' selected' : ''}>${_escapeHtml(KIND_LABELS[k] || k)}</option>`
   ).join('');
   const avatarSrc = _aiLogo(def.kind);
   const avatarAlt = KIND_LABELS[def.kind] || def.kind;
@@ -332,7 +348,7 @@ function _slotHtml(i, spec, isGroup) {
       </div>
       <div class="mcm-slot-fields">
         <label><span class="mcm-slot-field-name">AI</span><select class="mcm-ai-select">${aiOptions}</select></label>
-        ${['deepseek','deepseek-acp'].includes(def.kind) ? `<label><span class="mcm-slot-field-name">DeepSeek 接入</span><select class="mcm-deepseek-route"><option value="deepseek"${def.kind === 'deepseek' ? ' selected' : ''}>Codex CLI · DeepSeek API</option><option value="deepseek-acp"${def.kind === 'deepseek-acp' ? ' selected' : ''}>Token Plan · 旧 Harness</option></select></label>` : ''}
+        ${def.kind === 'deepseek-claude' ? _deepseekRouteHtml(def.deepseekRoute) : ''}
         <label><span class="mcm-slot-field-name">模型</span><select class="mcm-model-select">${_modelOptions(def.kind, def.model)}</select></label>
         ${effortField}
         ${mcpField}
@@ -343,6 +359,20 @@ function _slotHtml(i, spec, isGroup) {
   `;
 }
 
+// 「DeepSeek 接入」与新建会话面板同一套：Token Plan 套餐（默认）/ DeepSeek 官方 API，都跑 Claude Code。
+// 缺 Key 的一条置灰并写原因；选中的那条缺 Key 时创建会被拦下，不静默换线。
+function _deepseekRouteHtml(route) {
+  const status = id => window.WorkspaceController.deepseekRouteStatus?.(id) || { available: true, reason: '' };
+  const options = deepseekProfile.ROUTE_IDS.map(id => {
+    const st = status(id);
+    const label = deepseekProfile.ROUTES[id].label + (st.available ? (id === deepseekProfile.DEFAULT_ROUTE ? ' · 默认' : '') : ' · 不可用');
+    return `<option value="${_escapeHtml(id)}"${id === route ? ' selected' : ''}${st.available ? '' : ' disabled'} title="${_escapeHtml(st.reason || '')}">${_escapeHtml(label)}</option>`;
+  }).join('');
+  const current = status(route);
+  const note = current.available ? '' : `<small class="mcm-deepseek-route-note" role="status">${_escapeHtml(deepseekProfile.ROUTES[route].label + '不可用：' + current.reason)}</small>`;
+  return `<label><span class="mcm-slot-field-name">DeepSeek 接入</span><select class="mcm-deepseek-route">${options}</select>${note}</label>`;
+}
+
 function _readSlotSpec(el, i, { strict = true } = {}) {
   const aiSelect = el && el.querySelector('.mcm-ai-select');
   const modelSelect = el && el.querySelector('.mcm-model-select');
@@ -351,8 +381,10 @@ function _readSlotSpec(el, i, { strict = true } = {}) {
     return _groupSlots[i] ? _normalizeSlotSpec(_groupSlots[i]) : null;
   }
   const spec = {
-    kind: aiSelect.value === 'deepseek' ? (el.querySelector('.mcm-deepseek-route')?.value || 'deepseek') : aiSelect.value,
+    kind: aiSelect.value,
     model: modelSelect ? modelSelect.value : '',
+    ...(aiSelect.value === 'deepseek-claude'
+      ? { deepseekRoute: el.querySelector('.mcm-deepseek-route')?.value || _groupSlots[i]?.deepseekRoute } : {}),
     followDefault: _groupSlots[i]?.followDefault ?? !_groupSlots[i]?.model,
   };
   const effort = el.querySelector('.mcm-effort-select');
@@ -403,8 +435,10 @@ function _renderSlots() {
       _renderSlots();
     });
     slotEl.querySelector('.mcm-deepseek-route')?.addEventListener('change', event => {
-      const kind = event.target.value;
-      _groupSlots[Number(slotEl.getAttribute('data-slot'))] = _normalizeSlotSpec({ kind });
+      const i = Number(slotEl.getAttribute('data-slot'));
+      _syncGroupSlotsFromDom();
+      if (_groupSlots[i]) _groupSlots[i].deepseekRoute = event.target.value;
+      void window.WorkspaceController.saveDeepseekRoute?.(event.target.value);
       _renderSlots();
     });
     slotEl.querySelectorAll('.mcm-effort-select, .mcm-mcp-select, .mcm-fast-checkbox, .mcm-codex-tier-select')
@@ -597,10 +631,15 @@ async function _onCreate() {
     // scene，旧代码会在 invoke 之前同步 throw，界面上就像按钮完全没反应。
     const slots = Array.from(_modalEl.querySelectorAll('.mcm-slot')).map((el, i) => {
       const spec = _readSlotSpec(el, i, { strict: true });
+      if (spec.kind === 'deepseek-claude') {
+        const st = window.WorkspaceController.deepseekRouteStatus?.(spec.deepseekRoute) || { available: true };
+        if (!st.available) throw new Error(`成员 ${i + 1}：${deepseekProfile.ROUTES[spec.deepseekRoute].label}不可用：${st.reason}；请改选另一种接入方式`);
+      }
       return {
         index: i,
         kind: spec.kind,
         ...window.WorkspaceController.buildSessionTuningOpts(spec.kind, spec.model, spec),
+        ...(spec.kind === 'deepseek-claude' ? { deepseekRoute: spec.deepseekRoute } : {}),
       };
     });
     if (!slots.length) throw new Error('请至少保留一个群聊成员');

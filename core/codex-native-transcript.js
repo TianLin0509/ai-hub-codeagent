@@ -1,5 +1,5 @@
 'use strict';
-const {displayUserText}=require('./synthetic-user-filter');
+const {displayUserText,hubAttachedFields}=require('./synthetic-user-filter');
 const {TERMINAL,BACKEND}=require('./codex-native-runtime');
 // Live native turns stamp each tool item as it starts and completes. The
 // model was working for the rest of the turn. An ACP tool can be announced
@@ -30,7 +30,7 @@ function nativeTranscriptTurns(threadId, turns) {
       const raw=(item.content || []).filter(i=>i.type==='text').map(i=>i.text).join('\n');
       const text=displayUserText(raw) || (!raw.trim() && attachments.length ? '[图片]' : '');
       if(text)cards.push({id:threadId+':'+item.id,role:'user',text,ts,source:BACKEND,clientSubmissionId:item.clientId,
-        displayTurnKey:threadId+':'+turn.id,itemOrder,attachments});
+        displayTurnKey:threadId+':'+turn.id,itemOrder,attachments,...hubAttachedFields(raw)});
     }
     const messages=items.filter(i=>i.type==='agentMessage');
     let clientSubmissionId=null;

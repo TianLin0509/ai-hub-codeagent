@@ -11,8 +11,34 @@
   "kinds": [
     "codeagent"
   ],
-  "version": "1.0.0",
-  "upstreamVersion": "1.6.440",
-  "upstreamCommit": "f16b2b9ba03a20bca7ff3206fc64bd3407d08e0a",
+  "productName": "AI HUB-Huawei",
+  "editionBadge": "内测先锋版",
+  "update": {
+    "sources": [
+      {
+        "id": "github",
+        "name": "GitHub",
+        "manifest": "https://github.com/TianLin0509/ai-hub-codeagent/releases/latest/download/latest.json",
+        "files": "https://github.com/TianLin0509/ai-hub-codeagent/releases/download/v{version}/"
+      },
+      {
+        "id": "aliyun",
+        "name": "阿里云",
+        "manifest": "https://me.lt-stockpartner.tech/hub-update/company/latest.json",
+        "files": "https://me.lt-stockpartner.tech/hub-update/company/v{version}/"
+      }
+    ],
+    "releasePage": "https://github.com/TianLin0509/ai-hub-codeagent/releases"
+  },
+  "releaseNotes": [
+    "改名为 AI HUB-Huawei（内测先锋版）",
+    "CodeAgent 回答卡片显示智谱头像，不再是破图",
+    "Hub 规则在 CodeAgent 启动时写进系统提示，消息里不再附带规则",
+    "卡片头部新增「发送内容」，可分块查看这条消息实际发了什么",
+    "新增一键更新：多个下载源自动切换，失败写明原因"
+  ],
+  "version": "1.0.1",
+  "upstreamVersion": "1.6.450",
+  "upstreamCommit": "ae0a92c9fd360dd4280a0c62146eb76c50ed0a09",
   "upstreamDirty": false
 }

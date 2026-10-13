@@ -23,11 +23,13 @@ function sanitizeMeetingSlot(slot = {}, fallbackIndex = null) {
   if (typeof slot.model === 'string' && slot.model.trim()) safe.model = slot.model.trim();
 
   const effort = typeof slot.effort === 'string' ? slot.effort.trim().toLowerCase() : '';
-  if (kind === 'claude' && CLAUDE_EFFORTS.has(effort)) safe.effort = effort;
+  // DeepSeek on Claude Code 与 Claude 同一套 --effort / MCP 档位。
+  const claudeLike = kind === 'claude' || kind === 'deepseek-claude';
+  if (claudeLike && CLAUDE_EFFORTS.has(effort)) safe.effort = effort;
   if ((kind === 'codex' || kind === 'deepseek') && CODEX_EFFORTS.has(effort)) safe.effort = effort;
 
   const mcpProfile = typeof slot.mcpProfile === 'string' ? slot.mcpProfile.trim().toLowerCase() : '';
-  if (kind === 'claude' && CLAUDE_MCP_PROFILES.has(mcpProfile)) {
+  if (claudeLike && (CLAUDE_MCP_PROFILES.has(mcpProfile) || (kind === 'deepseek-claude' && mcpProfile === 'none'))) {
     safe.mcpProfile = mcpProfile;
   }
   if ((kind === 'codex' || kind === 'deepseek') && CODEX_MCP_PROFILES.has(mcpProfile)) {
@@ -41,6 +43,10 @@ function sanitizeMeetingSlot(slot = {}, fallbackIndex = null) {
     : '';
   if ((kind === 'codex' || kind === 'deepseek') && CODEX_SPEED_TIERS.has(codexSpeedTier)) {
     safe.codexSpeedTier = codexSpeedTier;
+  }
+  if (kind === 'deepseek-claude') {
+    const route = require('../../core/deepseek-claude-profile').normalizeRoute(slot.deepseekRoute);
+    if (route) safe.deepseekRoute = route;
   }
   if (kind === 'codex') {
     const contextMax = normalizeCodexContextWindow(slot.contextMax);
@@ -208,6 +214,7 @@ function createMeetingSubAdder(deps) {
           fastMode: opts.fastMode,
           codexSpeedTier: opts.codexSpeedTier,
           contextMax: opts.contextMax,
+          deepseekRoute: session.deepseekRoute || opts.deepseekRoute,
         });
         delete slotSpecs[addedIndex].index;
         meetingManager.setSlotSpecs(meetingId, slotSpecs);

@@ -2,7 +2,8 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { ALL_AI_KINDS, isCodexCliKind, getKindLabel } = require('../ai-kinds');
-const BACKENDS = [...ALL_AI_KINDS];
+// 助理的 DeepSeek 后端仍是 Codex 运行时（依赖 Codex 的 MCP 注入）；DeepSeek on Claude Code 不作为助理后端单列。
+const BACKENDS = ALL_AI_KINDS.filter(kind => kind !== 'deepseek-claude');
 function backendKind(kind) {
   if (!BACKENDS.includes(kind)) throw new Error('请选择 Hub 支持的 AI 会话后端');
   return kind;

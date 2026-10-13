@@ -10,6 +10,9 @@ const {
   isGenericAutoSessionTitle: isGenericAutoSessionTitleForKinds,
 } = require('../core/session-title-guards.js');
 
+// 自动起标题走 DeepSeek 官方 API 的 V4.1 Flash。
+const AUTO_TITLE_DEEPSEEK_MODEL = 'deepseek-flash';
+
 function createAutoTitleManager(deps) {
   const {
     allAiKinds,
@@ -82,8 +85,11 @@ function createAutoTitleManager(deps) {
     const system = scope === 'meeting'
       ? '你是房间命名器。根据用户在 AI 群聊中的第一句话生成中文短标题，8到16个汉字或等长短语，不要引号，不要解释。'
       : '你是会话命名器。根据用户第一句话生成中文短标题，8到16个汉字或等长短语，不要引号，不要解释。';
+    // 2026-10-13 起用 V4.1 Flash 的官方新名 deepseek-flash。它默认开思考，40 个 token 会被推理吃掉、
+    // 标题变空；旧名 deepseek-chat 是不开思考的同一模型，所以这里显式关掉思考，行为与原来一致。
     const { status, body } = await postJsonForAutoTitle('https://api.deepseek.com/chat/completions', {
-      model: 'deepseek-chat',
+      model: AUTO_TITLE_DEEPSEEK_MODEL,
+      thinking: { type: 'disabled' },
       messages: [
         { role: 'system', content: system },
         { role: 'user', content: prompt },
@@ -194,7 +200,10 @@ function createAutoTitleManager(deps) {
   }
 
   function maybeAutoTitleSessionFromPrompt(ev) {
-    const { hubSessionId, text } = ev || {};
+    const { hubSessionId } = ev || {};
+    // 标题只取用户自己的话。Hub 附带块（规则、工作区规则、记忆索引）2026-10-13 起放在正文前面，
+    // 各 CLI 的 hook 上报的是整段原文，不剥掉标题会变成「Codex · ai-hub-rules ref=」。
+    const text = require('../core/synthetic-user-filter').splitHubEnvelopes(ev && ev.text).text;
     if (!hubSessionId || !text || autoTitleInFlight.has(hubSessionId)) return;
     const session = sessionManager.getSession(hubSessionId);
     if (!session || session.meetingId || session.userRenamed) return;
@@ -322,5 +331,6 @@ function createAutoTitleManager(deps) {
 }
 
 module.exports = {
+  AUTO_TITLE_DEEPSEEK_MODEL,
   createAutoTitleManager,
 };

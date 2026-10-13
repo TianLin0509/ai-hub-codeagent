@@ -1,6 +1,6 @@
-# AI Hub 公司版（CodeAgent）
+# AI HUB-Huawei · 内测先锋版（CodeAgent）
 
-把公司内网的 **Code Agent CLI** 放进一个 Windows 桌面工作台：单独会话、多 AI 群聊、卡片视图、休眠恢复、历史检索、自动命名。这是 AI Hub 的公司版，当前 **v1.0.0**，同步自上游 **1.6.440**（具体提交见 `community-edition.json`）。
+把公司内网的 **Code Agent CLI** 放进一个 Windows 桌面工作台：单独会话、多 AI 群聊、卡片视图、休眠恢复、历史检索、自动命名。这是 AI Hub 的公司版（产品名 AI HUB-Huawei，内测先锋版），当前 **v1.0.1**，同步自上游 **1.6.450**（具体提交见 `community-edition.json`）。
 
 与公开社区版是同一套代码，区别只在默认行为面向公司内网：
 
@@ -12,24 +12,34 @@
 
 ## 安装（离线包，推荐）
 
-从发布页下载这三个文件（或由同事转来的离线包里取）：`install-release.ps1`、`AIHubCommunity-1.0.0-win-x64.zip`、`SHA256SUMS.txt`，放在同一个文件夹里，在 PowerShell 中执行：
+从发布页下载这三个文件（或由同事转来的离线包里取）：`install-release.ps1`、`AIHubHuawei-1.0.1-win-x64.zip`、`SHA256SUMS.txt`，放在同一个文件夹里，在 PowerShell 中执行：
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\install-release.ps1 -Version v1.0.0 `
-  -PackagePath .\AIHubCommunity-1.0.0-win-x64.zip -ChecksumPath .\SHA256SUMS.txt -DisableGpu
+powershell -NoProfile -ExecutionPolicy Bypass -File .\install-release.ps1 -Version v1.0.1 `
+  -PackagePath .\AIHubHuawei-1.0.1-win-x64.zip -ChecksumPath .\SHA256SUMS.txt -DisableGpu
 ```
 
-- 安装到 `%LOCALAPPDATA%\Programs\AIHubCommunity\v1.0.0`，**不需要管理员权限**，旧版本和用户数据都保留。
+- 安装到 `%LOCALAPPDATA%\Programs\AIHubCommunity\v1.0.1`，**不需要管理员权限**，旧版本和用户数据都保留。
 - `-DisableGpu` 是兼容渲染：部分电脑用显卡渲染时窗口会全黑。加上它之后，桌面快捷方式自带兼容参数，并在 `%USERPROFILE%\.ai-hub-community\gpu-disabled.json` 留一个标记（删掉这个文件即恢复显卡渲染）。
-- 装好后从桌面快捷方式「AI Hub Community」打开。窗口标题会显示版本号，报告问题时请带上这一行。
+- 装好后从桌面快捷方式「AI HUB-Huawei」打开。窗口标题会显示版本号，报告问题时请带上这一行。
 
 前提：命令行里能运行 `codeagent --version`，并且 `codeagent auth status --json` 显示已登录。
+
+## 一键更新（v1.0.1 起）
+
+装好 v1.0.1 之后，以后的版本不用再下载整包：
+
+- 启动约 20 秒后在后台查一次新版本（之后每 6 小时一次），有新版只在左上角版本号旁显示「有新版本」，不弹窗打断；也可以在左下角「设置」菜单里点「检查更新」。
+- 更新弹窗里能看到当前版本 → 新版本、发布说明、更新包大小。下载时显示当前用的下载源、进度、速度和剩余时间。
+- 下载源按顺序尝试：先 GitHub，再阿里云。每个源下完都核对大小和校验值；被公司代理换成网页、404、长时间没数据、校验不一致，都会写明原因并自动换下一个源。全部失败时给出发布页链接，可以手动下载安装包。
+- 一般只下载约 7 MB 的程序文件（整包约 90 MB）。点「立即重启」后约 5 秒完成替换并自动重新打开；替换失败会自动恢复原来的版本，并在重新打开后告诉你原因。底层运行时变化的版本会改为下载完整安装包。
+- 从 v1.0.0 升级到 v1.0.1 需要装一次完整包（v1.0.0 还没有这个功能）。
 
 ## 让 Agent 代装与验收
 
 把这段话发给你的 Code Agent：
 
-> 请按 AI Hub 公司版 v1.0.0 的 README 用离线包安装（带 -DisableGpu），然后读 docs/COMPANY-CODE-AGENT.md 的「现场验收」，逐项验证 CodeAgent 会话：新建、卡片显示回答、休眠后恢复、Hub 关闭重开后恢复、两名 CodeAgent 成员的群聊。只发极短的测试消息，不修改项目文件，报告每项通过或不通过并附原始证据。
+> 请按 AI Hub 公司版 v1.0.1 的 README 用离线包安装（带 -DisableGpu），然后读 docs/COMPANY-CODE-AGENT.md 的「现场验收」，逐项验证 CodeAgent 会话：新建、卡片显示回答、休眠后恢复、Hub 关闭重开后恢复、两名 CodeAgent 成员的群聊。只发极短的测试消息，不修改项目文件，报告每项通过或不通过并附原始证据。
 
 源码包里另有自动验收脚本 `tests/acceptance-codeagent-real.js`（14 项，用真实 Code Agent 跑），用法见脚本开头注释。
 

@@ -35,11 +35,16 @@ const MAX_CLAIM_CHARS = 300;
 const MAX_EVIDENCE_CHARS = 400;
 const MAX_ENTRIES_PER_CANDIDATE = 5;
 
+// 2026-10-13 起默认 V4.1 Flash（官方 API 名 deepseek-flash）。旧名 deepseek-chat 服务端转到同一模型、
+// 但不开思考；deepseek-flash 默认开思考，所以调用时显式关掉，保持原来的输出长度与花费。
+const DREAM_DEEPSEEK_MODEL = 'deepseek-flash';
+const LEGACY_DREAM_DEEPSEEK_MODELS = new Set(['deepseek-chat']);
+
 const DEFAULT_CONSOLIDATION_CONFIG = {
   enabled: true,
   schedule: '03:40',
   provider: 'deepseek-api',
-  model: 'deepseek-chat',
+  model: DREAM_DEEPSEEK_MODEL,
   maxCandidatesPerRun: 12,
   maxInputCharsPerCandidate: 12000,
   autoApply: true,
@@ -54,7 +59,8 @@ function normalizeConsolidationConfig(raw) {
   cfg.autoApply = cfg.autoApply !== false;
   cfg.schedule = /^\d{1,2}:\d{2}$/.test(String(cfg.schedule)) ? String(cfg.schedule) : DEFAULT_CONSOLIDATION_CONFIG.schedule;
   cfg.provider = String(cfg.provider || DEFAULT_CONSOLIDATION_CONFIG.provider);
-  cfg.model = String(cfg.model || '').trim() || (cfg.provider === 'deepseek-api' ? 'deepseek-chat' : '');
+  cfg.model = String(cfg.model || '').trim() || (cfg.provider === 'deepseek-api' ? DREAM_DEEPSEEK_MODEL : '');
+  if (cfg.provider === 'deepseek-api' && LEGACY_DREAM_DEEPSEEK_MODELS.has(cfg.model)) cfg.model = DREAM_DEEPSEEK_MODEL;
   cfg.maxCandidatesPerRun = Math.max(1, Math.min(50, parseInt(cfg.maxCandidatesPerRun, 10) || DEFAULT_CONSOLIDATION_CONFIG.maxCandidatesPerRun));
   cfg.maxInputCharsPerCandidate = Math.max(2000, Math.min(60000, parseInt(cfg.maxInputCharsPerCandidate, 10) || DEFAULT_CONSOLIDATION_CONFIG.maxInputCharsPerCandidate));
   return cfg;
@@ -273,8 +279,10 @@ function callCliLlm(provider, prompt, timeoutMs) {
 async function callLlm({ provider, model, deepseekApiKey, system, user, timeoutMs = 90000 }) {
   if (provider === 'deepseek-api') {
     if (!deepseekApiKey) throw new Error('DeepSeek API Key 未配置（consolidation 需要它，或改用 claude-cli 等订阅通道）');
+    const resolvedModel = model || DREAM_DEEPSEEK_MODEL;
     const { status, body } = await postJson('https://api.deepseek.com/chat/completions', {
-      model: model || 'deepseek-chat',
+      model: resolvedModel,
+      ...(resolvedModel === DREAM_DEEPSEEK_MODEL ? { thinking: { type: 'disabled' } } : {}),
       messages: [
         { role: 'system', content: system },
         { role: 'user', content: user },
@@ -676,6 +684,7 @@ function startDreamScheduler(opts) {
 
 module.exports = {
   DEFAULT_CONSOLIDATION_CONFIG,
+  DREAM_DEEPSEEK_MODEL,
   DREAM_BEGIN,
   DREAM_END,
   normalizeConsolidationConfig,

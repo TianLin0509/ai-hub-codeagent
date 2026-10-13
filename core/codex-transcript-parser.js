@@ -11,7 +11,7 @@ const {
   codexLineFilter,
   streamCodexJsonlRecordsSync,
 } = require('./codex-rollout-reader.js');
-const { isSyntheticUserEntry, isSyntheticUserText, displayUserText } = require('./synthetic-user-filter.js');
+const { isSyntheticUserEntry, isSyntheticUserText, displayUserText, hubAttachedFields } = require('./synthetic-user-filter.js');
 const {
   codexAgentMessageEventFromRecord,
   codexToolActivityEventFromRecord,
@@ -535,6 +535,7 @@ function parseCodexRolloutEntries(entries) {
             text,
             ts: userEvent.submittedAt || toMs(obj.timestamp),
             sourceIndex: index,
+            ...hubAttachedFields(raw),
           });
         }
         return;
@@ -602,6 +603,7 @@ function parseCodexRolloutEntries(entries) {
           text,
           ts: toMs(obj.timestamp),
           sourceIndex: index,
+          ...hubAttachedFields(raw),
         });
       }
     }

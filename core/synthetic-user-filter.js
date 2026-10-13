@@ -81,8 +81,37 @@ function extractGroupChatUserInput(text) {
   return body.trim();
 }
 
+// Hub 自己附在消息里的成块资料：「规则」页的规则、共享工作区规则、项目记忆索引。
+// 2026-10-13 起放在用户正文前面（见 core/hub-memory-service.js），更早的消息放在后面；
+// 用户反馈它们出现在卡片里把每条发送都撑成长消息。卡片只显示用户自己的话，
+// 这些块随回合带出去（hubAttached），由卡片上的「发送内容」面板展示。
+const HUB_ENVELOPE = /<ai-hub-(rules|workspace-rules|dream-index)\b([^>]*)>([\s\S]*?)<\/ai-hub-\1>/g;
+const HUB_ENVELOPE_LABELS = { 'rules': 'Hub 规则', 'workspace-rules': '共享工作区规则', 'dream-index': '项目记忆索引' };
+function splitHubEnvelopes(text) {
+  const original = String(text == null ? '' : text);
+  if (!original.includes('<ai-hub-')) return { text: original, attached: [], blocks: [] };
+  // Claude 会把超长粘贴整段包进 <pasted_content>；里面带 Hub 块时连外壳一起拆。
+  const unwrapped = require('./prompt-submission-receipts').unwrapClaudePasteEnvelope(original);
+  const source = unwrapped !== original && unwrapped.includes('<ai-hub-') ? unwrapped : original;
+  const attached = [], blocks = [];
+  const rest = source.replace(HUB_ENVELOPE, (block, kind, attrs, body) => {
+    const content = body.replace(/^\r?\n/, '').replace(/\r?\n$/, '');
+    // 规则块第一行写明了是哪几份（「通用规则 v1 + 我的规则」），面板上直接用它当标题。
+    const which = kind === 'rules' && content.match(/^以下是 AI Hub 默认带上的规则（([^，）]+)/);
+    attached.push({ kind, label: which ? `Hub 规则（${which[1]}）` : HUB_ENVELOPE_LABELS[kind],
+      ref: (attrs.match(/\bref="([\w-]+)"/) || [])[1] || null, content });
+    blocks.push(block);
+    return '\n\n';
+  });
+  if (!attached.length) return { text: original, attached, blocks };
+  return { text: rest.replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim(), attached, blocks };
+}
+
 // 卡片视图该显示什么：null = 这条压根不该出现；否则返回应显示的文本。
 function displayUserText(text) {
+  const own = splitHubEnvelopes(text);
+  if (own.attached.length && !own.text) return null;
+  text = own.text;
   if (isSyntheticUserText(text)) return null;
   const groupChat = extractGroupChatUserInput(text);
   if (groupChat === null) return String(text || '');
@@ -150,7 +179,15 @@ function searchableUserText(text) {
   return current || null;
 }
 
+// 用户回合上随卡片带出去的附带块（没有就不加字段）。
+function hubAttachedFields(text) {
+  const { attached } = splitHubEnvelopes(text);
+  return attached.length ? { hubAttached: attached } : {};
+}
+
 module.exports = {
+  splitHubEnvelopes,
+  hubAttachedFields,
   textFromContent,
   isSyntheticUserText,
   isSyntheticUserEntry,

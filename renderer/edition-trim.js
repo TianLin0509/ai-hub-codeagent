@@ -19,6 +19,24 @@
       if (ALL_AI_KINDS.includes(provider) && !kindAllowed(provider)) chip.remove();
     });
   }
+  // 产品显示名与版本标注（公司版 2026-10-13 起有自己的名字和「内测先锋版」标注，见 target.json）；社区版没改名就不动。
+  const { productName, editionBadge } = require('../core/distribution');
+  if (productName && productName !== 'AI Hub Community') {
+    const strong = document.querySelector('#hub-identity strong');
+    if (strong) strong.textContent = productName;
+    const brand = document.querySelector('.home-welcome-brand');
+    if (brand && brand.lastChild && brand.lastChild.nodeType === 3) brand.lastChild.textContent = ' ' + productName;
+    document.title = productName;
+    document.querySelectorAll('#btn-new-hub').forEach(b => { b.title = '新建 ' + productName + ' 实例'; b.setAttribute('aria-label', b.title); });
+  }
+  if (editionBadge) {
+    const strong = document.querySelector('#hub-identity strong');
+    if (strong && !document.getElementById('hub-edition-badge')) {
+      const badge = document.createElement('span');
+      badge.id = 'hub-edition-badge'; badge.className = 'hub-edition-badge'; badge.textContent = editionBadge;
+      strong.after(badge);
+    }
+  }
   // 底部状态栏的「余量」：各家 AI 账号的剩余额度，CodeAgent 没有。
   if (!featureEnabled('quotaBar')) document.getElementById('rail-usage')?.remove();
   // 左侧「账号」：各家 AI 网页与命令行账号；按钮留在页面里（别处会程序化点击它来关账号页），只是不显示。

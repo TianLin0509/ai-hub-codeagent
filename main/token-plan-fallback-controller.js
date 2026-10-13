@@ -10,6 +10,7 @@
 //   4. 每次改道或等待都在会话卡片上留一条看得见的提示。
 const fallback = require('../core/token-plan-fallback');
 const { isAcpKind } = require('../core/acp-profiles');
+const { isDeepSeekClaudeKind } = require('../core/deepseek-claude-profile');
 
 const CONTINUATION_NOTE = '（Hub 提示：上一条消息因阿里云 Token Plan 额度用完没有执行，本会话已改用 DeepSeek API。'
   + '请完成下面这条请求；如果之前已经做了一部分，从中断处接着做。）';
@@ -20,6 +21,8 @@ function createTokenPlanFallbackController(deps = {}) {
     restartSession,
     sendToPty = (...args) => require('../core/group-chat-watcher').sendToPty(...args),
     readUsage = null,
+    // PTY 会话（DeepSeek on Claude Code）没有原生通道显示提示，交给主进程推到界面。
+    notify = null,
     logger = console,
     now = Date.now,
     settleMs = 500,
@@ -32,14 +35,23 @@ function createTokenPlanFallbackController(deps = {}) {
   const handled = new Set();
 
   function routeOf(session) {
-    if (!session || !isAcpKind(session.kind)) return null;
+    if (!session) return null;
+    // DeepSeek on Claude Code：只有用户选的是 Token Plan 的会话参与改道；选了官方 API 的不动。
+    if (isDeepSeekClaudeKind(session.kind)) {
+      if ((session.deepseekRoute || 'tokenplan') !== 'tokenplan') return null;
+      return session.deepseekActiveRoute === 'api' ? 'deepseek' : 'token-plan';
+    }
+    if (!isAcpKind(session.kind)) return null;
     if (fallback.isDeepSeekRouteProfile(session.acpProfileId)) return 'deepseek';
     if (fallback.isTokenPlanRouteProfile(session.acpProfileId)) return 'token-plan';
     return null;
   }
   function notice(sessionId, message) {
-    try { sessionManager.getNativeSession?.(sessionId)?.emit('action-error', message); }
-    catch (error) { logger.warn('[token-plan-fallback] notice failed:', error.message); }
+    try {
+      const native = sessionManager.getNativeSession?.(sessionId);
+      if (native) native.emit('action-error', message);
+      else if (typeof notify === 'function') notify(sessionId, message);
+    } catch (error) { logger.warn('[token-plan-fallback] notice failed:', error.message); }
   }
   function routeFor(session) { return fallback.resolveRoute({ config: getConfig(), dataDir, kind: session?.kind, now: now() }); }
 
@@ -62,7 +74,7 @@ function createTokenPlanFallbackController(deps = {}) {
       if (routeOf(session) !== target) throw new Error('会话重启后线路没有变化');
       const native = sessionManager.getNativeSession?.(sessionId);
       await native?.start?.();
-      const model = native?.options?.model || session.currentModel?.id || '';
+      const model = native?.options?.model || session.currentModel?.displayName || session.currentModel?.id || '';
       notice(sessionId, target === 'deepseek'
         ? fallback.deepseekRouteNotice(model, dataDir, now())
         : fallback.exhaustedUntil(dataDir, now()) ? fallback.waitNotice(dataDir, { now: now() })
@@ -130,8 +142,10 @@ function createTokenPlanFallbackController(deps = {}) {
     logger.log(`[token-plan-fallback] ${String(sessionId).slice(0, 8)} switch took ${now() - startedAt} ms`);
     if (!resend || session?.meetingId || !prompt) return;
     try {
+      // PTY 里的 Claude Code 重启后要等 TUI 就绪再粘贴；原生外壳 start() 已经等过。
+      const ptySession = isDeepSeekClaudeKind(session.kind);
       const receipt = await sendToPty(sessionId, CONTINUATION_NOTE + '\n\n' + prompt, session.kind, {
-        requireReady: false, clientSubmissionId: `token-plan-fallback-${now()}`,
+        requireReady: ptySession, clientSubmissionId: `token-plan-fallback-${now()}`,
       });
       if (!receipt || receipt.ok === false) notice(sessionId, '已切到 DeepSeek API，但自动重发未获确认；请在卡片里核对后再决定是否手动重发。');
     } catch (error) {
@@ -186,12 +200,32 @@ function createTokenPlanFallbackController(deps = {}) {
     return event;
   }
 
+  // DeepSeek on Claude Code 走 Claude 的 hook：UserPromptSubmit 记下最近一条（撞墙后重发用），
+  // StopFailure / Stop 里带 Token Plan 额度墙原文时按同一套规则改道。
+  function onClaudeHook(sessionId, event, payload = {}) {
+    const session = sessionManager.getSession?.(sessionId);
+    if (!session || !isDeepSeekClaudeKind(session.kind) || routeOf(session) !== 'token-plan') return false;
+    if (event === 'prompt') {
+      const text = typeof payload.prompt === 'string' ? payload.prompt : '';
+      if (text && !text.startsWith(CONTINUATION_NOTE)) lastPrompt.set(sessionId, text);
+      return false;
+    }
+    if (event !== 'stop-failure' && event !== 'stop') return false;
+    const evidence = [payload.error, payload.message, payload.lastAssistantMessage,
+      payload.errorDetails && typeof payload.errorDetails === 'object' ? JSON.stringify(payload.errorDetails) : payload.errorDetails]
+      .filter(v => typeof v === 'string' && v).join(' ');
+    if (!fallback.isTokenPlanQuotaText(evidence)) return false;
+    const turnKey = `${sessionId}:${payload.turnId || payload.claudeSessionId || ''}:${event === 'stop' ? 'stop' : 'failure'}:${evidence.slice(0, 80)}`;
+    void onQuota(sessionId, evidence, turnKey).catch(error => logger.warn('[token-plan-fallback] quota handling failed:', error.message));
+    return true;
+  }
+
   function observeUsage(snapshot) {
     try { return fallback.observeUsage(dataDir, snapshot, now()); }
     catch (error) { logger.warn('[token-plan-fallback] usage observe failed:', error.message); return null; }
   }
 
-  return { filterLifecycle, beforeSend, needsSwitch, switchSession, observeUsage, routeOf, CONTINUATION_NOTE };
+  return { filterLifecycle, onClaudeHook, beforeSend, needsSwitch, switchSession, observeUsage, routeOf, CONTINUATION_NOTE };
 }
 
 module.exports = { createTokenPlanFallbackController, CONTINUATION_NOTE };

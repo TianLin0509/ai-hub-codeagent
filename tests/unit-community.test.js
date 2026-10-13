@@ -88,8 +88,10 @@ test('data directory and product naming are separate from any private installati
   delete process.env.CLAUDE_HUB_DATA_DIR;
   try { assert.equal(path.basename(dataDir.getHubDataDir()), '.ai-hub-community'); }
   finally { if (saved !== undefined) process.env.CLAUDE_HUB_DATA_DIR = saved; }
-  assert.match(read('core/windows-shell-integration.js'), /AI Hub Community\.lnk/);
-  assert.match(read('main.js'), /AI Hub Community v\$\{_pkgVersion\}/);
+  // 快捷方式和窗口标题用发行版的产品显示名（社区版 AI Hub Community，公司版另有名字）。
+  assert.match(read('core/windows-shell-integration.js'), /require\('\.\/distribution'\)\.productName\}\.lnk/);
+  assert.match(read('main.js'), /\$\{_productName\}.* v\$\{_pkgVersion\}/);
+  assert.equal(require('../core/distribution').productName, require('../community-edition.json').productName || 'AI Hub Community');
 });
 
 test('API defaults point to official endpoints', () => {

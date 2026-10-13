@@ -29,7 +29,9 @@ class AssistantWorkbench {
       const latest = this.latest(s.id);
       return { id: s.id, title: String(s.title || s.name || '未命名会话').slice(0, 120), kind: s.kind, state: s.hubState?.state || 'unknown', label: s.hubState?.label || '未知', isOpen: !!s.isOpen,
         // unread 是收到新回复，不能据此宣称业务已交付。
-        hasReply: !!s.hubState?.hasUnread, last: latest.text, updatedAt: latest.at || Number(s.lastActiveAt || s.updatedAt || 0) || null };
+        hasReply: !!s.hubState?.hasUnread, last: latest.text, updatedAt: latest.at || Number(s.lastActiveAt || s.updatedAt || 0) || null,
+        // 手机 2.1 直接对话：群聊成员只读。
+        ...(s.meetingId ? { group: true } : {}) };
     }).sort((x, y) => rank(x) - rank(y) || (y.updatedAt || 0) - (x.updatedAt || 0));
     const snapshot = { at: this.now(), sessions }; this.store.set('workbench.sessions', snapshot); this.changed(); return this.snapshot();
   }

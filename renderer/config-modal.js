@@ -45,7 +45,7 @@ function createConfigModalController({
     },
     deepseek: {
       title: 'DeepSeek 设置',
-      hint: 'DeepSeek V4 Pro / Flash 通过 Responses API 接入 Codex CLI，新建会话时可选。',
+      hint: 'DeepSeek V4.1 Flash / V4 Pro 通过 Responses API 接入 Codex CLI，新建会话时可选。',
       status: 'API',
       statusClass: 'api',
     },
@@ -322,7 +322,7 @@ function createConfigModalController({
     );
   
     const deepseekSummary = configEl('cfg-summary-deepseek');
-    if (deepseekSummary) deepseekSummary.textContent = deepseekKey ? 'Codex API · V4 Pro / Flash' : 'Codex API · 未配置 Key';
+    if (deepseekSummary) deepseekSummary.textContent = deepseekKey ? 'Codex API · V4.1 Flash / V4 Pro' : 'Codex API · 未配置 Key';
     setConfigStatus(configEl('cfg-status-deepseek'), deepseekKey ? 'API' : '缺 Key', deepseekKey ? 'api' : 'missing');
 
     const claudeSummary = configEl('cfg-summary-claude');

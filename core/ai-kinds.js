@@ -20,15 +20,18 @@
 //   新增 AI 时只需追加这个数组 + 补 KIND_LABELS。
 //   不含 'powershell' 等非 AI 类型。
 // ---------------------------------------------------------------------------
-const ALL_AI_KINDS = ['claude', 'gemini', 'codex', 'deepseek', 'kimi', 'qwen', 'deepseek-acp', 'glm', 'codeagent'];
+// 'deepseek-claude'（2026-10-11）：DeepSeek 跑在 Claude Code 上，新建 DeepSeek 会话一律用它；
+//   旧的 'deepseek'（Codex 运行时 / 迁移前 Claude 兼容）只为恢复历史会话保留。见 core/deepseek-claude-profile.js。
+const ALL_AI_KINDS = ['claude', 'gemini', 'codex', 'deepseek', 'kimi', 'qwen', 'deepseek-acp', 'glm', 'codeagent', 'deepseek-claude'];
 // Offered by the group-creation and writing-member pickers.
 // 2026-10-12: Antigravity (gemini kind) rejoins as a full member: bracketed-paste
 // submit, PreInvocation/Stop hooks, pre-trusted folders and native branches.
 // 发行目标只保留部分 AI 时（公司纯净版只留 CodeAgent），选成员时只列这些。
-const GROUP_MEMBER_KINDS = ['claude', 'codex', 'deepseek', 'qwen', 'deepseek-acp', 'glm', 'codeagent', 'gemini']
+// 2026-10-11：新建 DeepSeek 成员一律跑 Claude Code（deepseek-claude）。
+const GROUP_MEMBER_KINDS = ['claude', 'codex', 'deepseek-claude', 'qwen', 'deepseek-acp', 'glm', 'codeagent', 'gemini']
   .filter(require('./distribution').kindAllowed);
 const WEB_STYLE_KINDS = [];
-// DeepSeek V4 Pro / Flash 原生支持 Responses API，并适配 Codex 0.144.0+。
+// DeepSeek V4.1 Flash / V4 Pro 原生支持 Responses API，并适配 Codex 0.144.0+。
 // 新 DeepSeek 会话因此也属于 Codex CLI runtime；老会话恢复时
 // 仍可用下面的 deepseek-legacy 内部 kind 回到 Claude transcript。
 const CODEX_CLI_KINDS = ['codex', 'codex-resume', 'deepseek', 'deepseek-resume'];
@@ -54,6 +57,7 @@ const KIND_LABELS = {
   'deepseek-acp': 'DeepSeek 原生',
   glm: '智谱',
   codeagent: 'CodeAgent',
+  'deepseek-claude': 'DeepSeek',
 };
 
 // Initial titles used by provider harnesses, shared with auto-title eligibility.
@@ -65,9 +69,12 @@ const HARNESS_LABELS = { qwen: '千问 · Qwen Code', 'deepseek-acp': 'DeepSeek 
 //   - claude-resume  resume 路径（同主）
 //   - deepseek-legacy / deepseek-legacy-resume
 //                    仅用于恢复 2026-08-09 以前的 DeepSeek Claude transcript
+//   - deepseek-claude / deepseek-claude-resume
+//                    2026-10-11 起新建的 DeepSeek 会话：PTY 里的 Claude Code，配置目录 ~/.claude-deepseek
 // 共享：transcript JSONL shape / Stop hook / OSC title 协议 / system prompt 注入参数 (--append-system-prompt)
 // ---------------------------------------------------------------------------
-const CLAUDE_FAMILY = ['claude', 'claude-resume', 'deepseek-legacy', 'deepseek-legacy-resume', ...CODEAGENT_KINDS];
+const DEEPSEEK_CLAUDE_KINDS = ['deepseek-claude', 'deepseek-claude-resume'];
+const CLAUDE_FAMILY = ['claude', 'claude-resume', 'deepseek-legacy', 'deepseek-legacy-resume', ...DEEPSEEK_CLAUDE_KINDS, ...CODEAGENT_KINDS];
 
 // ---------------------------------------------------------------------------
 // TUI alt-screen 程序（paste-sensitive）：
@@ -75,7 +82,7 @@ const CLAUDE_FAMILY = ['claude', 'claude-resume', 'deepseek-legacy', 'deepseek-l
 //   AI CLI 都是 TUI alt-screen；powershell 等普通 shell 不是。
 //   普通模式发送 prompt 时这些 kind 需要 ≥400ms 延迟才能让 paste-detect 完成。
 // ---------------------------------------------------------------------------
-const PASTE_SENSITIVE_KINDS = ['claude', 'claude-resume', 'gemini', 'gemini-resume', 'codex', 'codex-resume', 'deepseek', 'deepseek-resume', 'kimi', 'kimi-resume', ...CODEAGENT_KINDS];
+const PASTE_SENSITIVE_KINDS = ['claude', 'claude-resume', 'gemini', 'gemini-resume', 'codex', 'codex-resume', 'deepseek', 'deepseek-resume', 'kimi', 'kimi-resume', ...DEEPSEEK_CLAUDE_KINDS, ...CODEAGENT_KINDS];
 
 // ---------------------------------------------------------------------------
 // 跑在 Claude CLI 上、复用 Stop hook + transcript JSONL 的 kind。
@@ -158,6 +165,7 @@ function canonicalAiKind(rawKind) {
   if (rawKind === 'codex') return 'gpt';
   if (rawKind === 'claude-resume') return 'claude';
   if (rawKind === 'deepseek-resume' || rawKind === 'deepseek-legacy' || rawKind === 'deepseek-legacy-resume') return 'deepseek';
+  if (rawKind === 'deepseek-claude' || rawKind === 'deepseek-claude-resume') return 'deepseek';
   if (rawKind === 'kimi-resume') return 'kimi';
   if (rawKind === 'codeagent-resume') return 'codeagent';
   const out = rawKind || 'unknown';
@@ -219,6 +227,7 @@ module.exports = {
   CODEX_SESSION_KINDS,
   KIMI_CLI_KINDS,
   CODEAGENT_KINDS,
+  DEEPSEEK_CLAUDE_KINDS,
   CLAUDE_WEB_KINDS,
   CODEX_WEB_KINDS,
   KIND_LABELS,

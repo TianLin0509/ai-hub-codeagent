@@ -292,6 +292,8 @@ function handlePersistSessions(list, meetingList, deps) {
       session.nativeConfig = authoritative.nativeConfig;
       session.ccSessionId = authoritative.ccSessionId;
     }
+    // 接入方式只在主进程确定（缺 Key 不换线），渲染层漏带时以主进程为准。
+    if (authoritative?.deepseekRoute && !session.deepseekRoute) session.deepseekRoute = authoritative.deepseekRoute;
     const previous = previousSessionsById.get(session.hubId);
     const changed = !previous
       || typeof previous.updatedAt !== 'number'

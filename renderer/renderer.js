@@ -3603,6 +3603,11 @@ document.addEventListener('click', async (e) => {
   }
 
 
+  if (action === 'prompt-composition') {
+    require('./prompt-composition-view').openPromptComposition({ turn, sessionId: getCardSessionId(card), ipc: ipcRenderer, escapeHtml });
+    return;
+  }
+
   if (action === 'prompt-inspect') {
     const sid = getCardSessionId(card);
     if (typeof window.togglePromptInspector === 'function') {
@@ -7298,8 +7303,16 @@ ipcRenderer.on('status-event', (_e, payload) => {
       const allowed = baseKind === 'codex'
         ? isCodexConversationModelId(payload.model.id)
         : baseKind === 'deepseek'
-          ? /^deepseek-v4-(?:pro|flash)$/i.test(String(payload.model.id))
+          ? /^deepseek-(?:v4-pro|flash)$/i.test(String(payload.model.id))
+          : baseKind === 'deepseek-claude'
+            ? require('../core/deepseek-claude-profile').isKnownModel(payload.model.id)
           : true;
+      if (allowed && baseKind === 'deepseek-claude') {
+        // 状态栏回报的是接入方式下的真实模型名（如 deepseek-flash），Hub 记显示用的 id。
+        const profile = require('../core/deepseek-claude-profile');
+        const id = profile.normalizeModel(payload.model.id);
+        payload = { ...payload, model: { id, displayName: profile.displayName(id, session.deepseekActiveRoute || session.deepseekRoute) } };
+      }
       if (allowed) {
         const previousModelId = session.currentModel && session.currentModel.id;
         session.currentModel = payload.model;
@@ -7741,6 +7754,13 @@ function ptyToolQuestionText(toolName, toolInput) {
 function showToast(message, level) {
   require('./groupchat-fork-ui.js').showForkToast(document, String(message || ''), level === 'error' ? 'error' : 'info');
 }
+
+// 主进程推来的会话提示（例如 Token Plan 额度用完、DeepSeek 会话改走官方 API）。
+ipcRenderer.on('session-notice', (_event, payload = {}) => {
+  if (!payload || !payload.message) return;
+  const session = payload.sessionId ? sessions.get(payload.sessionId) : null;
+  showToast(`${session && session.title ? session.title + '：' : ''}${payload.message}`, payload.level);
+});
 
 // PermissionRequest 不带工具参数（hook 边界的既有约定）；同一次调用的 PreToolUse
 // 刚刚把有界参数带了过来，从那条运行中的活动里取「批的是什么」。
@@ -9235,6 +9255,7 @@ function persistWorkscene(flush = false) {
         codexAllowMtimeFallback: !!s.codexAllowMtimeFallback,
         codexProfile: s.codexProfile || null,
         codexProfileLabel: s.codexProfileLabel || null,
+        deepseekRoute: s.deepseekRoute || null,
         mcpProfile: s.mcpProfile || null,
         fastMode: typeof s.fastMode === 'boolean' ? s.fastMode : null,
         codexSpeedTier: s.codexSpeedTier || null,
@@ -9916,6 +9937,8 @@ if (process && process.env && process.env.CLAUDE_HUB_E2E === '1') {
       policy: TERMINAL_CACHE_POLICY,
       opened: [...terminalCache.values()].filter(item => item.opened).length,
       rendererSurfaces: [...terminalCache.values()].filter(item => !!item._rendererAddon).length,
+      surfaceIds: [...terminalCache].filter(([, item]) => !!item._rendererAddon).map(([id]) => id),
+      activeSessionId,
       rendererModes: [...terminalCache.values()].reduce((acc, item) => {
         const mode = item._rendererMode || 'suspended';
         acc[mode] = (acc[mode] || 0) + 1;

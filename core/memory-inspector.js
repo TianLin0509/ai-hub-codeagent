@@ -404,7 +404,7 @@ function getSessionFiles({
   const baseKind = String(kind || '').replace(/-resume$/, '');
   const effectiveRuntime = String(runtimeKind || kind || '').replace(/-resume$/, '');
   const deepseekLegacy = baseKind === 'deepseek' && effectiveRuntime.startsWith('deepseek-legacy');
-  const claudeFamily = baseKind === 'claude' || deepseekLegacy;
+  const claudeFamily = baseKind === 'claude' || deepseekLegacy || baseKind === 'deepseek-claude';
   const codexFamily = baseKind === 'codex' || (baseKind === 'deepseek' && !deepseekLegacy);
   const codexHome = codexSessionsRoot
     ? path.dirname(path.resolve(codexSessionsRoot))
@@ -417,7 +417,7 @@ function getSessionFiles({
   let ruleNote = '';
 
   if (claudeFamily) {
-    const root = deepseekLegacy ? '.claude-deepseek' : '.claude';
+    const root = deepseekLegacy || baseKind === 'deepseek-claude' ? '.claude-deepseek' : '.claude';
     files = discoverClaudeFiles(resolved, path.join(homeDir, root), workspaceRoot);
     if (rulesOnly) return { files };
     const slug = projectSlug(resolved);
@@ -434,7 +434,9 @@ function getSessionFiles({
       }
     } catch {}
     memory.push({ label: `${root} cwd bucket`, root, path: memoryDir, status, target });
-    memoryNote = deepseekLegacy
+    memoryNote = baseKind === 'deepseek-claude'
+      ? '这是跑在 Claude Code 上的 DeepSeek 会话；spawn 时只维护 .claude-deepseek bucket，并共享主 Claude 规范库。'
+      : deepseekLegacy
       ? '这是迁移前仍运行 Claude CLI 的 DeepSeek 会话；spawn 时只维护 .claude-deepseek bucket，并共享主 Claude 规范库。'
       : 'Claude 在 spawn 前把本 cwd 的 memory bucket 链到主规范库；只有 MEMORY.md 路由自动注入，详细条目按需读取。';
     ruleNote = '下方只列 Claude Code 实际读取的全局 CLAUDE.md、祖先 CLAUDE.md 与 CLAUDE.local.md。';

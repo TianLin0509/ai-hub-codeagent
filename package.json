@@ -1,6 +1,6 @@
 {
   "name": "ai-hub-community",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Local multi-agent desktop workspace using your own AI accounts",
   "main": "main-bootstrap.js",
   "scripts": {
@@ -46,7 +46,7 @@
         "zip"
       ],
       "icon": "claude-wx.ico",
-      "artifactName": "AIHubCommunity-${version}-win-${arch}.${ext}"
+      "artifactName": "AIHubHuawei-${version}-win-${arch}.${ext}"
     },
     "nsis": {
       "oneClick": false,
@@ -54,8 +54,10 @@
       "installerIcon": "claude-wx.ico",
       "uninstallerIcon": "claude-wx.ico",
       "createDesktopShortcut": true,
-      "artifactName": "AIHubCommunity-Setup-${version}.${ext}",
-      "differentialPackage": false
+      "artifactName": "AIHubHuawei-Setup-${version}.${ext}",
+      "differentialPackage": false,
+      "shortcutName": "AI HUB-Huawei",
+      "uninstallDisplayName": "AI HUB-Huawei ${version}"
     },
     "files": [
       "main-bootstrap.js",

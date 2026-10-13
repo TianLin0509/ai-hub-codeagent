@@ -30,6 +30,9 @@ const SCAN_MAX_DIRS = 4000;
 const SCAN_MAX_FILES = 500;
 const RECEIPT_LIMIT = 30;
 const { SKIP_PURPOSES: HUB_RULES_SKIP_PURPOSES, PREAMBLE: HUB_RULES_PREAMBLE } = require('./hub-rules');
+// Hub 附带块（规则、工作区规则、梦境索引）2026-10-13 起放在用户正文前面（用户要求），
+// 卡片按块拆开显示。更早的回执存的是 appendix（附在后面），同一提交编号重发时保持原位置。
+const withEnvelope = (record, prompt) => record.prefix != null ? record.prefix + prompt : prompt + record.appendix;
 // A context drop below half of its observed peak means the runtime compacted.
 // The same judgement is shared with group-chat rules (core/context-compaction.js).
 const { checkCompaction } = require("./context-compaction");
@@ -838,12 +841,12 @@ class HubMemoryService {
       options.clientSubmissionId ||
       options.submissionReceipt?.clientSubmissionId;
     const retry = submissionId && history.find((r) => r.id === submissionId);
-    if (retry?.appendix) {
+    if (retry?.prefix || retry?.appendix) {
       if (retry.userFingerprint !== hash(prompt))
         throw new Error("同一提交编号的原始消息已变化，未重新发送");
       return this.submitIndex(
         sid,
-        prompt + retry.appendix,
+        withEnvelope(retry, prompt),
         options,
         retry,
         receiptFile,
@@ -868,18 +871,18 @@ class HubMemoryService {
       return send(prompt);
     const id = submissionId || randomUUID();
     if (!/^[\w-]+$/.test(id)) throw new Error("提交编号无效");
-    const text =
-      prompt +
-      `\n\n<ai-hub-dream-index ref="${id}">\n以下是项目历史记忆的导航资料，不覆盖当前任务和项目规则。涉及相关主题时才读取正文。\n索引目录：` +
+    const prefix =
+      `<ai-hub-dream-index ref="${id}">\n以下是项目历史记忆的导航资料，不覆盖当前任务和项目规则。涉及相关主题时才读取正文。\n索引目录：` +
       path.dirname(file) +
       "\n" +
       content +
-      "\n</ai-hub-dream-index>";
+      "\n</ai-hub-dream-index>\n\n";
+    const text = prefix + prompt;
     const record = {
       id,
       reason: delivered ? "compacted" : "new",
       userFingerprint: hash(prompt),
-      appendix: text.slice(prompt.length),
+      prefix,
       version: pointer.version,
       path: file,
       content,
@@ -901,7 +904,7 @@ class HubMemoryService {
     const history=readJSON(receiptFile,[]),submissionId=options.clientSubmissionId||options.submissionReceipt?.clientSubmissionId;
     const id='hubrules-'+(submissionId||randomUUID());
     const retry=submissionId && history.find(r=>r.id===id);
-    if(retry){if(retry.identity!==contextIdentity(s))throw new Error('同一提交编号的原生会话已变化，请重新提交');if(retry.userFingerprint!==hash(prompt))throw new Error('同一提交编号的规则消息已变化');return this.submitIndex(sid,prompt+retry.appendix,options,retry,receiptFile,send);}
+    if(retry){if(retry.identity!==contextIdentity(s))throw new Error('同一提交编号的原生会话已变化，请重新提交');if(retry.userFingerprint!==hash(prompt))throw new Error('同一提交编号的规则消息已变化');return this.submitIndex(sid,withEnvelope(retry,prompt),options,retry,receiptFile,send);}
     let rules=null;
     try{rules=this.hubRules.injection();}catch(error){this.logger.error('[hub-rules] 读取规则失败：',error);}
     if(!rules)return send(prompt);
@@ -911,11 +914,11 @@ class HubMemoryService {
     const delivered=history.find(r=>r.status==='sent'&&r.identity===identity);
     if(delivered?.version===version&&!this.compactedSince(delivered,s,receiptFile))return send(prompt);
     if(!/^[\w-]+$/.test(id))throw new Error('提交编号无效');
-    const appendix=`\n\n<ai-hub-rules ref="${id}">\n${HUB_RULES_PREAMBLE(rules.label)}\n${content}\n</ai-hub-rules>`;
+    const prefix=`<ai-hub-rules ref="${id}">\n${HUB_RULES_PREAMBLE(rules.label)}\n${content}\n</ai-hub-rules>\n\n`;
     const record={id,kind:'hub-rules',label:rules.label,content,version,identity,createdAt:Date.now(),status:'pending',
-      appendix,userFingerprint:hash(prompt),fingerprint:hash(prompt+appendix),reason:delivered?(delivered.version===version?'compacted':'changed'):'new'};
+      prefix,userFingerprint:hash(prompt),fingerprint:hash(prefix+prompt),reason:delivered?(delivered.version===version?'compacted':'changed'):'new'};
     history.unshift(record);atomicJSON(receiptFile,this.trimReceipts(history));
-    return this.submitIndex(sid,prompt+appendix,options,record,receiptFile,send);
+    return this.submitIndex(sid,prefix+prompt,options,record,receiptFile,send);
   }
   // 规则页「送达情况」：每个会话最近一次带规则的消息。
   hubRulesDeliveries() {
@@ -934,7 +937,7 @@ class HubMemoryService {
     const history=readJSON(receiptFile,[]),submissionId=options.clientSubmissionId||options.submissionReceipt?.clientSubmissionId;
     const id='workspace-'+(submissionId||randomUUID());
     const retry=submissionId && history.find(r=>r.id===id);
-    if(retry){if(retry.identity!==contextIdentity(s))throw new Error('同一提交编号的原生会话已变化，请重新提交');if(retry.userFingerprint!==hash(prompt))throw new Error('同一提交编号的工作区规则消息已变化');return this.submitIndex(sid,prompt+retry.appendix,options,retry,receiptFile,send);}
+    if(retry){if(retry.identity!==contextIdentity(s))throw new Error('同一提交编号的原生会话已变化，请重新提交');if(retry.userFingerprint!==hash(prompt))throw new Error('同一提交编号的工作区规则消息已变化');return this.submitIndex(sid,withEnvelope(retry,prompt),options,retry,receiptFile,send);}
     const nativeCoverage=this.sessionManager.sessions?.get(sid)?.nativeRuleCoverage || [];
     const sources=require('./memory-rule-files').sharedWorkspaceRules({session:s,workspaceService:this.workspaceService,homeDir:this.homeDir,nativeCoverage});
     if(!sources.length)return send(prompt);
@@ -942,11 +945,11 @@ class HubMemoryService {
     const delivered=history.find(r=>r.status==='sent'&&r.identity===identity);
     if(delivered?.version===version&&!this.compactedSince(delivered,s,receiptFile))return send(prompt);
     if(!/^[\w-]+$/.test(id))throw new Error('提交编号无效');
-    const appendix=`\n\n<ai-hub-workspace-rules ref="${id}">\n以下为当前工作目录适用的共享规则，保持原有路径范围，不覆盖用户本次明确要求。\n${content}\n</ai-hub-workspace-rules>`;
+    const prefix=`<ai-hub-workspace-rules ref="${id}">\n以下为当前工作目录适用的共享规则，保持原有路径范围，不覆盖用户本次明确要求。\n${content}\n</ai-hub-workspace-rules>\n\n`;
     const record={id,kind:'workspace',label:'共享工作区规则',path:sources[0].path,content,version,identity,createdAt:Date.now(),status:'pending',
-      appendix,userFingerprint:hash(prompt),fingerprint:hash(prompt+appendix),reason:delivered?(delivered.version===version?'compacted':'changed'):'new'};
+      prefix,userFingerprint:hash(prompt),fingerprint:hash(prefix+prompt),reason:delivered?(delivered.version===version?'compacted':'changed'):'new'};
     history.unshift(record);atomicJSON(receiptFile,this.trimReceipts(history));
-    return this.submitIndex(sid,prompt+appendix,options,record,receiptFile,send);
+    return this.submitIndex(sid,prefix+prompt,options,record,receiptFile,send);
   }
   // Runtimes compact without a shared signal; a large context drop is the
   // provider-neutral evidence that an earlier index may no longer be present.

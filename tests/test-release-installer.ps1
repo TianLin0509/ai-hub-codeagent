@@ -18,7 +18,7 @@ public class HubInstallerProbe {
 '@ -OutputAssembly (Join-Path $source 'AI Hub Community.exe') -OutputType ConsoleApplication
 [IO.File]::WriteAllText((Join-Path $source 'resources\app.asar'),'synthetic app archive')
 $version='v0.0.0-test'
-$archive=Join-Path $root 'AIHubCommunity-0.0.0-test-win-x64.zip'
+$archive=Join-Path $root 'AIHubHuawei-0.0.0-test-win-x64.zip'
 Compress-Archive -Path (Join-Path $source '*') -DestinationPath $archive
 $manifest=Join-Path $root 'SHA256SUMS.txt'
 $hash=(Get-FileHash -LiteralPath $archive).Hash

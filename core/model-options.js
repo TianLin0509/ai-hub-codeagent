@@ -55,10 +55,16 @@ const MODEL_OPTIONS_BY_KIND = {
     { id: 'gpt-5.4',       label: 'GPT-5.4' },
     { id: 'gpt-5.3-codex', label: 'GPT-5.3 Codex' },
   ],
+  // Codex 运行时的 DeepSeek 会话（kind = 'deepseek'）：恢复、会话内切换，以及助理、投资联赛、学习三处新建。
+  // 2026-10-13 起默认 V4.1 Flash。官方 API 只认 deepseek-flash / deepseek-v4-pro 两个名字，
+  // 旧名 deepseek-v4-flash 由 normalizeDeepSeekModel 归到 deepseek-flash（服务端本来也是转发过去）。
   deepseek: [
-    { id: 'deepseek-v4-pro',   label: 'DeepSeek V4 Pro · Codex (1M)' },
-    { id: 'deepseek-v4-flash', label: 'DeepSeek V4 Flash · Codex (1M)' },
+    { id: 'deepseek-flash',  label: 'DeepSeek V4.1 Flash · Codex (1M)' },
+    { id: 'deepseek-v4-pro', label: 'DeepSeek V4 Pro · Codex (1M)' },
   ],
+  // 2026-10-11 起新建的 DeepSeek 会话跑 Claude Code；两条接入方式的真实模型名由
+  // core/deepseek-claude-profile.js 按接入方式映射，这里只放显示用的 id。
+  'deepseek-claude': require('./deepseek-claude-profile').modelOptions(),
   kimi: [
     { id: 'kimi-code/k3', label: 'Kimi K3' },
   ],
@@ -111,12 +117,14 @@ function clearRuntimeModelOptions(kind) {
 
 const DEFAULT_MODEL_BY_KIND = {
   qwen: 'qwen3.8-max',
-  'deepseek-acp': 'deepseek-v4-pro',
+  // DSH 旧 Harness 走 Token Plan，V4.1 Flash 在套餐上的名字是 deepseek-v4.1-flash。
+  'deepseek-acp': 'deepseek-v4.1-flash',
   glm: 'glm-5.2',
   claude: 'claude-opus-5[1m]',
   gemini: 'gemini-3.1-pro-high',
   codex: 'gpt-6-astra',
-  deepseek: 'deepseek-v4-flash',
+  deepseek: 'deepseek-flash',
+  'deepseek-claude': 'deepseek-v4.1-flash',
   kimi: 'kimi-code/k3',
   codeagent: 'GLM-5.2-WX-Auto',
 };
@@ -149,11 +157,19 @@ const LEGACY_DEEPSEEK_CLAUDE_DEFAULT_MODEL = 'deepseek-v4-pro[1m]';
 
 function normalizeDeepSeekModel(modelId) {
   const raw = String(modelId || '').trim().replace(/\[1m\]$/i, '');
-  // DeepSeek 的 Responses API 当前同时支持 V4 Pro / Flash。只接受 Hub
-  // catalog 已公开的两个 id；旧别名和未知值仍安全回落到默认 Flash。
+  // DeepSeek 的 Responses API 当前只列出 deepseek-flash（V4.1 Flash）与 deepseek-v4-pro。
+  // 只接受 Hub catalog 已公开的两个 id；旧名 deepseek-v4-flash 和未知值回落到默认 Flash。
   return MODEL_OPTIONS_BY_KIND.deepseek.some(option => option.id === raw)
     ? raw
     : DEFAULT_MODEL_BY_KIND.deepseek;
+}
+
+// 2026-10-13 前存下的 Codex 版 DeepSeek 模型名（投资联赛的 Agent、助理点名等）只把旧名换成新名，
+// 其余原样返回，交给各处自己的目录校验——未知值仍然报错，不被悄悄换成默认。
+const LEGACY_DEEPSEEK_MODEL_ALIASES = Object.freeze({ 'deepseek-v4-flash': 'deepseek-flash' });
+function canonicalDeepSeekModelId(modelId) {
+  const raw = String(modelId || '').trim();
+  return LEGACY_DEEPSEEK_MODEL_ALIASES[raw.replace(/\[1m\]$/i, '').toLowerCase()] || raw;
 }
 
 function normalizeLegacyDeepSeekClaudeModel(modelId) {
@@ -174,7 +190,7 @@ function legacyDeepSeekClaudeDisplayName(modelId) {
 function deepseekDisplayName(modelId) {
   const normalized = normalizeDeepSeekModel(modelId);
   if (normalized === 'deepseek-v4-pro') return 'DS V4 Pro · Codex 1M';
-  if (normalized === 'deepseek-v4-flash') return 'DS V4 Flash · Codex 1M';
+  if (normalized === 'deepseek-flash') return 'DS V4.1 Flash · Codex 1M';
   return normalized;
 }
 
@@ -189,6 +205,7 @@ const MODEL_SWITCH_STRATEGY_BY_KIND = Object.freeze({
   claude: 'claude-inline',
   codex: 'codex-picker',
   deepseek: 'codex-picker',
+  'deepseek-claude': 'claude-inline',
   qwen: 'acp-native',
   'deepseek-acp': 'acp-native',
   glm: 'acp-native',
@@ -230,6 +247,7 @@ module.exports = {
   canSwitchInline,
   setRuntimeModelOptions,
   normalizeDeepSeekModel,
+  canonicalDeepSeekModelId,
   normalizeLegacyDeepSeekClaudeModel,
   legacyDeepSeekClaudeDisplayName,
   deepseekDisplayName,

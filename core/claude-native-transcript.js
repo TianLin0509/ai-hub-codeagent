@@ -1,5 +1,5 @@
 'use strict';
-const { displayUserText } = require('./synthetic-user-filter');
+const { displayUserText, hubAttachedFields } = require('./synthetic-user-filter');
 const END = new Set(['completed', 'failed', 'interrupted']);
 
 function captureClaudeMessage(record, frame) {
@@ -68,7 +68,7 @@ function projectClaudeRecord(record) {
   const id = record.userMessageId;
   const user = record.nativeActivity ? null : { id, role: 'user', text: displayUserText(record.text), ts: record.createdAt,
     source, clientSubmissionId: record.submissionId, deliveryStatus: record.status, receiptAccepted: record.accepted === true,
-    attachments: (record.content || []).filter(block => block.type !== 'text') };
+    attachments: (record.content || []).filter(block => block.type !== 'text'), ...hubAttachedFields(record.text) };
   const frames = [...(record.messages?.values() || []), ...(record.streams?.values() || [])];
   const toolCalls = new Map();
   const results = new Map();

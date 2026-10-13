@@ -1063,8 +1063,9 @@ function createWindow() {
   // 2026-05-03 maintainer：标题带 PID，方便桌面同时存在多个 Hub 窗口（生产+测试）时
   //   一眼区分哪个对应哪个 PID — 调试时不再需要 Get-Process 反查。
   // 社区版标题同时写出社区版本与所基于的上游版本，用户报问题时一眼可见。
-  const _upstreamVersion = require('./core/distribution').upstreamVersion;
-  const _hubTitle = `AI Hub Community v${_pkgVersion}${_upstreamVersion ? `（上游 ${_upstreamVersion}）` : ''}：PID ${process.pid}`;
+  // 产品名和版本标注随发行目标（公司版的名字与标注见 target.json）。
+  const { upstreamVersion: _upstreamVersion, productName: _productName, editionBadge: _editionBadge } = require('./core/distribution');
+  const _hubTitle = `${_productName}${_editionBadge ? ' ' + _editionBadge : ''} v${_pkgVersion}${_upstreamVersion ? `（上游 ${_upstreamVersion}）` : ''}：PID ${process.pid}`;
   // T6 冷杉 v2：隐藏原生标题栏，让渲染层那条 44px 工具栏直接顶到窗口顶边。
   // 三个系统窗口按钮仍由 Windows 自己画（titleBarOverlay），所以最大化 / 还原 /
   // 关闭的行为、Snap Layouts、右键系统菜单全部保持原生，不需要 Hub 自己复刻一套。
@@ -1267,6 +1268,13 @@ function syncSessionRuntimeModel(sessionId, model) {
   if (!sessionId || !model || typeof model.id !== 'string' || !model.id.trim()) return false;
   const session = sessionManager.getSession(sessionId);
   if (!session) return false;
+  // DeepSeek on Claude Code：状态栏报的是接入方式下的真实模型名，Hub 记显示用的 id。
+  if (String(session.kind || '').replace(/-resume$/, '') === 'deepseek-claude') {
+    const profile = require('./core/deepseek-claude-profile');
+    if (!profile.isKnownModel(model.id)) return false;
+    const id = profile.normalizeModel(model.id);
+    model = { id, displayName: profile.displayName(id, session.deepseekActiveRoute || session.deepseekRoute) };
+  }
   const currentId = session.currentModel && session.currentModel.id;
   if (currentId === model.id) return false;
   sessionManager.updateSessionMeta(sessionId, {
@@ -1740,7 +1748,8 @@ registerPromptInspectIpc(ipcMain, {
   sessionManager,
 });
 
-registerTranscriptIpc(ipcMain, {
+// 具名保存：手机直接对话（session-chat）读卡片要用与电脑卡片完全相同的解析依赖。
+const transcriptIpcDeps = {
   defaultCodexSessionsRoot: DEFAULT_CODEX_SESSIONS_ROOT,
   findCodexRolloutByCwd,
   findCodexRolloutBySid,
@@ -1756,7 +1765,8 @@ registerTranscriptIpc(ipcMain, {
   transcriptTap,
   transcriptParserService,
   updateSessionTranscriptBinding,
-});
+};
+registerTranscriptIpc(ipcMain, transcriptIpcDeps);
 
 // build-injection IPC 历史用于 blackboard 用户输入合成注入子会话(meeting-blackboard.js)。
 // Module C 后 blackboard 已删除,该 handler 不再被任何前端代码调用,清理。
@@ -1857,6 +1867,34 @@ if (require('./core/distribution').featureEnabled('assistant')) try {
     })(),
     createSession: (kind, opts) => sessionOperations.createSession({ kind, opts }),
     sendPrompt: (sessionId, text, clientSubmissionId) => promptOperations.submitPrompt(null, { sessionId, text, clientSubmissionId, waitForCliReady: true }),
+    // 手机直接对话（App 2.1）：读卡片与电脑同一份原生落盘解析；停止与按键走电脑上同样的输入通道。
+    readSessionTurns: (id, opts) => {
+      const s = sessionManager.getSession(id) || require('./core/session-store').loadSessionFile(id, { strict: true });
+      if (!s) throw new Error('会话已不存在');
+      return require('./main/ipc/transcript-handlers').parseSessionTranscript({ hubSessionId: id, ccSessionId: s.ccSessionId || null, transcriptPath: s.transcriptPath || null, kind: s.kind || null, opts }, transcriptIpcDeps);
+    },
+    sessionKeys: (id, data) => {
+      const s = sessionManager.getSession(id);
+      if (!s) throw new Error('会话未打开');
+      if (sessionManager.getNativeSession?.(id) || sessionManager.getNativeClaude?.(id)) throw new Error('原生会话不支持终端按键');
+      sessionManager.writeToSession(id, data);
+    },
+    interruptSession: async id => {
+      const s = sessionManager.getSession(id);
+      if (!s) throw new Error('会话未打开');
+      const native = sessionManager.getNativeSession?.(id) || sessionManager.getNativeCodex?.(id);
+      if (native?.interrupt) { await native.interrupt(); return { via: 'native' }; }
+      if (sessionManager.getNativeClaude?.(id)) { sessionManager.writeToSession(id, '\u0003'); return { via: 'claude-native' }; }
+      // 与电脑上的停止键同一规则（renderer/pty-interrupt.js）：Esc；Qwen 草稿里 Esc 无效，用 Ctrl+C。
+      sessionManager.writeToSession(id, String(s.kind || '').replace(/-resume$/, '') === 'qwen' ? '\x03' : '\x1b');
+      return { via: 'pty' };
+    },
+    readTerminalScreen: id => {
+      const entry = sessionManager.sessions?.get?.(id);
+      const text = sessionManager.getSessionBuffer(id);
+      if (text == null) return null;
+      return { text, cols: Number(entry?.pty?.cols) || 120, rows: Number(entry?.pty?.rows) || 30 };
+    },
     // 助理 Tab 输入框的快速回答：与手机共用同一套凭据（Token Plan 优先、百炼按量兜底）。
     fastLane: process.env.HUB_ASSISTANT_FAST_LANE === '0' ? null : new (require('./core/hub-assistant/fast-lane').FastLane)({ credentials: () => require('./core/hub-assistant/fast-lane').fastLaneSources({ dataDir: getHubDataDir(), safeStorage: require('electron').safeStorage }) }),
     hasPendingPrompt:sessionId=>promptOperations.isAssistantSubmissionPending(sessionId),
@@ -1940,7 +1978,11 @@ try {
     sessionManager, getConfig: getHubConfig, dataDir: getHubDataDir(),
     restartSession: (id, overrides, options) => sessionOperations.restartSession(id, overrides, options),
     readUsage: () => refreshTokenPlanUsage(true),
+    // DeepSeek on Claude Code 是 PTY 会话，改道 / 等待提示经这里推到界面。
+    notify: (sessionId, message) => sendToRenderer('session-notice', { sessionId, message, level: 'warning' }),
   });
+  // 新建 / 恢复时就改道或等待（额度已知用完）的提示，由 session-manager 发出。
+  sessionManager.on('session-notice', event => sendToRenderer('session-notice', event));
   // groupChatWatcher.sendToPty 发送前经它检查：套餐已用完就先把会话改道到 DeepSeek API。
   sessionManager.tokenPlanFallback = tokenPlanFallback;
 } catch (error) { console.error('[token-plan-fallback] unavailable:', error.message); }
@@ -2492,6 +2534,16 @@ const hookServer = http.createServer((req, res) => {
         // transcript tail's last-assistant entry would be the previous turn
         // and immediately trigger a stale update.
         const isSubagentContext = !!parsed.agentId;
+        // DeepSeek on Claude Code 选了 Token Plan：记下最近一条消息，撞上套餐额度墙时改走官方 API 并重发一次。
+        if (!isSubagentContext && tokenPlanFallback && String(hookTargetSession.kind || '').startsWith('deepseek-claude')) {
+          try {
+            tokenPlanFallback.onClaudeHook(parsed.sessionId, event, {
+              prompt: latestUserMessage, error: parsed.error, message: parsed.message,
+              lastAssistantMessage: parsed.lastAssistantMessage, errorDetails: parsed.errorDetails,
+              turnId: parsed.turnId, claudeSessionId: parsed.claudeSessionId,
+            });
+          } catch (error) { console.warn('[token-plan-fallback] claude hook failed:', error && error.message); }
+        }
         if (!isSubagentContext && (parsed.claudeSessionId || parsed.transcriptPath)) {
           updateSessionTranscriptBinding(parsed.sessionId, {
             ccSessionId: parsed.claudeSessionId,
@@ -2567,7 +2619,12 @@ const hookServer = http.createServer((req, res) => {
           taskSubject: parsed.taskSubject || null,
         });
       } else {
-        const filtered = claudeUsageFilter.filter(parsed.usage5h, parsed.usage7d);
+        // DeepSeek on Claude Code 走 API Key，状态栏里没有、也不能混进 Claude 订阅额度。
+        const statusSession = parsed.sessionId ? sessionManager.getSession(parsed.sessionId) : null;
+        const deepseekStatus = String(statusSession?.kind || '').replace(/-resume$/, '') === 'deepseek-claude';
+        const filtered = deepseekStatus
+          ? { usage5h: null, usage7d: null, anyAccepted: false }
+          : claudeUsageFilter.filter(parsed.usage5h, parsed.usage7d);
         syncSessionRuntimeModel(parsed.sessionId, parsed.model);
         sendToRenderer('status-event', {
           sessionId: parsed.sessionId,
@@ -2952,6 +3009,22 @@ try {
   require('./main/ipc/hub-rules-handlers').registerHubRulesIpc(ipcMain,{store:hubRules,memoryService:hubMemoryService,shell});
 } catch (e) {
   console.warn('[hub-rules] 规则页初始化失败：', e && e.message);
+}
+// 一键更新（2026-10-13，公司版）：只有发行目标写了下载源才开启；主仓库没有这个入口。
+{
+  const distribution = require('./core/distribution');
+  if (distribution.updateConfig) {
+    try {
+      const { createAppUpdateController, registerAppUpdateIpc } = require('./main/app-update-controller');
+      const appUpdate = createAppUpdateController({ app, config: distribution.updateConfig, dataDir: getHubDataDir(),
+        currentVersion: distribution.editionVersion || app.getVersion(), sendToRenderer });
+      registerAppUpdateIpc(ipcMain, appUpdate);
+      app.whenReady().then(() => appUpdate.startBackgroundChecks());
+      app.on('will-quit', () => appUpdate.dispose());
+    } catch (e) {
+      console.warn('[app-update] 一键更新初始化失败：', e && e.message);
+    }
+  }
 }
 require('./main/ipc/capability-handlers').registerCapabilityIpc(ipcMain,
   capabilityService);

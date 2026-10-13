@@ -4,7 +4,7 @@
 
 普通用户和代装 Agent 优先使用 [AGENT-QUICKSTART.md](docs/AGENT-QUICKSTART.md) 的固定版本命令。`scripts/install-release.ps1` 自动下载 Windows x64 ZIP、SHA256 校验、按版本安装并启动，支持重复执行、JSON 回执及离线包。不要为了运行发布版先装整套开发环境。
 
-安装目录默认 `%LOCALAPPDATA%\Programs\AIHubCommunity\v1.0.0`。程序包含 `resources/scripts/install-provider.ps1` 和 `resources/guides`，可离线阅读安装/定制文档。可以手动运行其中的 `AI Hub Community.exe`。卸载便携版仅在关闭对应程序后移除该版本目录；用户数据不自动删除。
+安装目录默认 `%LOCALAPPDATA%\Programs\AIHubCommunity\v1.0.1`。程序包含 `resources/scripts/install-provider.ps1` 和 `resources/guides`，可离线阅读安装/定制文档。可以手动运行其中的 `AI Hub Community.exe`。卸载便携版仅在关闭对应程序后移除该版本目录；用户数据不自动删除。
 
 ## 路线 A：源码安装（人和 agent 均可执行）
 
@@ -18,7 +18,7 @@
 
 ## 路线 B：Windows 安装包
 
-从仓库 Releases 下载已发布的 `AIHubCommunity-Setup-*.exe`，运行后从快捷方式启动。Hub 自带 Electron 运行时，但各 AI CLI 仍需按自己的官方依赖安装。安装包未配置商业代码签名；组织有软件准入策略时按组织流程处理。
+从仓库 Releases 下载已发布的 `AIHubHuawei-Setup-*.exe`，运行后从快捷方式启动。Hub 自带 Electron 运行时，但各 AI CLI 仍需按自己的官方依赖安装。安装包未配置商业代码签名；组织有软件准入策略时按组织流程处理。
 
 ## 接入自己的 AI
 

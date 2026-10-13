@@ -18,7 +18,7 @@
  */
 
 const fs = require('node:fs');
-const { isSyntheticUserEntry, displayUserText } = require('./synthetic-user-filter.js');
+const { isSyntheticUserEntry, displayUserText, hubAttachedFields } = require('./synthetic-user-filter.js');
 
 function isToolResultEntry(entry) {
   return !!(
@@ -124,6 +124,7 @@ function _entryToTurn(entry) {
         role: 'user',
         text,
         ts: toMs(entry.timestamp),
+        ...hubAttachedFields(message.content),
       };
     }
     // 数组 content（多模态 / 附件）→ 提取 text blocks 拼接为纯文本
@@ -141,6 +142,7 @@ function _entryToTurn(entry) {
           role: 'user',
           text,
           ts: toMs(entry.timestamp),
+          ...hubAttachedFields(raw),
         };
       }
     }

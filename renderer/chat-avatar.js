@@ -11,11 +11,21 @@ const ARTWORK = Object.freeze({
 const USER_AVATAR_SRC = '../claude-wx.ico';
 const ASSISTANT_AVATAR_SRC = 'assets/assistant/penguin.png';
 
-function chatAvatarSrc(kind, { assistant = false } = {}) {
-  if (assistant) return ASSISTANT_AVATAR_SRC;
-  const family = canonicalAiKind(String(kind || '').toLowerCase().replace(/-resume$/, ''));
-  const name = Object.hasOwn(ARTWORK, family) ? ARTWORK[family] : null;
-  return name ? `assets/ai-avatars/cel-v2/${name}.png` : null;
+const artworkSrc = family => Object.hasOwn(ARTWORK, family) ? `assets/ai-avatars/cel-v2/${ARTWORK[family]}.png` : null;
+
+// 只留部分 AI 的发行版（公司纯净版）不带其他 AI 的画像；万一遇到不在名单里的 kind，
+// 用名单里第一个 AI 的画像，不显示破图。kind 可能是原名（codex）也可能是归类名（gpt）。
+function makeChatAvatarSrc({ allowedKinds, kindAllowed }) {
+  return function chatAvatarSrc(kind, { assistant = false } = {}) {
+    if (assistant) return ASSISTANT_AVATAR_SRC;
+    const raw = String(kind || '').toLowerCase().replace(/-resume$/, '');
+    const family = canonicalAiKind(raw);
+    const shipped = !allowedKinds || kindAllowed(raw) || kindAllowed(family) || (family === 'gpt' && kindAllowed('codex'));
+    if (shipped || !artworkSrc(family)) return artworkSrc(family);
+    return artworkSrc(canonicalAiKind(allowedKinds[0]));
+  };
 }
 
-module.exports = { chatAvatarSrc, USER_AVATAR_SRC, ASSISTANT_AVATAR_SRC };
+const chatAvatarSrc = makeChatAvatarSrc(require('../core/distribution'));
+
+module.exports = { chatAvatarSrc, makeChatAvatarSrc, USER_AVATAR_SRC, ASSISTANT_AVATAR_SRC };

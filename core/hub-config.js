@@ -152,6 +152,8 @@ function getConfig() {
     claudeApiBaseUrl: normalizeBaseUrl(getConfigValue('claudeApiBaseUrl', 'HUB_CLAUDE_API_BASE_URL', 'providers.claude.base_url', DEFAULTS.claude_api_base_url)),
     claudeApiModel: getConfigValue('claudeApiModel', 'HUB_CLAUDE_API_MODEL', 'providers.claude.model', DEFAULTS.claude_api_model),
     deepseekApiKey: getConfigValue('deepseekApiKey', 'DEEPSEEK_API_KEY', 'providers.deepseek.api_key', ''),
+    // 新建 DeepSeek（Claude Code）会话上次选的接入方式：tokenplan（默认）/ api。
+    deepseekRoute: require('./deepseek-claude-profile.js').preferredRoute(rawConfig),
     codexBackend: getConfigValue('codexBackend', 'HUB_CODEX_BACKEND', 'providers.codex.backend', DEFAULTS.codex_backend),
     codexSubscriptionProfile: getConfigValue('codexSubscriptionProfile', 'HUB_CODEX_PROFILE', 'providers.codex.subscription_profile', DEFAULTS.codex_subscription_profile),
     codexSubscriptionProfiles,

@@ -363,3 +363,7 @@
 @media (max-width: 620px) {
   .terminal-metrics { display: none; }
 }
+/* 发行版标注（公司版「内测先锋版」，renderer/edition-trim.js 插入）与有新版本的提示（renderer/app-update.js）。 */
+.hub-edition-badge { font-size: 11px; font-weight: 600; color: var(--brand, #5b4bb7); padding: 1px 7px; border-radius: 999px; background: rgba(var(--rgb-brand, 91, 75, 183), .1); border: 1px solid rgba(var(--rgb-brand, 91, 75, 183), .28); white-space: nowrap; }
+.hub-update-pill { font-size: 11px; font-weight: 600; color: #fff; padding: 1px 8px; border-radius: 999px; background: var(--brand, #5b4bb7); border: 0; cursor: pointer; white-space: nowrap; -webkit-app-region: no-drag; }
+.hub-update-pill:hover { filter: brightness(1.08); }

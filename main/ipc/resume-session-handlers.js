@@ -266,6 +266,8 @@ function createResumeSessionHandler(deps) {
       model: safeResumeModel || undefined,
       ...(meta.effort ? { effort: meta.effort } : {}),
       ...(isLegacyDeepSeek ? { deepseekLegacyClaude: true } : {}),
+      // DeepSeek on Claude Code：沿用会话自己的接入方式（Token Plan / 官方 API），缺 Key 时报错而不是换线。
+      ...(meta.deepseekRoute ? { deepseekRoute: meta.deepseekRoute } : {}),
       resumeCCSessionId: isClaudeCliResumable ? (meta.ccSessionId || undefined) : undefined,
       ...(meta.runtimeBackend === 'claude-stream-json' ? { ...meta.nativeConfig, nativeRuntime: meta.nativeRuntime } : {}),
       resumeTranscriptPath: resumeTranscriptPath || undefined,

@@ -182,7 +182,8 @@
                       <button class="new-session-option" data-kind="powershell" aria-pressed="false"><span class="ai-logo logo-powershell"></span>PowerShell</button>
                     </div>
                     <div class="menu-group-label" id="new-session-tuning-label">模型 / 速度 / MCP</div>
-                    <label class="session-tuning-field" id="new-session-deepseek-route-field" hidden><span>DeepSeek 接入</span><select id="new-session-deepseek-route"><option value="deepseek">Codex CLI · DeepSeek API</option><option value="deepseek-acp">Token Plan · 旧 Harness</option></select></label>
+                    <label class="session-tuning-field" id="new-session-deepseek-route-field" hidden><span>DeepSeek 接入 · Claude Code</span><select id="new-session-deepseek-route" aria-describedby="new-session-deepseek-route-note"><option value="tokenplan">Token Plan 套餐</option><option value="api">DeepSeek 官方 API</option></select></label>
+                    <div class="session-tuning-note" id="new-session-deepseek-route-note" role="status" hidden></div>
                     <div class="session-tuning-grid" id="new-session-tuning">
                       <label class="session-tuning-field" id="new-session-account-field" for="new-session-account" hidden><span>Codex 账号 · 全局</span><select id="new-session-account" aria-describedby="new-session-account-note"></select></label>
                       <label class="session-tuning-field" for="new-session-model"><span class="session-tuning-label-row">模型<button type="button" id="new-session-model-default" class="tuning-default-btn" hidden></button></span><select id="new-session-model"></select></label>
@@ -588,6 +589,7 @@
   <script src="task-presets.js"></script>
   <script src="floating-input-history.js"></script>
   <script src="edition-trim.js"></script>
+  <script src="app-update.js"></script>
   <script src="workspace-controller.js"></script>
   <script src="meeting-create-modal.js"></script>
   <section id="account-page" class="ac-page" hidden aria-label="账号">
@@ -631,7 +633,7 @@
               <span class="config-ai-mark deepseek">DS</span>
               <span class="config-ai-copy">
                 <strong>DeepSeek</strong>
-                <small id="cfg-summary-deepseek">Codex API · V4 Pro / Flash</small>
+                <small id="cfg-summary-deepseek">Codex API · V4.1 Flash / V4 Pro</small>
               </span>
               <span class="config-ai-status api" id="cfg-status-deepseek">API</span>
             </button>
@@ -733,7 +735,7 @@
           <div class="config-ai-detail" id="cfg-detail-deepseek">
             <div class="config-mode-card selected">
               <strong>API 模式</strong>
-              <span>DeepSeek V4 Pro / Flash 通过原生 Responses API 接入 Codex CLI，使用 Hub 隔离的 CODEX_HOME，不改你的全局 Codex 配置。</span>
+              <span>DeepSeek V4.1 Flash / V4 Pro 通过原生 Responses API 接入 Codex CLI，使用 Hub 隔离的 CODEX_HOME，不改你的全局 Codex 配置。</span>
             </div>
             <div class="config-field">
               <label>DeepSeek API Key</label>

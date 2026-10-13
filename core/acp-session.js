@@ -376,7 +376,7 @@ class AcpSession extends EventEmitter {
     if (typeof text !== 'string' || !text.trim()) throw new Error('消息不能为空');
     const prompt = [{ type: 'text', text }];
     for (const attachment of options.attachments || []) {
-      if (!this.capabilities.promptCapabilities?.image || /^(deepseek-v4|glm-5\.2|qwen3\.7-max)/.test(this.currentModel)) throw new Error('当前模型或 Harness 不支持图片，未发送消息');
+      if (!this.capabilities.promptCapabilities?.image || /^(deepseek-v4|deepseek-flash|glm-5\.2|qwen3\.7-max)/.test(this.currentModel)) throw new Error('当前模型或 Harness 不支持图片，未发送消息');
       if (attachment.type === 'localImage') {
         const ext = path.extname(attachment.path).toLowerCase();
         const mimeType = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp', '.gif': 'image/gif' }[ext];

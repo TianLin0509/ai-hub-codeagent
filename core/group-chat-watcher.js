@@ -419,17 +419,22 @@ async function sendToPtyImpl(sid, prompt, kind, options = {}) {
   }
   const { sessionManager } = _deps;
   if (sessionManager.restartPending) throw Object.assign(new Error('Hub 正在重启，未发送新任务'), {notSent:true});
-  // 「规则」页的通用规则先附上，再附工作区规则；两者各自留回执，换版或压缩后补发。
-  if (!options.hubRulesPrepared && sessionManager.memoryService?.withHubRules) {
-    return sessionManager.memoryService.withHubRules(sid,prompt,kind,options,
-      text=>sendToPtyImpl(sid,text,kind,{...options,hubRulesPrepared:true}));
-  }
+  // Hub 附带块都加在正文前面，后加的排在最前：先套工作区规则，再套「规则」页的通用规则，
+  // 发出去依次是 通用规则 → 工作区规则 → 梦境索引（入口处已加）→ 用户正文，越稳定的越靠前。
+  // 各自留回执，换版或压缩后补发。
   if (!options.workspaceRulesPrepared && sessionManager.memoryService?.withWorkspaceRules) {
     return sessionManager.memoryService.withWorkspaceRules(sid,prompt,kind,options,
       text=>sendToPtyImpl(sid,text,kind,{...options,workspaceRulesPrepared:true}));
   }
+  if (!options.hubRulesPrepared && sessionManager.memoryService?.withHubRules) {
+    return sessionManager.memoryService.withHubRules(sid,prompt,kind,options,
+      text=>sendToPtyImpl(sid,text,kind,{...options,hubRulesPrepared:true}));
+  }
   // Token Plan 额度已用完时，套餐会话先改走 DeepSeek API 再发（重启后是新的会话对象）。
-  if (sessionManager.tokenPlanFallback && sessionManager.getNativeSession?.(sid)) await sessionManager.tokenPlanFallback.beforeSend(sid);
+  if (sessionManager.tokenPlanFallback && (sessionManager.getNativeSession?.(sid)
+      || require('./deepseek-claude-profile').isDeepSeekClaudeKind(sessionManager.getSession?.(sid)?.kind))) {
+    await sessionManager.tokenPlanFallback.beforeSend(sid);
+  }
   const native = (sessionManager.getNativeSession?.(sid) || sessionManager.getNativeCodex?.(sid));
   if (native) return native.send(prompt, {
     ...options, clientSubmissionId:options.clientSubmissionId || options.submissionReceipt?.clientSubmissionId,

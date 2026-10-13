@@ -8,7 +8,7 @@ function imagePaths(text) {
 }
 function validateImages(files,model,capabilities) {
   if(!files.length)return;
-  if(!capabilities?.promptCapabilities?.image || /^(deepseek-v4|glm-5\.2|qwen3\.7-max)/.test(model || ''))
+  if(!capabilities?.promptCapabilities?.image || /^(deepseek-v4|deepseek-flash|glm-5\.2|qwen3\.7-max)/.test(model || ''))
     throw new Error('当前模型或 Harness 不支持图片，请移除图片或切换支持图片的模型');
   const maximum=capabilities?._meta?.imageCapability?.maxImagesPerTurn || 4;
   if(files.length>maximum)throw new Error('当前 Harness 一次最多接收 '+maximum+' 张图片');

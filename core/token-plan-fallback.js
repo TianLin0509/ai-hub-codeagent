@@ -8,6 +8,7 @@
 //   - Qwen Code 不报错，把这句包成「Quota exhausted: ...」当普通回答交回；DSH 退出并打印
 //     QUOTA: 429；ZCode 报 PROVIDER_BUSINESS_ERROR / insufficient_quota。
 //   - 三个原生外壳直连 https://api.deepseek.com/v1 + deepseek-v4-flash，读文件的工具调用题 3/3 答对。
+//     （2026-10-13 起 Flash 改用官方新名 deepseek-flash，旧名服务端本来就转发到它。）
 // 这里只放判断与状态；切换会话、重发消息的副作用在 main/token-plan-fallback-controller.js。
 const fs = require('node:fs');
 const path = require('node:path');
@@ -15,7 +16,12 @@ const path = require('node:path');
 const DEEPSEEK_API_BASE = 'https://api.deepseek.com/v1';
 const DEEPSEEK_ROUTE_PREFIX = 'deepseek-api:';
 const TOKEN_PLAN_ROUTE_PREFIX = 'aliyun-token-plan:';
-const FALLBACK_MODELS = Object.freeze(['deepseek-v4-pro', 'deepseek-v4-flash']);
+// 2026-10-13：官方 API 只列出 deepseek-flash（V4.1 Flash）和 deepseek-v4-pro；套餐上的 V4.1 Flash 叫 deepseek-v4.1-flash。
+const FALLBACK_PRO = 'deepseek-v4-pro';
+const FALLBACK_FLASH = 'deepseek-flash';
+const TOKEN_PLAN_FLASH = 'deepseek-v4.1-flash';
+const FALLBACK_MODELS = Object.freeze([FALLBACK_PRO, FALLBACK_FLASH]);
+const API_MODEL_NAMES = Object.freeze([...FALLBACK_MODELS, 'deepseek-v4-flash']);
 const STATE_FILE = 'token-plan-fallback.json';
 // 读不出重置时间时先按 1 小时算，到点再由下一次报错或用量读数续上。
 const UNKNOWN_RESET_MS = 60 * 60 * 1000;
@@ -95,15 +101,25 @@ function observeUsage(dataDir, snapshot, now = Date.now()) {
   return null;
 }
 
+// 套餐 → 官方 API：Flash 档（deepseek-v4.1-flash、deepseek-v4-flash-0731 等）对 deepseek-flash，其余对 deepseek-v4-pro。
 function fallbackModel(model) {
   const id = String(model || '');
   if (FALLBACK_MODELS.includes(id)) return id;
-  return /flash/i.test(id) ? 'deepseek-v4-flash' : 'deepseek-v4-pro';
+  return /flash/i.test(id) ? FALLBACK_FLASH : FALLBACK_PRO;
+}
+
+// 官方 API 的模型名（含 2026-10-13 前存下的旧名 deepseek-v4-flash），回到套餐时要换掉。
+function isApiModel(model) { return API_MODEL_NAMES.includes(String(model || '')); }
+// 官方 API → 套餐：Flash 回到套餐上的 V4.1 Flash，Pro 名字两边相同。
+function tokenPlanModel(model) {
+  const id = String(model || '');
+  return /flash/i.test(id) ? TOKEN_PLAN_FLASH : id;
 }
 
 // 套餐用完且配了 DeepSeek Key 才改道；任一条件不满足都留在套餐上（报错照常可见）。
 // 只有这些外壳在套餐用完时改走 DeepSeek API；其余等重置。
-const FALLBACK_KINDS = Object.freeze(['deepseek-acp']);
+// 2026-10-12：DeepSeek on Claude Code（deepseek-claude）选了 Token Plan 时同样改走 DeepSeek 官方 API。
+const FALLBACK_KINDS = Object.freeze(['deepseek-acp', 'deepseek-claude']);
 function canFallback(kind) { return FALLBACK_KINDS.includes(String(kind || '').replace(/-resume$/, '')); }
 
 // 套餐用完、外壳允许改道、且配了 DeepSeek Key 才改道；否则留在套餐上等重置（waitForReset）。
@@ -148,5 +164,5 @@ function deepseekRouteNotice(model, dataDir, now = Date.now()) {
 module.exports = {
   DEEPSEEK_API_BASE, DEEPSEEK_ROUTE_PREFIX, TOKEN_PLAN_ROUTE_PREFIX, FALLBACK_MODELS, STATE_FILE,
   isTokenPlanQuotaText, isTokenPlanQuotaAnswer, parseResetAt, readState, exhaustedUntil, markExhausted, clearExhausted,
-  observeUsage, fallbackModel, resolveRoute, deepseekRouteNotice, waitNotice, canFallback, FALLBACK_KINDS, isDeepSeekRouteProfile, isTokenPlanRouteProfile, sameProfileDomain, formatReset,
+  observeUsage, fallbackModel, isApiModel, tokenPlanModel, resolveRoute, deepseekRouteNotice, waitNotice, canFallback, FALLBACK_KINDS, isDeepSeekRouteProfile, isTokenPlanRouteProfile, sameProfileDomain, formatReset,
 };

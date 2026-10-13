@@ -24,7 +24,7 @@ try {
   if (-not $NoShortcut) {
     $desktopPath = [Environment]::GetFolderPath('Desktop')
     $wsh = New-Object -ComObject WScript.Shell
-    $shortcut = $wsh.CreateShortcut((Join-Path $desktopPath 'AI Hub Community.lnk'))
+    $shortcut = $wsh.CreateShortcut((Join-Path $desktopPath 'AI HUB-Huawei.lnk'))
     $shortcut.TargetPath = $electronPath
     $shortcut.Arguments = '"' + $repoRoot + '"'
     $shortcut.WorkingDirectory = $repoRoot
@@ -32,7 +32,7 @@ try {
     $shortcut.Save()
   }
   if ($Launch) { Start-Process -FilePath $electronPath -ArgumentList ('"' + $repoRoot + '"') -WorkingDirectory $repoRoot -WindowStyle Hidden }
-  Write-Host 'AI Hub Community installed. Open the desktop shortcut; connect your own AI account in Accounts.'
+  Write-Host 'AI HUB-Huawei installed. Open the desktop shortcut; connect your own AI account in Accounts.'
   exit 0
 } catch {
   Write-Error $_ -ErrorAction Continue

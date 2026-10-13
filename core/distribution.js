@@ -31,7 +31,12 @@ module.exports = Object.freeze({
   community,
   personalModules: !community,
   // 社区版的产品名与版本；主仓库沿用原标题。
-  productName: community ? 'AI Hub Community' : null,
+  // 发行目标可以换产品显示名与版本标注（公司版 2026-10-13 起有自己的名字和「内测先锋版」标注，见 target.json）。
+  // 只改界面上看到的名字；exe 文件名、安装目录、数据目录不变，旧版本能原地升级。
+  productName: community ? String(marker.productName || 'AI Hub Community') : null,
+  editionBadge: community && marker.editionBadge ? String(marker.editionBadge) : null,
+  // 一键更新的下载源（只有写了 update 的发行目标才开启，见 core/app-update）。
+  updateConfig: community && marker.update && typeof marker.update === 'object' ? marker.update : null,
   editionVersion: community ? String(marker.version || '') : null,
   upstreamVersion: community ? String(marker.upstreamVersion || '') : null,
   // 发行目标可以关掉个别功能（target.json 的 features，例如公司版关掉助理）；未列出的功能一律开启。

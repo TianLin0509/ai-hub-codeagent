@@ -7,10 +7,12 @@ const { getHubDataDir } = require('./data-dir.js');
 const modelCatalog = require('./deepseek-codex-model-catalog.json');
 const { writeHubManagedCodexConfig } = require('./codex-managed-config.js');
 
-const DEEPSEEK_CODEX_MODEL = 'deepseek-v4-flash';
+// 2026-10-13：默认 V4.1 Flash。Codex 走 DeepSeek 官方 API，官方只认 deepseek-flash / deepseek-v4-pro；
+// 旧名 deepseek-v4-flash 服务端仍转发到 deepseek-flash，但官方 Codex 安装脚本 1.4.0 已把它从目录里清掉。
+const DEEPSEEK_CODEX_MODEL = 'deepseek-flash';
 const DEEPSEEK_CODEX_MODELS = Object.freeze([
+  'deepseek-flash',
   'deepseek-v4-pro',
-  'deepseek-v4-flash',
 ]);
 const DEEPSEEK_CODEX_BASE_URL = 'https://api.deepseek.com/';
 const DEEPSEEK_CODEX_MIN_VERSION = '0.144.0';

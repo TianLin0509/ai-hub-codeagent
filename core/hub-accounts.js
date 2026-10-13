@@ -29,6 +29,7 @@ class HubAccounts {
       homeDir: this.env.CLAUDE_HUB_HOME_DIR || require('os').homedir(), env: this.env });
   }
   async external({ service, action }) {
+    if (service === require('./aliyun-console').SERVICE_ID) return this.aliyunConsole(action);
     const external = require('./external-accounts');
     const research = external.RESEARCH_SITES.includes(service);
     if (service !== 'github') throw Error('外部服务标识无效');
@@ -61,6 +62,20 @@ class HubAccounts {
     if (action === 'open') try { require('./hub-account-activity').recordActivity(this.chrome.root, { site: service, outcome: 'opened', at: this.now() }); }
     catch { usageWarning = '；使用记录未保存'; }
     return { message: (action === 'check' ? 'GitHub 授权检查已完成，结果显示在外部服务中' : action === 'authorize' ? '已打开 GitHub 官方授权窗口，请按提示完成授权后检查' : '已在专属 Chrome 打开 ' + external.externalSite(service).name) + usageWarning };
+  }
+  // 阿里云控制台：独立的专用浏览器（不在 AI 浏览器里），登录后 AI 用 scripts/aliyun-console.js 只读查看。
+  // 「登录」打开给用户看的窗口；「检查登录」只看 cookie 名字和页面地址，不读 cookie 值。
+  async aliyunConsole(action) {
+    const aliyun = require('./aliyun-console'), external = require('./external-accounts');
+    if (!['open', 'check'].includes(action)) throw Error('阿里云控制台只支持打开和检查登录');
+    const browser = this.aliyunBrowser || new aliyun.AliyunConsole({ dataDir: this.env.CLAUDE_HUB_DATA_DIR || require('./data-dir').getHubDataDir(), env: this.env });
+    if (action === 'open') {
+      const opened = await browser.openForUser(aliyun.HOME_URL);
+      return { message: (opened.launched ? '已打开阿里云控制台专用浏览器' : '已在阿里云控制台专用浏览器里打开新窗口') + '：点右上角「登录」，用' + aliyun.LOGIN_HINT + '；登录后回来点「检查登录」' };
+    }
+    const status = await browser.status();
+    external.writeExternalState(this.chrome.root, aliyun.SERVICE_ID, { state: status.state, message: status.message, checkedAt: this.now() });
+    return { message: aliyun.NAME + '：' + status.message };
   }
   readCache() {
     try {

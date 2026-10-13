@@ -16,7 +16,7 @@
   const HUB_VERSION = (() => { try { return require('../package.json').version; } catch { return ''; } })();
   const VIEWS = [['official', '通用规则'], ['mine', '我的规则'], ['delivery', '送达情况']];
   const DELIVERY = { system: ['启动时写进系统提示', 'ok'], sent: ['已送达', 'ok'], unconfirmed: ['已发出，待确认', ''], pending: ['发送中', ''], failed: ['发送失败', 'bad'] };
-  const REASON = { launch: '会话启动（Claude）', new: '会话第一条消息', changed: '规则换版后补送', compacted: '上下文压缩后补送' };
+  const REASON = { launch: '会话启动时写入', new: '会话第一条消息', changed: '规则换版后补送', compacted: '上下文压缩后补送' };
 
   const S = { opened: false, view: 'official', data: null, officialMode: 'read', mineDraft: null, busy: false, lastUpdate: null };
   let root = null;
@@ -147,7 +147,7 @@
         : h('span', { class: 'rl-chip ' + (m.text.trim() ? 'on' : 'off') }, h('b', { text: m.text.trim() ? '开' : '空' }), ' 我的规则'),
     ];
     el.replaceChildren(h('span', { class: 'rl-summary-label', text: '当前生效' }), ...items,
-      h('span', { class: 'rl-muted', text: 'Claude 在会话启动时读入；其他 AI 随第一条消息读入，换版或上下文压缩后再送一次。' }));
+      h('span', { class: 'rl-muted', text: 'Claude、CodeAgent 在会话启动时读入；其他 AI 随第一条消息读入，换版或上下文压缩后再送一次。' }));
   }
 
   function officialView() {
@@ -271,7 +271,7 @@
       h('div', { class: 'rl-card' },
         h('div', { class: 'rl-row' }, h('div', { class: 'rl-grow' },
           h('div', { class: 'rl-strong', text: '每个会话最近一次带规则的情况' }),
-          h('div', { class: 'rl-muted', text: 'Claude 会话在启动时把规则写进系统提示；其他 AI 随第一条消息送达，「已送达」表示在对话记录里确认看到了规则。「还没带过」的会话会在下一条消息带上。个人基础规则由 CLI 自己读取，不在这张表里。' })),
+          h('div', { class: 'rl-muted', text: 'Claude、CodeAgent 会话在启动时把规则写进系统提示；其他 AI 随第一条消息送达，「已送达」表示在对话记录里确认看到了规则。「还没带过」的会话会在下一条消息带上。个人基础规则由 CLI 自己读取，不在这张表里。' })),
           h('button', { type: 'button', class: 'rl-btn', 'data-busy-lock': true, text: '刷新', onclick: () => guarded(load) })),
         table));
   }

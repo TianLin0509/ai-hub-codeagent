@@ -9,10 +9,9 @@ function plainProgressText(text) {
   }).join('\n');
 }
 function renderMessageBody(text, {isUser=false, plainProgress=false, foldLong=true, escapeHtml, renderMarkdown}) {
+  // Hub 附带块（规则、工作区规则、记忆索引）不进卡片（2026-10-13 用户要求），在「发送内容」面板里看。
   const memory = isUser && require('../core/memory-index-envelope').splitMemoryIndex(text);
-  if (memory?.indexText) return renderMessageBody(memory.userText,{isUser,plainProgress,foldLong,escapeHtml,renderMarkdown})
-    + '<details class="conversation-memory-context"><summary>附带项目记忆索引 / 共享规则</summary>'
-    + `<pre>${escapeHtml(memory.indexText)}</pre></details>`;
+  if (memory?.indexText) return renderMessageBody(memory.userText,{isUser,plainProgress,foldLong,escapeHtml,renderMarkdown});
   const raw=plainProgress && !isUser ? plainProgressText(text) : String(text || '');
   const body=isUser ? `<div class="conversation-user-text">${escapeHtml(raw)}</div>` : renderMarkdown(raw);
   if(!foldLong || (raw.length<1200 && raw.split('\n').length<32))return body;

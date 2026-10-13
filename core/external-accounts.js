@@ -23,6 +23,8 @@ function readExternalState(root) {
     if (!d || typeof d !== 'object' || Array.isArray(d)) throw Error('invalid');
     const out = { github: publicStatus(d.github) };
     for (const key of RESEARCH_SITES) out[key] = publicStatus(d[key], 'Hub 专属 Chrome', true);
+    // 阿里云控制台有自己的专用浏览器（core/aliyun-console.js），状态同样只存 Hub 写的固定提示。
+    out.aliyunConsole = publicStatus(d.aliyunConsole, '阿里云控制台专用浏览器', true);
     return out;
   }
   catch (e) { if (e.code === 'ENOENT') return {}; throw Error('外部账号检查记录无法读取，未覆盖原文件'); }

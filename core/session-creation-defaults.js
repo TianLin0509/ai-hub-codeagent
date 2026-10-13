@@ -2,9 +2,10 @@
 // Shared with the ordinary new-session UI. Assistant-created work must not
 // acquire a second, drifting table of model/effort/tool/speed defaults.
 const DEFAULT_EFFORT = 'max';
-const DEFAULT_EFFORT_BY_KIND = { claude: 'high', codex: 'high', codeagent: 'high' };
+// DeepSeek on Claude Code 沿用 Claude Code 的 --effort，默认 high（2026-10-11）。
+const DEFAULT_EFFORT_BY_KIND = { claude: 'high', codex: 'high', codeagent: 'high', 'deepseek-claude': 'high' };
 // Code Agent 默认沿用使用者自己配好的 MCP（公司代码检索等），所以是 full。
-const DEFAULT_MCP_BY_KIND = { claude: 'none', codex: 'none', deepseek: 'none', codeagent: 'full' };
+const DEFAULT_MCP_BY_KIND = { claude: 'none', codex: 'none', deepseek: 'none', 'deepseek-claude': 'none', codeagent: 'full' };
 const DEFAULT_CODEX_SPEED_BY_KIND = { codex: 'standard', deepseek: 'inherit' };
 function defaultEffortFor(kind) { return DEFAULT_EFFORT_BY_KIND[kind] || DEFAULT_EFFORT; }
 function creationDefaults(kind, config = {}) {

@@ -2,7 +2,7 @@
 """DeepSeek V4 interactive REPL for Claude Session Hub.
 
 Usage:
-    python deepseek_repl.py                          # default: deepseek-v4-flash
+    python deepseek_repl.py                          # default: deepseek-flash (V4.1 Flash)
     python deepseek_repl.py --model deepseek-v4-pro  # use V4 Pro
 """
 import argparse
@@ -25,8 +25,9 @@ def _load_api_key():
 
 
 MODEL_DISPLAY = {
+    "deepseek-flash": "DeepSeek V4.1 Flash",
     "deepseek-v4-pro": "DeepSeek V4 Pro",
-    "deepseek-v4-flash": "DeepSeek V4 Flash",
+    "deepseek-v4-flash": "DeepSeek V4 Flash (legacy name, served as deepseek-flash)",
     "deepseek-reasoner": "DeepSeek Reasoner (legacy)",
     "deepseek-chat": "DeepSeek Chat (legacy)",
 }
@@ -35,7 +36,7 @@ HELP_TEXT = """
 Commands:
   /help              Show this help
   /clear             Clear conversation history
-  /model <id>        Switch model (deepseek-v4-flash, deepseek-v4-pro)
+  /model <id>        Switch model (deepseek-flash, deepseek-v4-pro)
   /think [on|off]    Toggle thinking/reasoning mode
   /exit              Exit REPL
 """.strip()
@@ -44,7 +45,7 @@ Commands:
 def main():
     _ensure_utf8()
     parser = argparse.ArgumentParser(description="DeepSeek V4 Interactive REPL")
-    parser.add_argument("--model", default="deepseek-v4-pro", help="Model ID")
+    parser.add_argument("--model", default="deepseek-flash", help="Model ID")
     parser.add_argument("--temperature", type=float, default=None, help="Sampling temperature")
     args = parser.parse_args()
 
@@ -85,7 +86,7 @@ def main():
             elif cmd == "/model":
                 if len(cmd_parts) < 2:
                     print(f"Current model: {model}")
-                    print("Available: deepseek-v4-flash, deepseek-v4-pro")
+                    print("Available: deepseek-flash, deepseek-v4-pro")
                 else:
                     model = cmd_parts[1].strip()
                     display = MODEL_DISPLAY.get(model, model)

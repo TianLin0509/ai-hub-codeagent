@@ -12,6 +12,15 @@ const {
 } = require('../core/turn-presentation.js');
 const { renderImageAttachments, createCardDetailControls } = require('./card-detail-controls.js');
 const { chatAvatarSrc, USER_AVATAR_SRC } = require('./chat-avatar');
+const { isCodeAgentKind } = require('../core/ai-kinds');
+
+// 回合没带 kind 时用会话的 kind。CodeAgent 落盘是 Claude 格式，解析出的回合带 kind:'claude'，
+// 头像和名字仍以会话本身（CodeAgent）为准。
+function turnWithSessionKind(turn, sessionKind) {
+  if (!sessionKind) return turn;
+  const borrowed = isCodeAgentKind(sessionKind) && (turn.kind === 'claude' || turn.kind === 'claude-resume');
+  return (!turn.kind || borrowed) ? { ...turn, kind: sessionKind } : turn;
+}
 
 function createTurnCardRenderer(options = {}) {
   const doc = options.document || document;
@@ -76,7 +85,16 @@ function createTurnCardRenderer(options = {}) {
     const presentation = buildTurnPresentation(presentationTurn, {
       cwd: session && session.cwd || opts.cwd || null,
     });
-    return { ...presentationTurn, simpleChat: true, presentation, assistantIdentity: session?.purpose === 'hub-assistant' };
+    return { ...presentationTurn, kind: assistantKindFor(session, presentationTurn), simpleChat: true, presentation,
+      assistantIdentity: session?.purpose === 'hub-assistant' };
+  }
+
+  // 2026-10-12：DeepSeek 跑在 Claude Code 上时记录是 Claude 格式，解析出的回答身份是 claude；
+  // 头像跟着会话走，显示 DeepSeek 自己的画像。
+  function assistantKindFor(session, turn) {
+    const sessionKind = String(session?.kind || '');
+    if (!sessionKind || (turn.kind && turn.kind !== 'claude')) return turn.kind;
+    return require('../core/ai-kinds').canonicalAiKind(sessionKind.replace(/-resume$/, '')) === 'deepseek' ? sessionKind : turn.kind;
   }
 
   function publishTurnPresentation(sessionId, turn) {
@@ -579,6 +597,7 @@ function renderTurnCard(turn) {
         ${!isUser && !isSimple ? require('./conversation-header-activity').renderHeaderActivity('', '', true) : ''}
         ${turn.inherited ? '<span class="turn-branch-chip" title="分支前的对话，继承自父会话">分支前</span>' : ''}${nativeChip}
         <span class="turn-meta">${escapeHtml(ts)}</span>
+        ${isUser ? `<button class="ta-btn turn-compose-btn" data-action="prompt-composition" title="查看这条消息发出去的组成：系统提示、规则、记忆和你输入的正文">发送内容${turn.hubAttached?.length ? `<span class="turn-compose-count"> +${turn.hubAttached.length}</span>` : ''}</button>` : ''}
         ${!isUser ? renderTurnSpeed(turn) : ''}
         ${isSimple && isUser ? _renderMetaPills(turn, true) : ''}
         ${processHtml}
@@ -1038,7 +1057,7 @@ function mountSessionTurnCard(sessionId, turn, opts = {}) {
   // 这样展开态、选区、滚动意图与绑定在根节点上的 UI 状态都能保留。
   const existing = container.querySelector(`.turn-card[data-turn-id="${cssEscape(turn.id)}"]`);
   if (existing) {
-    const turnForRender2 = (opts.kind && !turn.kind) ? { ...turn, kind: opts.kind } : turn;
+    const turnForRender2 = turnWithSessionKind(turn, opts.kind);
     const prevTurn = state._sessionTurns.get(turn.id);
     const prevSig = _turnRenderSigs.get(turn.id) || turnRenderSignature(prevTurn);
     const nextSig = turnRenderSignature(turnForRender2);
@@ -1061,14 +1080,14 @@ function mountSessionTurnCard(sessionId, turn, opts = {}) {
     if (!newCard) return null;
     const patchedCard = patchTurnCardInPlace(existing, newCard, sessionId);
     if (!patchedCard) return null;
-    state._sessionTurns.set(turn.id, (opts.kind && !turn.kind) ? { ...turn, kind: opts.kind } : turn);
+    state._sessionTurns.set(turn.id, turnForRender2);
     _turnRenderSigs.set(turn.id, nextSig);
     publishTurnPresentation(sessionId, turnForRender2);
     return patchedCard;
   }
 
   // 3. merge kind through to renderTurnCard without mutating caller's turn
-  const turnForRender = (opts.kind && !turn.kind) ? { ...turn, kind: opts.kind } : turn;
+  const turnForRender = turnWithSessionKind(turn, opts.kind);
 
   // 4. build wrapper element from HTML string
   let cardEl = null;
@@ -1231,4 +1250,4 @@ listen('click', (e) => {
   };
 }
 
-module.exports = { createTurnCardRenderer };
+module.exports = { createTurnCardRenderer, turnWithSessionKind };

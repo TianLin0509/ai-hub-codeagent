@@ -166,7 +166,7 @@ function registerPromptSubmitIpc(ipcMain, deps) {
     // envelope against the exact pending body. Whitespace loss stays a mismatch.
     if (receipts.observe(normalizeAssistantReceipt(event))) return true;
     const session = sessionManager.getSession(event.sessionId || event.hubSessionId);
-    if (!/^claude(?:-resume)?$/.test(session?.transcriptKind || session?.kind || '')) return false;
+    if (!/^(?:claude|deepseek-claude)(?:-resume)?$/.test(session?.transcriptKind || session?.kind || '')) return false;
     const { unwrapClaudePasteEnvelope } = require('../../core/prompt-submission-receipts');
     const text = unwrapClaudePasteEnvelope(event.text);
     return text !== event.text && receipts.observe({ ...event, text });

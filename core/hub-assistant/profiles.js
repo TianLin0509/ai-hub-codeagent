@@ -1,7 +1,7 @@
 'use strict';
 // 助理自身的模型设置，以及助理分派任务时的三档配置。
 // 具体型号只写在这里：助理只说档位或用户点名的后端/模型，模型升级时改这张表。
-const {modelOptionsFor,isClaudeModelSelection,isCodexConversationModelId,DEFAULT_MODEL_BY_KIND}=require('../model-options');
+const {modelOptionsFor,isClaudeModelSelection,isCodexConversationModelId,DEFAULT_MODEL_BY_KIND,canonicalDeepSeekModelId}=require('../model-options');
 const {getKindLabel}=require('../ai-kinds');
 const CLAUDE_EFFORTS=['low','medium','high','xhigh','max'];
 const EFFORT_LABELS={none:'不思考',minimal:'最低',low:'低',medium:'中',high:'高',xhigh:'超高',max:'最高',ultra:'极限'};
@@ -27,7 +27,9 @@ function validModel(kind,model){
 }
 // requested 是用户/助理点名的值，fallback 是档位或 Hub 默认值；点名值不合法时报错，让助理换一个说法重试。
 function pick(kind,requested={},fallback={}){
-  const model=requested.model||fallback.model||DEFAULT_MODEL_BY_KIND[kind];
+  let model=requested.model||fallback.model||DEFAULT_MODEL_BY_KIND[kind];
+  // 助理或旧设置里的 DeepSeek 旧名 deepseek-v4-flash 换成新名 deepseek-flash。
+  if(kind==='deepseek')model=canonicalDeepSeekModelId(model);
   // 只校验点名的型号；Hub 默认配置来自用户设置，原样信任。
   if(requested.model&&!validModel(kind,model))throw new Error(`${getKindLabel(kind)} 没有模型「${model||'未指定'}」，请从该后端的模型列表中选择`);
   const efforts=effortsFor(kind,model);

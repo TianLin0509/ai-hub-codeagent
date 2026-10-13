@@ -193,3 +193,28 @@
 .turn-prompt-receipt { font-size: 11px; line-height: 1.6; color: var(--text-secondary, #8895a7); margin-top: 5px; }
 .turn-active-output { margin-top: 6px; padding: 5px 9px; border-left: 2px solid var(--border, #475569); color: var(--text-secondary, #8895a7); font-size: 11px; }
 .turn-active-output pre { margin: 2px 0 0; font: 12px/1.5 var(--font-mono, monospace); white-space: pre-wrap; overflow-wrap: anywhere; max-height: 3em; overflow: hidden; }
+
+/* 用户卡片头部的「发送内容」按钮与面板（renderer/prompt-composition-view.js）。 */
+.turn-card .turn-compose-btn { border-color: rgba(137,154,180,.28); font-size: 11px; padding: 2px 7px; }
+.turn-card .turn-compose-count { color: var(--link); }
+.prompt-composition-dialog { width: min(860px, calc(100vw - 40px)); }
+.prompt-composition-dialog .pc-summary { font-size: 13px; margin-bottom: 8px; }
+.prompt-composition-dialog .pc-bar { display: flex; height: 10px; border-radius: 5px; overflow: hidden; background: rgba(137,154,180,.15); }
+.prompt-composition-dialog .pc-bar i { display: block; height: 100%; }
+.prompt-composition-dialog .pc-legend { display: flex; flex-wrap: wrap; gap: 6px 16px; margin: 8px 0 14px; font-size: 12px; color: var(--text-muted); }
+.prompt-composition-dialog .pc-sq { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; }
+.prompt-composition-dialog .pc-c-system { background: var(--accent-blue, #5b8def); }
+.prompt-composition-dialog .pc-c-startup { background: var(--ui-purple-2, #8a6fd1); }
+.prompt-composition-dialog .pc-c-attached { background: #c9a03f; }
+.prompt-composition-dialog .pc-c-user { background: #4fa67a; }
+.prompt-composition-dialog .pc-group { margin-top: 14px; }
+.prompt-composition-dialog .pc-group h4 { display: flex; align-items: baseline; gap: 10px; margin: 0 0 4px; font-size: 13px; }
+.prompt-composition-dialog .pc-size { margin-left: auto; font-size: 11px; font-weight: 400; color: var(--text-muted); white-space: nowrap; }
+.prompt-composition-dialog .pc-note { margin: 2px 0 6px; font-size: 11px; color: var(--text-muted); white-space: pre-wrap; }
+.prompt-composition-dialog .pc-part { border: 1px solid rgba(137,154,180,.25); border-radius: 6px; margin: 6px 0; padding: 0 10px; }
+.prompt-composition-dialog .pc-part > summary { display: flex; gap: 10px; align-items: baseline; padding: 7px 0; cursor: pointer; font-size: 12px; }
+.prompt-composition-dialog .pc-part .pc-title { min-width: 0; overflow-wrap: anywhere; }
+.prompt-composition-dialog .pc-part[open] > summary { border-bottom: 1px solid rgba(137,154,180,.18); margin-bottom: 6px; }
+.prompt-composition-dialog .pc-unavailable .pc-size { color: #c9a03f; }
+.prompt-composition-dialog .pc-path { font: 11px Consolas, monospace; color: var(--text-muted); overflow-wrap: anywhere; margin-bottom: 4px; }
+.prompt-composition-dialog .pc-part pre { max-height: 45vh; margin: 4px 0 10px; }

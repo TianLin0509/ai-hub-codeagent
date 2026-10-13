@@ -288,13 +288,19 @@ function createHubRulesStore(options = {}) {
     }
     return file;
   }
+  // 「发送内容」面板读回某个会话启动时写进系统提示的那一版；文件被轮换清掉了就返回 null。
+  function systemPromptText(version) {
+    if (!/^[0-9a-f]{16,64}$/.test(String(version || ''))) return null;
+    try { return fs.readFileSync(path.join(root, 'system', `rules-${String(version).slice(0, 16)}.md`), 'utf8'); }
+    catch (error) { if (error.code === 'ENOENT') return null; throw error; }
+  }
   function isSystemPromptFile(file) {
     if (!file) return false;
     const rel = path.relative(path.join(root, 'system'), path.resolve(String(file)));
     return !!rel && !rel.startsWith('..') && !path.isAbsolute(rel);
   }
 
-  return { snapshot, setEnabled, checkUpdate, rollback, saveMine, injection, systemPromptFile, isSystemPromptFile, channel, baseUrl, root };
+  return { snapshot, setEnabled, checkUpdate, rollback, saveMine, injection, systemPromptFile, systemPromptText, isSystemPromptFile, channel, baseUrl, root };
 }
 
 function syncScriptPath(home) {

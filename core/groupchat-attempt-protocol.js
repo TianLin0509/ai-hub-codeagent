@@ -73,6 +73,7 @@ function normalizeProviderFamily(kind) {
   if (require('./acp-profiles').isAcpKind(value)) return value.replace(/-resume$/, '');
   if (value === 'claude' || value === 'claude-resume'
       || value === 'deepseek-legacy' || value === 'deepseek-legacy-resume'
+      || value === 'deepseek-claude' || value === 'deepseek-claude-resume'
       || value === 'codeagent' || value === 'codeagent-resume') return 'claude';
   if (value === 'codex' || value === 'codex-resume'
       || value === 'deepseek' || value === 'deepseek-resume') return 'codex';

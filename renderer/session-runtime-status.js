@@ -21,7 +21,7 @@ function providerLabel(session) {
   if(session?.runtimeBackend==='acp')return require('../core/native-ui-labels').nativeUiLabel(session);
   if (require('../core/chatgpt-web-models').isChatgptWebModel(session?.currentModel?.id)) return 'ChatGPT Web';
   const kind = String(session && session.kind || '').replace(/-resume$/i, '').toLowerCase();
-  if (kind === 'codex' || kind === 'deepseek') return kind === 'codex' ? 'Codex' : 'DeepSeek';
+  if (kind === 'codex' || kind === 'deepseek' || kind === 'deepseek-claude') return kind === 'codex' ? 'Codex' : 'DeepSeek';
   if (kind === 'claude') return 'Claude';
   if (kind === 'kimi') return 'Kimi';
   if (kind === 'gemini') return 'Antigravity';

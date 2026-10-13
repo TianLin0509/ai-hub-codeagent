@@ -83,7 +83,7 @@ function baseKind(kind) {
 function providerForHubSession(session) {
   if (!session || session.meetingId) return session && session.meetingId ? 'meeting' : 'unknown';
   const kind = baseKind(session.kind);
-  if (kind === 'deepseek' || kind === 'deepseek-legacy' || kind === 'deepseek-acp') return 'deepseek';
+  if (kind === 'deepseek' || kind === 'deepseek-legacy' || kind === 'deepseek-acp' || kind === 'deepseek-claude') return 'deepseek';
   if (kind === 'codex') return 'codex';
   if (kind === 'claude') return 'claude';
   if (kind === 'kimi') return 'kimi';

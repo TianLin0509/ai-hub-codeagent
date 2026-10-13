@@ -50,8 +50,10 @@ function displayTurns(turns) {
 
 // Only provider-generated attachment envelopes are stripped. A literal <image>
 // in a user prompt or code sample remains ordinary user text.
+// Hub 自己附带的块（规则、工作区规则、记忆索引）也不算用户的话：同一条消息在原生记录里
+// 常有两份（Codex 的 message + item_completed），卡片那份已剥掉附带块，比对前两边都剥。
 function userTextIdentity(text) {
-  return String(text || '')
+  return require('./synthetic-user-filter').splitHubEnvelopes(text).text
     .replace(/<image\b(?=[^>]*\bname=)(?=[^>]*\bpath=)[^>]*>\s*<\/image>/gi, ' ')
     .replace(/<image\b[^>]*\b(?:name|path)=[^>]*>/gi, ' ')
     .replace(/\s+/g, ' ').trim();
