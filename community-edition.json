@@ -31,14 +31,16 @@
     "releasePage": "https://github.com/TianLin0509/ai-hub-codeagent/releases"
   },
   "releaseNotes": [
-    "改名为 AI HUB-Huawei（内测先锋版）",
-    "CodeAgent 回答卡片显示智谱头像，不再是破图",
-    "Hub 规则在 CodeAgent 启动时写进系统提示，消息里不再附带规则",
-    "卡片头部新增「发送内容」，可分块查看这条消息实际发了什么",
-    "新增一键更新：多个下载源自动切换，失败写明原因"
+    "新图标：红色小机器人加铭牌，任务栏上一眼分得出",
+    "CodeAgent 会话可以直接切换模型：选模型后接着原会话重开，对话记录保留",
+    "模型列表读取本机 CodeAgent 配置（GLM、MiniMax、Qwen、DeepSeek 等，按各人权限）",
+    "界面按回答实际用的模型显示；请求的模型没生效时会提示原因",
+    "GLM / DeepSeek / MiniMax / Qwen 各有自己的头像和侧栏图标",
+    "新版本只弹窗提醒一次，之后在「设置」上显示红点",
+    "去掉右下角用不上的「国内正常 / 异常」"
   ],
-  "version": "1.0.1",
-  "upstreamVersion": "1.6.450",
-  "upstreamCommit": "ae0a92c9fd360dd4280a0c62146eb76c50ed0a09",
+  "version": "1.0.2",
+  "upstreamVersion": "1.6.453",
+  "upstreamCommit": "f673aecb154b66e1da991547067b5da0dc29843e",
   "upstreamDirty": false
 }

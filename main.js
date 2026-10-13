@@ -547,6 +547,33 @@ sessionManager.on('native-agent-lifecycle', event => {
 // Deep-summary service singleton: instantiated from config-driven fallback chain.
 // Providers tried in order; first one with a parseable response wins.
 
+// CodeAgent：回答里的真实模型才算数（请求的模型可能因为没有权限而没生效），见 core/codeagent-models.js。
+// Stop hook 那一刻才开始盯的记录拿不到 model（尾巴从文件末尾读起），这时从记录末尾补读最后一条回答的 model。
+async function observeCodeAgentModel(hubSessionId, ev, transcriptPath) {
+  try {
+    const codeAgentModels = require('./core/codeagent-models');
+    let modelId = ev.modelId || null;
+    const file = ev.transcriptPath || transcriptPath || sessionManager.getSession(hubSessionId)?.transcriptPath;
+    if (!modelId && file) modelId = (await require('./core/read-last-assistant').readLastAssistantMessage(file))?.model || null;
+    const session = sessionManager.getSession(hubSessionId);
+    const observed = session && modelId ? codeAgentModels.observeModel(session, modelId) : null;
+    if (!observed) return;
+    const updated = sessionManager.updateSessionMeta(hubSessionId, observed.fields);
+    if (updated) {
+      sessionStore.markDirty(hubSessionId, updated);
+      sendToRenderer('session-updated', { session: updated });
+    }
+    if (observed.mismatch) {
+      sendToRenderer('session-notice', { sessionId: hubSessionId, message: codeAgentModels.mismatchNotice(observed.mismatch), level: 'warning' });
+    }
+    if (codeAgentModels.recordObserved(getHubDataDir(), modelId)) {
+      sendToRenderer('codeagent-models-changed', { options: require('./core/codeagent-config').localModelOptions(getHubDataDir()) });
+    }
+  } catch (error) {
+    console.warn('[codeagent-model] observe failed:', error && error.message);
+  }
+}
+
 // Wire TranscriptTap → MeetingRoomManager timeline.
 // When a sub-session's CLI finishes a turn, append the AI text to its
 // meeting's timeline (if the sub-session belongs to a meeting).
@@ -565,6 +592,9 @@ transcriptTap.on('turn-complete', (ev) => {
       session = updated;
       sessionStore.markDirty(hubSessionId, updated);
     }
+  }
+  if (session && /^codeagent(?:-resume)?$/.test(String(session.kind || ''))) {
+    void observeCodeAgentModel(hubSessionId, ev || {}, session.transcriptPath);
   }
   Promise.resolve(completionNotifier.handleTurnComplete(ev || {}, session)).catch((error) => {
     console.warn('[completion-notifier] session completion handling failed:', error && error.message);
@@ -3359,7 +3389,12 @@ app.whenReady().then(async () => {
   if (process.platform === 'win32' && !isIsolatedHub()) {
     // 安装版：图标只能用 exe 自己内嵌的那份。claude-wx.ico 在 app.asar 里，Hub 自己读得到（健康检查照样通过），
     // Windows 资源管理器读不到，开始菜单快捷方式（任务栏按它取图标）就显示成白色文档（2026-10-09 公司真机）。
-    const hubIconPath = HUB_IS_PACKAGED ? process.execPath : path.join(__dirname, 'claude-wx.ico');
+    // 2026-10-13：图标文件解包到 app.asar.unpacked（package.json asarUnpack），资源管理器读得到，
+    // 一键更新也会换掉它；没有（老安装包）才退回 exe 自带的图标。
+    const unpackedHubIcon = HUB_IS_PACKAGED ? path.join(process.resourcesPath, 'app.asar.unpacked', 'claude-wx.ico') : null;
+    const hubIconPath = HUB_IS_PACKAGED
+      ? (unpackedHubIcon && fs.existsSync(unpackedHubIcon) ? unpackedHubIcon : process.execPath)
+      : path.join(__dirname, 'claude-wx.ico');
     const hubProductVersion = (() => {
       try { return require('./package.json').version || ''; } catch { return ''; }
     })();
@@ -3398,6 +3433,26 @@ app.whenReady().then(async () => {
 
     // 快捷方式先指向当前可用的启动器：品牌化副本在就用它，不在就回落 electron.exe。
     let hubLaunchExePath = startShellIntegration(HUB_IS_PACKAGED ? process.execPath : resolveHubLaunchExePath(brandingOptions));
+
+    // 安装版：一键更新换了图标、exe 还是旧的 —— 把开始菜单、桌面、任务栏固定项里指向本程序的快捷方式图标改指向新图标。
+    if (HUB_IS_PACKAGED && hubIconPath !== process.execPath) {
+      try {
+        const { refreshPackagedShortcutIcons, getShortcutPaths } = require('./core/windows-shell-integration');
+        const changed = refreshPackagedShortcutIcons({
+          shell, execPath: process.execPath, iconPath: hubIconPath,
+          shortcutFiles: [getShortcutPaths({ app }).shortcutPath],
+          dirs: [app.getPath('desktop'), path.join(app.getPath('appData'), 'Microsoft', 'Internet Explorer', 'Quick Launch', 'User Pinned', 'TaskBar')],
+        });
+        if (changed.length) {
+          console.log(`[windows-shell] 快捷方式换成新图标：${changed.map(f => path.basename(f)).join('、')}`);
+          // 让资源管理器刷新图标缓存，任务栏不用等重新登录。
+          const ie4uinit = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'ie4uinit.exe');
+          if (fs.existsSync(ie4uinit)) spawn(ie4uinit, ['-show'], { detached: true, stdio: 'ignore', windowsHide: true }).unref();
+        }
+      } catch (error) {
+        console.warn('[windows-shell] 快捷方式图标更新失败：', error.message);
+      }
+    }
 
     // 品牌化副本缺失或过期时后台重建。electron.exe 220MB+，读+改资源+写一整遍
     // 要好几秒，绝不能在主进程同步跑；用 ELECTRON_RUN_AS_NODE 起子进程。

@@ -1868,7 +1868,7 @@ if (typeof document !== 'undefined') (function () {
           </span>`
         : '';
       return `<div class="mr-turn-lane-item is-${bucket}" data-turn-lane-sid="${escapeHtml(slot.sid)}">
-        <img src="${_groupLogoSrc(slot.kind)}" alt="${escapeHtml(label)}" />
+        <img src="${_groupLogoSrc(slot.kind, _slotModelId(slot))}" alt="${escapeHtml(label)}" />
         <span class="mr-turn-lane-main">
           <span class="mr-turn-lane-name">${escapeHtml(label)}</span>
           <span class="mr-turn-lane-meta">@${escapeHtml(_memberIdForSlot(slot))} · ${escapeHtml(st.label)}</span>
@@ -1922,7 +1922,7 @@ if (typeof document !== 'undefined') (function () {
       const compact = model;
       const st = _slotTurnStatus(state, meeting, slot, viewingTurnN);
       return `<button type="button" class="mr-card-roster-member ${selected.has(slot.slotIndex) ? 'selected' : ''}" data-gc-member-idx="${slot.slotIndex}">
-        <img src="${_groupLogoSrc(slot.kind)}" alt="${escapeHtml(label)}" />
+        <img src="${_groupLogoSrc(slot.kind, _slotModelId(slot))}" alt="${escapeHtml(label)}" />
         <span class="mr-card-roster-main">
           <span class="mr-card-roster-name">${escapeHtml(label)}</span>
           <span class="mr-card-roster-meta">@${escapeHtml(_memberIdForSlot(slot))}${compact ? ` · ${escapeHtml(compact)}` : ''}</span>
@@ -2119,7 +2119,7 @@ if (typeof document !== 'undefined') (function () {
     const avatarsHtml = sids.map((sid, idx) => {
       const slot = slots[idx] || {};
       const src = meeting && meeting.groupChat && slot.kind
-        ? _groupLogoSrc(slot.kind)
+        ? _groupLogoSrc(slot.kind, _slotModelId(slot))
         : _avatarBySlot(idx);
       const fb = meeting && meeting.groupChat
         ? escapeHtml((slot.displayLabel || slot.kind || `AI ${idx + 1}`).slice(0, 2))
@@ -2260,8 +2260,14 @@ if (typeof document !== 'undefined') (function () {
     return map;
   }
 
-  function _groupLogoSrc(kind) {
-    return _avatarSrcFor(kind) || '';
+  function _groupLogoSrc(kind, model = '') {
+    return _avatarSrcFor(kind, model) || '';
+  }
+
+  // 成员会话当前的模型（CodeAgent 背后可能是 GLM / DeepSeek / MiniMax，头像按它挑）。
+  function _slotModelId(slot) {
+    const session = slot && slot.sid ? sessions.get(slot.sid) : null;
+    return (session && session.currentModel && session.currentModel.id) || (slot && slot.model) || '';
   }
 
   function _formatGroupChatTime(ts) {
@@ -2273,7 +2279,7 @@ if (typeof document !== 'undefined') (function () {
     if (!slot) return '<div class="mr-gc-avatar mr-gc-avatar-fallback">AI</div>';
     const label = slot.displayLabel || slot.label || slot.kind || 'AI';
     const title = `打开 ${label} 的 CLI 会话`;
-    return `<div class="mr-gc-avatar mr-session-jump" data-gc-open-session="${escapeHtml(slot.sid || '')}" role="button" tabindex="0" title="${escapeHtml(title)}" aria-label="${escapeHtml(title)}"><img src="${_groupLogoSrc(slot.kind)}" alt="${escapeHtml(label)}" /></div>`;
+    return `<div class="mr-gc-avatar mr-session-jump" data-gc-open-session="${escapeHtml(slot.sid || '')}" role="button" tabindex="0" title="${escapeHtml(title)}" aria-label="${escapeHtml(title)}"><img src="${_groupLogoSrc(slot.kind, _slotModelId(slot))}" alt="${escapeHtml(label)}" /></div>`;
   }
 
   // 2026-07-12 maintainer：watcher settle 的失败原因 → 用户能看懂的中文标签。
@@ -2714,7 +2720,7 @@ if (typeof document !== 'undefined') (function () {
       return `
         <div class="mr-gc-member-row">
           <button type="button" class="mr-gc-member ${checked ? 'selected' : ''}" data-gc-member-idx="${slot.slotIndex}">
-            <span class="mr-gc-member-logo" aria-hidden="true"><img src="${_groupLogoSrc(slot.kind)}" alt="" /></span>
+            <span class="mr-gc-member-logo" aria-hidden="true"><img src="${_groupLogoSrc(slot.kind, _slotModelId(slot))}" alt="" /></span>
             <span class="mr-gc-member-main">
               <span class="mr-gc-member-name">${escapeHtml(label)}</span>
               <span class="mr-gc-member-meta">@${escapeHtml(_memberIdForSlot(slot))}${compact ? ` · ${escapeHtml(compact)}` : ''}</span>
@@ -6808,7 +6814,7 @@ if (typeof document !== 'undefined') (function () {
     const slotAvatarSrc = (idx) => {
       const slot = slotsArr[idx] || {};
       // *-resume 复用基础 kind 的 svg；此处的 <img> 无 onerror 兜底，404 会直接破图
-      return _groupLogoSrc(slot.kind);
+      return _groupLogoSrc(slot.kind, _slotModelId(slot));
     };
 
     el.innerHTML = '';

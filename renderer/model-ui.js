@@ -24,8 +24,9 @@ function modelClass(id) {
   if (s.includes('codex') || s.includes('gpt-5') || s.includes('o3') || s.includes('o4-mini')) return 'codex';
   if (s.includes('deepseek')) return 'deepseek';
   if (s.includes('qwen')) return 'qwen';
-  // 公司 Code Agent 的模型（GLM-5.2-WX-Auto 等）用它自己的样式，不算智谱 ZCode。
-  if (s.includes('-wx') || s.startsWith('minimax')) return 'codeagent';
+  if (s.includes('minimax')) return 'minimax';
+  // 公司 Code Agent 的 GLM（GLM-5.2-WX-Auto 等）用它自己的样式，不算智谱 ZCode。
+  if (s.includes('-wx')) return 'codeagent';
   if (s.includes('glm')) return 'glm';
   if (s.includes('kimi') || s === 'k3') return 'kimi';
   return '';
@@ -330,6 +331,8 @@ function createModelUiController({
       menu.appendChild(settings);
     } else if (strategy === 'acp-native') {
       menuNote(menu,'阿里云套餐模型 · 选择后由原生 Harness 确认，再更新显示。');
+    } else if (strategy === 'codeagent-restart') {
+      menuNote(menu, '本机 CodeAgent 可用的模型 · 选择后用新模型接着这个会话重开 CodeAgent（约 10 秒），对话记录保留；回答进行中不能切换。');
     } else if (strategy === 'agy-inline') {
       menuNote(menu, '当前 Google 账号的 Antigravity 模型 · 在 CLI 内原地切换，收到“Model set to”回执后更新显示。');
     } else if (strategy === 'codex-picker') {
@@ -623,6 +626,20 @@ function createModelUiController({
     let commandScreen;
     try {
       commandScreen = await beginCommandScreen(sessionId, session);
+      if (strategy === 'codeagent-restart') {
+        if (isSessionBusy(session)) throw new Error('当前回答仍在运行，请结束后再切换');
+        const result = await ipcRenderer.invoke('codeagent:switch-model', { sessionId, modelId: option.id });
+        if (!result || result.ok !== true) throw new Error(result && result.message || 'CodeAgent 没能用新模型重开');
+        const current = sessions.get(sessionId) || session;
+        current.currentModel = { ...result.model };
+        delete session._modelSwitchPending;
+        delete current._modelSwitchPending;
+        updateActiveModelChip();
+        renderModelPicker(menu, badgeEl, sessionId, { text: `✓ 已换成 ${result.model.displayName}：CodeAgent 已用新模型接着这个会话重开，对话记录都在`, state: 'success' });
+        await sleep(900);
+        if (openModelPicker && openModelPicker.el === menu) closeModelPicker();
+        return { ok: true, model: current.currentModel };
+      }
       if (session.runtimeBackend === 'claude-stream-json') {
         const result = await ipcRenderer.invoke('claude-native:set-model', { sessionId, modelId: option.id });
         if (!result?.ok) throw new Error(result?.error || '模型切换未确认');

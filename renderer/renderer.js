@@ -4987,7 +4987,7 @@ function mountFloatingInput(sessionId, termContainer, terminal, pane = {}) {
       modelChip.classList.toggle('switching', !!rail.model.pending);
       modelChip.title = webRoute
         ? '通过 ChatGPT 网页回答，本地 Codex 执行工具。点击调整网页档位或打开专用设置。'
-        : `${rail.model.id || rail.model.label} — 点击切换模型`;
+        : `${rail.model.id || rail.model.label}${session?.codeagentActualModel && session.codeagentActualModel !== rail.model.id ? ` · 最近一轮实际是 ${session.codeagentActualModel}` : ''} — 点击切换模型`;
       modelChip.disabled = false;
       const logoClass = `composer-model-logo ${modelClass(rail.model.id)}`.trim();
       if (modelChipLogo.className !== logoClass) modelChipLogo.className = logoClass;
@@ -7755,6 +7755,13 @@ function showToast(message, level) {
   require('./groupchat-fork-ui.js').showForkToast(document, String(message || ''), level === 'error' ? 'error' : 'info');
 }
 
+// CodeAgent 回答里出现了新的模型名（例如公司的 deepseek… 内部名）：加进模型菜单和新建会话的选项。
+ipcRenderer.on('codeagent-models-changed', (_event, payload = {}) => {
+  if (Array.isArray(payload.options) && payload.options.length) {
+    require('../core/model-options.js').setRuntimeModelOptions('codeagent', payload.options);
+  }
+});
+
 // 主进程推来的会话提示（例如 Token Plan 额度用完、DeepSeek 会话改走官方 API）。
 ipcRenderer.on('session-notice', (_event, payload = {}) => {
   if (!payload || !payload.message) return;
@@ -9107,6 +9114,9 @@ ipcRenderer.on('session-updated', (_e, { session }) => {
   if (session.kimiSessionDir) local.kimiSessionDir = session.kimiSessionDir;
   if (session.effort) local.effort = session.effort;
   if (session.sessionUsage) local.sessionUsage = session.sessionUsage;
+  // CodeAgent：回答里的真实模型与当初请求的模型（core/codeagent-models.js）。
+  if (session.codeagentActualModel) local.codeagentActualModel = session.codeagentActualModel;
+  if (session.codeagentRequestedModel) local.codeagentRequestedModel = session.codeagentRequestedModel;
   let persistModel = false;
   if (session.currentModel && session.currentModel.id) {
     const previousModelId = local.currentModel && local.currentModel.id;

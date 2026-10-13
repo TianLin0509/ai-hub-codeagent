@@ -386,6 +386,47 @@ function ensureWindowsShellIntegration({
   return result;
 }
 
+/**
+ * 安装版换图标（2026-10-13，公司版 v1.0.2 换成新图标）：一键更新只替换 app.asar 和解包目录，
+ * 不换 exe，exe 里嵌的还是旧图标；开始菜单、桌面、任务栏固定项的快捷方式默认取 exe 的图标，
+ * 更新后任务栏就还是旧的。图标文件随解包目录一起更新（package.json asarUnpack），启动时把
+ * 指向本程序的快捷方式图标改指向它。只改图标一项（'update'），每次启动最多写一遍；
+ * 15 秒一拍的看门狗不调用这里，所以就算资源管理器把图标改回去也不会来回改。
+ */
+function refreshPackagedShortcutIcons({
+  shell,
+  execPath,
+  iconPath,
+  shortcutFiles = [],
+  dirs = [],
+  fsModule = fs,
+  logger = console,
+} = {}) {
+  const changed = [];
+  if (!shell || !execPath || !iconPath || normalizeWinPath(iconPath) === normalizeWinPath(execPath)) return changed;
+  if (!fsModule.existsSync(iconPath)) return changed;
+  const candidates = new Set(shortcutFiles.filter(Boolean));
+  for (const dir of dirs) {
+    if (!dir || !fsModule.existsSync(dir)) continue;
+    let names = [];
+    try { names = fsModule.readdirSync(dir); } catch { continue; }
+    for (const name of names) if (name.toLowerCase().endsWith('.lnk')) candidates.add(path.join(dir, name));
+  }
+  for (const file of candidates) {
+    let details = null;
+    try { if (!fsModule.existsSync(file)) continue; details = shell.readShortcutLink(file); } catch { continue; }
+    if (!details || normalizeWinPath(details.target) !== normalizeWinPath(execPath)) continue;
+    const icon = String(details.icon || '').replace(/,\s*-?\d+$/, '');
+    if (normalizeWinPath(icon) === normalizeWinPath(iconPath)) continue;
+    try {
+      if (shell.writeShortcutLink(file, 'update', { icon: iconPath, iconIndex: 0 })) changed.push(file);
+    } catch (error) {
+      logger.warn?.(`[windows-shell] 快捷方式图标更新失败 ${path.basename(file)}：${error.message}`);
+    }
+  }
+  return changed;
+}
+
 function startWindowsShellIntegrationWatchdog({
   intervalMs = 15 * 1000,
   setIntervalFn = setInterval,
@@ -446,5 +487,6 @@ module.exports = {
   isWindowsShellIntegrationHealthy,
   ensureWindowsShellIntegration,
   repointHubDesktopShortcuts,
+  refreshPackagedShortcutIcons,
   startWindowsShellIntegrationWatchdog,
 };

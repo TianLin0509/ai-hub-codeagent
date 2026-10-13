@@ -1380,6 +1380,11 @@
     });
     if (base === 'codex') return loadCodexTuningCatalog(options);
     if (base === 'claude') return loadClaudeModelCatalog(options);
+    // CodeAgent：已知模型 + 本机回答里实际出现过的模型（如公司的 deepseek… 内部名）。
+    if (base === 'codeagent') return ipcRenderer.invoke('codeagent:models').then(result => {
+      if (result && Array.isArray(result.options) && result.options.length) setRuntimeModelOptions('codeagent', result.options);
+      return result;
+    }).catch(error => { console.warn('[codeagent-models]', error.message); return null; });
     return Promise.resolve(null);
   }
 
@@ -1387,6 +1392,7 @@
     return Promise.all([
       loadClaudeModelCatalog(options),
       loadCodexTuningCatalog(options),
+      loadModelCatalog('codeagent'),
       ...require('../core/acp-profiles').ACP_KINDS.map(kind=>loadModelCatalog(kind)),
     ]);
   }

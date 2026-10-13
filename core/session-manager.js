@@ -1870,7 +1870,7 @@ class SessionManager extends EventEmitter {
       currentModel = { id: mid, displayName: mid === 'kimi-code/k3' || mid === 'k3' ? 'Kimi K3' : mid };
     } else if (isCodeAgent) {
       const mid = require('./codeagent-config').normalizeCodeAgentModel(opts.model);
-      currentModel = { id: mid, displayName: mid };
+      currentModel = { id: mid, displayName: require('./codeagent-models').modelLabel(mid) };
     }
 
     const effectiveCodexMcpProfile = isCodexRuntime
@@ -3447,6 +3447,8 @@ class SessionManager extends EventEmitter {
       ...(info.kimiSessionDir !== undefined ? { kimiSessionDir: info.kimiSessionDir } : {}),
       ...(info.currentModel ? { model: info.currentModel.id } : {}),
       ...(info.currentModel ? { currentModel: info.currentModel } : {}),
+      ...(info.codeagentActualModel ? { codeagentActualModel: info.codeagentActualModel } : {}),
+      ...(info.codeagentRequestedModel ? { codeagentRequestedModel: info.codeagentRequestedModel } : {}),
       ...(info.effort ? { effort: info.effort } : {}),
       ...(typeof info.contextPct === 'number' ? { contextPct: info.contextPct } : {}),
       ...(typeof info.contextUsed === 'number' ? { contextUsed: info.contextUsed } : {}),

@@ -131,6 +131,9 @@ function _buildSessionPayload(hubId, data) {
     kimiSid: data.kimiSid || null,
     kimiSessionDir: data.kimiSessionDir || null,
     currentModel: (data.currentModel && typeof data.currentModel === 'object') ? data.currentModel : null,
+    // CodeAgent：回答里的真实模型与当初请求的模型（core/codeagent-models.js observeModel）。
+    codeagentActualModel: typeof data.codeagentActualModel === 'string' ? data.codeagentActualModel : null,
+    codeagentRequestedModel: typeof data.codeagentRequestedModel === 'string' ? data.codeagentRequestedModel : null,
     effort: typeof data.effort === 'string' ? data.effort : null,
     contextPct: typeof data.contextPct === 'number' ? data.contextPct : null,
     contextUsed: typeof data.contextUsed === 'number' ? data.contextUsed : null,

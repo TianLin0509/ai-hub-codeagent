@@ -499,6 +499,33 @@ function registerSessionIpc(ipcMain, deps) {
   });
 
   // 公司电脑上装了 CodeAgent 时，新建会话 / 群聊默认用它（只查文件是否存在，不代表已登录）。
+  // CodeAgent 模型菜单：已知模型 + 本机回答里实际出现过的模型（core/codeagent-models.js）。
+  ipcMain.handle('codeagent:models', () => {
+    try {
+      const { getHubDataDir } = require('../../core/data-dir');
+      return { options: require('../../core/codeagent-config').localModelOptions(getHubDataDir()) };
+    } catch (error) { return { options: [], error: error.message }; }
+  });
+  // CodeAgent 会话内换模型（2026-10-13 公司探测：`--resume <会话> --model <新模型>` 能接着原会话换模型）。
+  // 走现成的「按新模型重启」：关掉当前 CLI，用原会话号 + 新模型重开，对话记录保留。回答中不切，免得打断。
+  ipcMain.handle('codeagent:switch-model', async (_e, payload = {}) => {
+    const sessionId = typeof payload.sessionId === 'string' ? payload.sessionId : '';
+    const session = sessionId ? sessionManager.getSession(sessionId) : null;
+    if (!session) return { ok: false, error: 'session-not-found', message: '会话不存在或已经休眠，先打开它再切换' };
+    if (!/^codeagent(?:-resume)?$/.test(String(session.kind || ''))) return { ok: false, error: 'not-codeagent', message: '只有 CodeAgent 会话走这条切换' };
+    const models = require('../../core/codeagent-models');
+    const requested = typeof payload.modelId === 'string' ? payload.modelId.trim() : '';
+    const modelId = models.normalizeModel(requested);
+    if (!requested || modelId.toLowerCase() !== requested.toLowerCase()) return { ok: false, error: 'invalid-model', message: `模型名不能用：${requested}` };
+    if (session.status === 'running') return { ok: false, error: 'busy', message: '当前回答仍在运行，请结束后再切换' };
+    const result = await restartSession(sessionId, { model: modelId });
+    if (!result || result.ok === false) return result || { ok: false, error: 'restart-failed', message: 'CodeAgent 没能用新模型重开' };
+    const currentModel = { id: modelId, displayName: models.modelLabel(modelId) };
+    // 新的明确选择：清掉「上次请求没生效」的记录，等下一条回答再核对实际模型。
+    const updated = sessionManager.updateSessionMeta(sessionId, { currentModel, codeagentRequestedModel: undefined });
+    if (updated) sendToRenderer('session-updated', { session: updated });
+    return { ok: true, model: currentModel };
+  });
   ipcMain.handle('codeagent:available', () => {
     try { return { installed: require('../../core/codeagent-config').isCodeAgentInstalled() }; }
     catch (error) { return { installed: false, error: error.message }; }

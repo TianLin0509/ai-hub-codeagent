@@ -526,7 +526,7 @@ function renderTurnCard(turn) {
   if (isUser) {
     avatarHtml = `<span class="turn-avatar av-logo av-user"><img src="${USER_AVATAR_SRC}" alt="用户 · AI Hub"></span>`;
   } else {
-    const logo = chatAvatarSrc(turn.kind, { assistant: turn.assistantIdentity });
+    const logo = chatAvatarSrc(turn.kind, { assistant: turn.assistantIdentity, model: turn.model });
     avatarHtml = logo
       ? `<span class="turn-avatar av-logo ${turn.assistantIdentity ? 'av-assistant' : 'av-character'}"><img src="${logo}" alt="${turn.assistantIdentity ? '企鹅助理' : escapeHtml(turn.kind || 'AI')}"></span>`
       : `<span class="turn-avatar av-letter">${escapeHtml(aiLetterFallback(turn.kind))}</span>`;

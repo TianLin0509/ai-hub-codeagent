@@ -1,0 +1,14 @@
+[
+    {
+        "key":  "minimax",
+        "category":  "avatar",
+        "series":  "日系精灵",
+        "file":  "renderer/assets/ai-avatars/cel-v2/minimax.png",
+        "sha256":  "e0ecd6cff70f99382d8a05d41006ff7272c191bad09a33a395c07667aff872c1",
+        "job_id":  "20261013-2c36148e3b10",
+        "image_id":  "20261013-0504b244599e",
+        "provider":  "chatgpt-web",
+        "note":  "2026-10-13 公司 CodeAgent 背后的 MiniMax 模型用。提示词沿用 2026-10-02 日系精灵系列模板，品牌元素：珊瑚粉发色、声波条形发夹。",
+        "prompt":  "Create one individual square AI chat avatar. The original character is an adult woman aged 22-25 represented in strongly super-deformed Japanese chibi anime proportions. Oversized head occupies approximately 85 percent of the portrait, very small shoulders, fully clothed casual top, front-facing friendly pose. The character should feel especially soft, cute, lively and approachable. Brand-inspired visual identity for MiniMax: rose-coral pink hair with soft magenta tips, warm amber eyes, one small hair clip shaped like five rounded vertical sound-wave bars of different heights in coral and magenta, white casual hoodie with a thin coral trim.\nSpecific chibi art direction: A premium Japanese chibi anime illustration, large head and tiny shoulders, lively sparkling anime eyes, energetic cheerful smile, light fluffy hair with little outward flips and delicate loose strands, crisp graceful thin lines, luminous clean cel shading, a fresh refined fantasy-game mascot portrait.\nFrame a single head-and-shoulders character, clear centered face, clean pale cool-white background, restrained airy pastel colors. Design the eyes, silhouette and one brand accessory to stay readable as a 32-40px circular chat avatar. Deliver a single original finished standalone portrait."
+    }
+]

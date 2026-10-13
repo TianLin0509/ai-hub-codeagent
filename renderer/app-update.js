@@ -53,6 +53,10 @@
   .au-btn.primary { background: var(--brand, #8b5cf6); border-color: var(--brand, #8b5cf6); color: #fff; font-weight: 600; }
   .au-btn.primary:hover { filter: brightness(1.06); }
   .au-btn:disabled { opacity: .5; cursor: default; }
+  #btn-options.update-has-unread .rail-utility-label { position: relative; }
+  #btn-options.update-has-unread .rail-utility-label:after { content: ''; position: absolute; top: -1px; right: -8px; width: 6px; height: 6px; background: #ff755c; border-radius: 50%; }
+  #options-check-update.update-has-unread:after { content: ''; display: inline-block; width: 6px; height: 6px; background: #ff755c; border-radius: 50%; margin: 0 0 7px 6px; }
+  #options-check-update.update-has-unread { font-weight: 600; }
   .au-toast { position: fixed; right: 20px; top: 56px; z-index: 10050; max-width: 420px; padding: 10px 14px; border-radius: 10px; font-size: 13px;
     background: var(--surface-raised, #fff); border: 1px solid var(--border-subtle, #e3e1ea); box-shadow: 0 10px 30px rgba(30,24,60,.16); }
   `;
@@ -147,7 +151,11 @@
     try {
       if (action === 'close') dialog?.close();
       else if (action === 'retry') { await ipcRenderer.invoke('app-update:check'); }
-      else if (action === 'download') { await ipcRenderer.invoke('app-update:download'); }
+      else if (action === 'download') {
+        // 已经动手更新了，设置上的红点就不用再提醒。
+        if (pendingVersion()) { writeKey(SEEN_KEY, pendingVersion()); renderUnread(); }
+        await ipcRenderer.invoke('app-update:download');
+      }
       else if (action === 'cancel') await ipcRenderer.invoke('app-update:cancel');
       else if (action === 'apply') await ipcRenderer.invoke('app-update:apply');
       else if (action === 'manual' && state?.releasePage) shell.openExternal(state.releasePage);
@@ -157,9 +165,44 @@
     }
   }
 
+  // 新版本提醒（2026-10-13 用户）：同一个版本只自动弹一次窗；之后「设置」按钮挂红点（同助理的未读红点），
+  // 直到用户从设置菜单点开这个版本的更新为止。两个标记按版本号记在本机，换了新版本重新提醒。
+  const PROMPTED_KEY = 'hub:appUpdate:promptedVersion';
+  const SEEN_KEY = 'hub:appUpdate:seenVersion';
+  const readKey = key => { try { return localStorage.getItem(key) || ''; } catch { return ''; } };
+  const writeKey = (key, value) => { try { localStorage.setItem(key, value); } catch {} };
+  function pendingVersion() {
+    return state && state.latest && state.plan && state.plan.kind !== 'none'
+      && ['available', 'downloading', 'ready'].includes(state.phase) ? String(state.latest.version) : '';
+  }
+  function maybePromptOnce() {
+    const version = pendingVersion();
+    if (!version || state.phase !== 'available' || readKey(PROMPTED_KEY) === version) return;
+    writeKey(PROMPTED_KEY, version);
+    // 用户自己从设置里点开、正看着弹窗时查到的新版本，算已看过，不再挂红点。
+    if (dialog) { writeKey(SEEN_KEY, version); renderUnread(); return; }
+    openDialog();
+  }
+  function renderUnread() {
+    const version = pendingVersion();
+    const unread = !!version && readKey(SEEN_KEY) !== version;
+    const button = document.getElementById('btn-options');
+    if (button) {
+      button.classList.toggle('update-has-unread', unread);
+      if (unread) button.title = `选项 · 有新版本 v${version}`;
+      else if (button.title.startsWith('选项 · 有新版本')) button.title = '选项';
+    }
+    const item = document.getElementById('options-check-update');
+    if (item) {
+      item.textContent = version ? `⬆️ 有新版本 v${version}` : '⬆️ 检查更新';
+      item.classList.toggle('update-has-unread', unread);
+    }
+  }
+
   function renderPill() {
     let pill = document.getElementById('hub-update-pill');
-    const show = state && ['available', 'ready', 'downloading'].includes(state.phase) && state.latest && state.plan?.kind !== 'none';
+    // 「有新版本」改由弹窗 + 设置红点提醒；标题栏只在下载中 / 已就绪时提示进度和重启。
+    const show = state && ['ready', 'downloading'].includes(state.phase) && state.latest && state.plan?.kind !== 'none';
     if (!show) { pill?.remove(); return; }
     if (!pill) {
       pill = document.createElement('button');
@@ -184,14 +227,22 @@
     if (!menu || document.getElementById('options-check-update')) return;
     const item = document.createElement('div');
     item.className = 'options-item'; item.id = 'options-check-update'; item.textContent = '⬆️ 检查更新';
-    item.addEventListener('click', () => { menu.style.display = 'none'; openDialog(); void ipcRenderer.invoke('app-update:check'); });
+    item.addEventListener('click', () => {
+      menu.style.display = 'none';
+      const version = pendingVersion();
+      if (version) { writeKey(SEEN_KEY, version); writeKey(PROMPTED_KEY, version); renderUnread(); }
+      openDialog();
+      // 已经查到新版本（或正在下载 / 已就绪）就直接看它；否则现查一次。
+      if (!version) void ipcRenderer.invoke('app-update:check');
+    });
     menu.appendChild(item);
   }
 
-  ipcRenderer.on('app-update:state', (_e, next) => { state = next; render(); renderPill(); });
+  const update = next => { state = next; render(); renderPill(); renderUnread(); maybePromptOnce(); };
+  ipcRenderer.on('app-update:state', (_e, next) => update(next));
   addMenuEntry();
   ipcRenderer.invoke('app-update:get-state').then(initial => {
-    state = initial; renderPill();
+    update(initial);
     const r = initial && initial.lastResult;
     if (r) {
       void ipcRenderer.invoke('app-update:dismiss-result');

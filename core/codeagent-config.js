@@ -19,8 +19,10 @@ const path = require('path');
 const DEFAULT_COMMAND = 'codeagent';
 const DEFAULT_CONFIG_ENV = 'CODEAGENT3_CONFIG_DIR';
 const STATE_FILE = '.cac.json';
-const MODELS = Object.freeze(['GLM-5.2-WX-Auto', 'MiniMax-M2.7']);
-const DEFAULT_MODEL = MODELS[0];
+// 已知模型；公司内部还有 deepseek… 等名字，按字符校验放行（见 core/codeagent-models.js）。
+const codeAgentModels = require('./codeagent-models');
+const MODELS = Object.freeze(codeAgentModels.KNOWN.map(option => option.id));
+const DEFAULT_MODEL = codeAgentModels.DEFAULT_MODEL;
 const EFFORTS = Object.freeze(['low', 'medium', 'high', 'max']);
 // 实测能从 settings.json 触发的事件（公司探测第一轮 P5 与 CodeTeam 现有登记的并集）。
 // 只登记这些，避免未知事件名让整份 settings.json 校验失败——这份文件同事的其他工具也在用。
@@ -71,8 +73,14 @@ function isCodeAgentInstalled(env = process.env, provider = hubProviderConfig())
 }
 
 function normalizeCodeAgentModel(model) {
-  const value = cleanString(model);
-  return MODELS.find(id => id.toLowerCase() === value.toLowerCase()) || DEFAULT_MODEL;
+  return codeAgentModels.normalizeModel(model);
+}
+
+// 模型菜单：已知模型 + 本机 CodeAgent 配置目录里的模型 + 回答里见过的模型（core/codeagent-models.js）。
+function localModelOptions(dataDir, env = process.env) {
+  let configDir = null;
+  try { configDir = resolveCodeAgentConfig(env).configDir; } catch { configDir = null; }
+  return codeAgentModels.modelOptions(dataDir, { configDir });
 }
 
 module.exports = {
@@ -86,5 +94,6 @@ module.exports = {
   resolveCodeAgentConfig,
   commandHead,
   normalizeCodeAgentModel,
+  localModelOptions,
   isCodeAgentInstalled,
 };

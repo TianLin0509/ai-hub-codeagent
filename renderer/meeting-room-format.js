@@ -53,8 +53,8 @@ function formatThinkTime(seconds) {
   return s === 0 ? `${m}m` : `${m}m${String(s).padStart(2, '0')}s`;
 }
 
-function avatarSrcFor(kind) {
-  return chatAvatarSrc(kind) || '';
+function avatarSrcFor(kind, model = '') {
+  return chatAvatarSrc(kind, { model }) || '';
 }
 
 function avatarFallbackFor(kind) {

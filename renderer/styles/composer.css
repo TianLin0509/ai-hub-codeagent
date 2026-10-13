@@ -305,6 +305,7 @@
 .composer-model-logo.qwen { background: url('../assets/ai-logos/qwen.svg') center / contain no-repeat; color: transparent; }
 .composer-model-logo.glm { background: url('../assets/ai-logos/glm.svg') center / contain no-repeat; color: transparent; }
 .composer-model-logo.codeagent { background: url('../assets/ai-logos/codeagent.svg') center / contain no-repeat; color: transparent; }
+.composer-model-logo.minimax { background: url('../assets/ai-logos/minimax.svg') center / contain no-repeat; color: transparent; }
 
 .composer-thinking { background: rgba(var(--rgb-neutral), .06); }
 .composer-thinking.is-static { cursor: default; }
