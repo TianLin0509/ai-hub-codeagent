@@ -84,12 +84,12 @@ function createKeyboardShortcuts({
 
   async function forkSession(sourceSessionId) {
     if (!sourceSessionId) {
-      showShortcutNotice('请先打开一个 Claude Code、Codex 或 DeepSeek 会话', 'error');
+      showShortcutNotice('请先打开一个 Claude Code、Codex、DeepSeek 或 CodeAgent 会话', 'error');
       return null;
     }
     const source = sessions.get(sourceSessionId);
     if (!supportsForkSession(source)) {
-      showShortcutNotice('当前类型不支持分支，仅支持 Claude Code、Codex 和 DeepSeek', 'error');
+      showShortcutNotice('当前类型不支持分支，仅支持 Claude Code、Codex、DeepSeek 和 CodeAgent', 'error');
       return null;
     }
 

@@ -25,6 +25,15 @@ window.addEventListener('keydown', (event) => {
   ipcRenderer.sendToHost('preview-shortcut', action);
 }, true);
 
+// Ctrl + wheel zooms the whole preview, as on the Hub's own preview content;
+// the host adds the deltas up into 10% steps.
+window.addEventListener('wheel', (event) => {
+  if (!event.isTrusted || !(event.ctrlKey || event.metaKey) || !event.deltaY) return;
+  event.preventDefault();
+  const delta = event.deltaMode === 1 ? event.deltaY * 33 : event.deltaMode === 2 ? event.deltaY * 800 : event.deltaY;
+  ipcRenderer.sendToHost('preview-shortcut', 'wheel-zoom', delta);
+}, { capture: true, passive: false });
+
 try {
   const { createClipboardController } = require('./clipboard-controller.js');
   const clipboardController = createClipboardController({

@@ -197,7 +197,8 @@ function createCardQuestionNavigator(options = {}) {
     root.hidden = !visible;
     overlay.classList.toggle('question-nav-visible', visible);
     if (!visible) { hovered = false; hoverSuppressed = false; hideTooltip(); }
-    updateLayout();
+    // 隐藏时不量布局（2026-10-13：切到后台时这一下强制排版，公司条件下每次约 90 ms）；再显示时照常量。
+    if (visible) updateLayout();
   }
 
   function keepActiveButtonVisible(button) {

@@ -9,9 +9,9 @@
     setRuntimeModelOptions,
   } = require('../core/model-options.js');
   const {
-    isDefaultModel,
     resolveDefaultModel,
   } = require('../core/default-model-preference.js');
+  const { readLaunchDefaults } = require('../core/launch-defaults.js');
   const { defaultCodexContextWindow } = require('../core/codex-context-window.js');
   const { DEFAULT_EFFORT, DEFAULT_EFFORT_BY_KIND, DEFAULT_MCP_BY_KIND,
     DEFAULT_CODEX_SPEED_BY_KIND, defaultEffortFor } = require('../core/session-creation-defaults.js');
@@ -59,7 +59,7 @@
   const CLAUDE_EFFORT_OPTIONS = [
     ['max', 'max · 最强'],
     ['xhigh', 'xhigh'],
-    ['high', 'high · 默认'],
+    ['high', 'high · 深入思考'],
     ['medium', 'medium · 省额度'],
     ['low', 'low · 最省'],
   ];
@@ -80,9 +80,11 @@
   const codexCatalogInFlight = new Map();
   let codexAccounts = [];
   let codexAccountId = '';
+  let globalCodexAccountId = '';
   let codexBackend = 'subscription';
   // DeepSeek 接入：上次选的方式（Hub 配置记住，默认 Token Plan）+ 两条线各自是否有 Key。
   let deepseekRoute = deepseekProfile.DEFAULT_ROUTE;
+  let configuredDeepseekRoute = deepseekProfile.DEFAULT_ROUTE;
   let deepseekRoutes = null;
   let deepseekRouteTouched = false;
   function panelKind(kind) {
@@ -99,10 +101,7 @@
     if (!normalized) return null;
     deepseekRoute = normalized;
     deepseekRouteTouched = true;
-    try {
-      const result = await ipcRenderer.invoke('deepseek:set-route', { route: normalized });
-      if (!result || !result.ok) console.warn('[deepseek-route] remember failed:', result && result.error);
-    } catch (error) { console.warn('[deepseek-route] remember failed:', error && error.message); }
+    tuningTouchedByUser = true;
     return normalized;
   }
   let accountSaving = false;
@@ -116,16 +115,16 @@
   // Claude 原来默认 full，13 个会话就吃掉 34.6 GB 提交内存。
   const MCP_OPTIONS = {
     claude: [
-      ['none', 'None · 默认，不加载任何 MCP'],
-      ['browser', 'Browser · 只留 Playwright / Chrome'],
-      ['lean', 'Lean · 仅保留 workspace / 群聊 MCP'],
-      ['full', 'Full · 继承全部全局 MCP（最占内存）'],
+      ['none', 'None · 不加载工具'],
+      ['browser', 'Browser · 浏览器工具'],
+      ['lean', 'Lean · 工作区与群聊'],
+      ['full', 'Full · 全部全局工具'],
     ],
     codex: [
-      ['none', 'None · 默认，不加载任何 MCP'],
-      ['lean', 'Lean · 仅保留 workspace / 群聊 MCP'],
-      ['browser', 'Browser · 只留 Playwright'],
-      ['full', 'Full · 全部全局 MCP'],
+      ['none', 'None · 不加载工具'],
+      ['lean', 'Lean · 工作区与群聊'],
+      ['browser', 'Browser · 浏览器工具'],
+      ['full', 'Full · 全部全局工具'],
     ],
   };
   // 2026-09-05：Codex 的 fast（service_tier=priority）默认关掉 —— 用户要的是
@@ -185,10 +184,10 @@
     const configured = (codexTuningCatalog && codexTuningCatalog.configuredServiceTier) || '';
     const inheritLabel = configured ? `跟随全局配置（当前：${configured}）` : '跟随全局配置';
     const options = [
-      ['standard', 'Standard · 默认，显式关闭 Fast'],
+      ['standard', 'Standard · 标准速度'],
       ['inherit', inheritLabel],
     ];
-    if (codexModelTuning(modelId).supportsFast) options.push(['fast', 'Fast · priority 通道，1.5× 速度']);
+    if (codexModelTuning(modelId).supportsFast) options.push(['fast', 'Fast · 优先通道']);
     options.push(['flex', 'Flex · 更慢更省']);
     return options;
   }
@@ -199,9 +198,12 @@
   // 模块加载时就拉一次，不能只在打开新建会话面板时拉：群聊/圆桌成员走的是
   // resolveSessionTuning，它不经过那个面板，晚加载的话成员会一律回落出厂默认。
   let hubDefaultModels = {};
+  let hubLaunchDefaults = {};
+  let defaultsSaving = false;
+  let modalRevision = 0;
   // 本轮面板里用户有没有亲手动过模型下拉。异步回读配置后靠它决定能不能覆盖
   // 当前选择，避免把用户刚选的值改掉。
-  let modelTouchedByUser = false;
+  let tuningTouchedByUser = false;
 
   function defaultModelConfig() {
     return { defaultModels: hubDefaultModels };
@@ -213,19 +215,22 @@
     const revision=++configReadRevision;
     try {
       const config = await ipcRenderer.invoke('get-hub-config');
+      if (revision !== configReadRevision) return hubDefaultModels;
       hubDefaultModels = (config && config.defaultModels) || {};
+      hubLaunchDefaults = readLaunchDefaults(config);
       if (!accountSaving && revision===configReadRevision) {
         codexAccounts=(config.codexSubscriptionProfiles || []).map(p=>({...p,email:config.codexProfileIdentities?.[p.id] || ''}));
-        codexAccountId=config.codexSubscriptionProfile || '';
+        globalCodexAccountId=config.codexSubscriptionProfile || '';
+        if (!tuningTouchedByUser) codexAccountId=defaultCodexProfile();
         codexBackend=config.codexBackend;
         accountReadError='';
       }
       if (config) {
-        if (!deepseekRouteTouched) deepseekRoute = deepseekProfile.normalizeRoute(config.deepseekRoute) || deepseekProfile.DEFAULT_ROUTE;
+        configuredDeepseekRoute = deepseekProfile.normalizeRoute(config.deepseekRoute) || deepseekProfile.DEFAULT_ROUTE;
+        if (!deepseekRouteTouched) deepseekRoute = hubLaunchDefaults['deepseek-claude']?.deepseekRoute || configuredDeepseekRoute;
         deepseekRoutes = config.deepseekRoutes || null;
       }
     } catch (error) {
-      hubDefaultModels = {};
       accountReadError='账号配置读取失败：'+error.message;
     }
     return hubDefaultModels;
@@ -234,6 +239,7 @@
   // 新建 Session 与群聊成员共用这一份纯计算结果。群聊不能复制一套静态枚举：
   // Codex 的 effort / fast 支持会随模型目录变化，复制后迟早与单会话弹窗漂移。
   function resolveSessionTuning(kind, modelId, selection = {}) {
+    selection = { ...(hubLaunchDefaults[kind] || {}), ...selection };
     const modelOptions = modelOptionsFor(kind);
     // 用户设过默认就用它，否则才回落出厂值；两者都不在当前可选清单里时取第一项。
     // 群聊成员走的也是这里，所以「设为默认」对群聊同样生效。
@@ -273,6 +279,8 @@
       codexSpeedTier,
       codexTierOptions,
       contextMax,
+      codexProfile: codexAccounts.some(p => p.id === selection.codexProfile) ? selection.codexProfile : defaultCodexProfile(),
+      deepseekRoute: selection.deepseekRoute || configuredDeepseekRoute,
     };
   }
 
@@ -295,6 +303,11 @@
       opts.codexSpeedTier = tuning.codexSpeedTier;
     }
     if (typeof tuning.contextMax === 'number') opts.contextMax = tuning.contextMax;
+    if (kind === 'codex' && codexBackend !== 'api' && tuning.codexProfile) {
+      opts.codexProfile = tuning.codexProfile;
+      opts.codexAccountScope = 'session';
+    }
+    if (kind === 'deepseek-claude') opts.deepseekRoute = tuning.deepseekRoute;
     return opts;
   }
   const RECENT_LIMIT = 8;
@@ -722,6 +735,19 @@
     return ipcRenderer.invoke('workspace:pick');
   }
 
+  // 新会话默认用「规则 → 场景」里设的默认场景（2026-10-13）；默认是编程开发时什么都不加。
+  async function defaultSceneOpts(kind, opts) {
+    if (opts.purpose) return {};
+    const scenes = require('../core/session-scenes');
+    if (!scenes.supportsScenes(kind, opts)) return {};
+    try {
+      const data = await require('./composer-scene').loadScenes(ipcRenderer);
+      const id = data && data.defaultScene;
+      const purpose = id && data.scenes.some(s => s.id === id) ? scenes.scenePurpose(id) : null;
+      return purpose ? { purpose } : {};
+    } catch (_) { return {}; }
+  }
+
   async function createSession(kind, options = {}) {
     let workspace = options.workspace || null;
     if (!workspace && options.cwd) {
@@ -733,6 +759,7 @@
     return ipcRenderer.invoke('create-session', {
       kind,
       opts: {
+        ...(await defaultSceneOpts(kind, options.opts || {})),
         ...(options.opts || {}),
         cwd: workspace.path,
         workspaceLabel: workspace.label,
@@ -906,20 +933,45 @@
     });
   }
 
-  // 「设为默认」按钮的三种状态：已是默认（禁用，用来回答"当前默认是不是它"）、
-  // 可设为默认、以及没有模型的 kind（整个隐藏）。
+  function defaultCodexProfile() {
+    const saved = hubLaunchDefaults.codex?.codexProfile;
+    return codexAccounts.some(p => p.id === saved) ? saved : globalCodexAccountId;
+  }
+
+  function launchSelection(kind, tuning) {
+    const result = { model: tuning.model };
+    if (EFFORT_KINDS.has(kind)) result.effort = tuning.effort;
+    if (MCP_KINDS.has(kind)) result.mcpProfile = tuning.mcpProfile;
+    if (FAST_KINDS.has(kind)) result.fastMode = tuning.fastMode;
+    if (CODEX_TIER_KINDS.has(kind)) result.codexSpeedTier = tuning.codexSpeedTier;
+    if (kind === 'codex' && codexBackend !== 'api' && tuning.codexProfile) result.codexProfile = tuning.codexProfile;
+    if (kind === 'deepseek-claude') result.deepseekRoute = tuning.deepseekRoute;
+    return result;
+  }
+
+  function currentLaunchSelection() {
+    return launchSelection(selectedKind, { model: selectedModel, effort: selectedEffort,
+      mcpProfile: selectedMcpProfile, fastMode: selectedFastMode, codexSpeedTier: selectedCodexTier,
+      codexProfile: codexAccountId, deepseekRoute });
+  }
+
+  // Compare every visible field; changing speed alone must enable saving.
   function paintDefaultModelButton() {
     const button = document.getElementById('new-session-model-default');
     if (!button) return;
     const supported = !!selectedModel;
     button.hidden = !supported;
     if (!supported) return;
-    const already = isDefaultModel(selectedKind, selectedModel, defaultModelConfig());
-    button.disabled = already;
-    button.textContent = already ? '默认 ✓' : '设为默认';
+    const defaults = launchSelection(selectedKind, resolveSessionTuning(selectedKind, ''));
+    const already = JSON.stringify(currentLaunchSelection()) === JSON.stringify(defaults);
+    button.disabled = already || defaultsSaving || accountSaving || submitting || (selectedKind === 'codex' && !!accountReadError);
+    button.textContent = defaultsSaving ? '正在保存…' : already ? '整组默认 ✓' : '将整组设为默认';
     button.title = already
-      ? `新建 ${selectedKind} 会话时默认就用这个模型`
-      : `把 ${selectedModel} 设为新建 ${selectedKind} 会话的默认模型`;
+      ? '下次新建会话将沿用这组配置'
+      : '保存本组全部选项，下次新建同类 AI 会话时一起恢复';
+    const status = document.getElementById('new-session-default-status');
+    if (status) status.textContent = defaultsSaving ? '正在保存整组配置' : already
+      ? '新建会话将沿用这组配置' : '当前改动仅用于本次 · 保存后下次沿用';
   }
 
   function paintTuning() {
@@ -929,9 +981,8 @@
     const showAccount=selectedKind === 'codex' && codexBackend !== 'api';
     if (accountField) accountField.hidden=!showAccount;
     if (accountNote) {
-      accountNote.hidden=!showAccount;
-      accountNote.textContent=accountReadError || (accountSaving ? '正在切换全局账号…' : accountNotice)
-        || '选择后，新建、恢复和重启使用所选账号额度；已打开的会话继续使用原账号。';
+      accountNote.hidden=!showAccount || (!accountReadError && !accountSaving && !accountNotice);
+      accountNote.textContent=accountReadError || (accountSaving ? '正在读取所选账号的模型…' : accountNotice);
     }
     if (accountSelect) {
       const signature=JSON.stringify(codexAccounts);
@@ -952,9 +1003,13 @@
     const mcpField = document.getElementById('new-session-mcp-field');
     const mcpSelect = document.getElementById('new-session-mcp');
     if (!grid || !modelSelect) return;
+    grid.dataset.kind = selectedKind;
+    grid.dataset.account = String(showAccount);
 
     const options = modelOptionsFor(selectedKind);
     const hasModels = options.length > 0;
+    const section = document.getElementById('new-session-config-section');
+    if (section) section.hidden = !hasModels;
     if (label) label.hidden = !hasModels;
     grid.hidden = !hasModels;
     if (!hasModels) {
@@ -986,7 +1041,6 @@
       modelSelect.dataset.builtFor = wanted;
     }
     modelSelect.value = selectedModel;
-    paintDefaultModelButton();
 
     const effortLabel = document.getElementById('new-session-effort-label');
     const fastField = document.getElementById('new-session-fast-field');
@@ -1003,7 +1057,7 @@
 
     if (effortField) effortField.hidden = !showEffort;
     if (showEffort) {
-      if (effortLabel) effortLabel.textContent = EFFORT_LABEL_BY_KIND[selectedKind] || '思考强度';
+      if (effortLabel) { effortLabel.textContent = '思考强度'; effortLabel.title = EFFORT_LABEL_BY_KIND[selectedKind] || '思考强度'; }
       const effortOptions = effortOptionsFor(selectedKind, selectedModel);
       fillSelect(effortSelect, effortOptions);
       // 切 kind / 切模型之后旧档位可能不在新枚举里（gpt-5.6-sol 的 ultra → 5.5 没有），
@@ -1077,11 +1131,29 @@
           lines.push('1M 是会话启动请求；实际可用窗口仍受当前 Codex 模型目录上限约束，启动后以实时回报为准。');
         }
       }
-      if (selectedKind === 'claude' && selectedMcpProfile === 'full') lines.push('Claude 默认 Full：七个全局 MCP 各起一个常驻进程，开多个会话时可换 Lean 省内存。');
+      if (selectedKind === 'claude' && selectedMcpProfile === 'full') lines.push('Full 会加载全局 MCP，开多个会话时可换 Lean 减少常驻进程。');
       note.hidden = lines.length === 0;
       note.textContent = lines.join(' ');
     }
 
+    paintDefaultModelButton();
+    const details = document.getElementById('new-session-tuning-details');
+    if (details) details.hidden = !note || note.hidden;
+    const warning = document.getElementById('new-session-tuning-warning');
+    if (warning) {
+      const saved = hubLaunchDefaults[selectedKind] || {};
+      const unavailable = [];
+      if (hubDefaultModels[selectedKind] && !options.some(o => o.id === hubDefaultModels[selectedKind])) unavailable.push('默认模型');
+      if (showEffort && saved.effort && !effortOptionsFor(selectedKind, selectedModel).some(([v]) => v === saved.effort)) unavailable.push('默认思考强度');
+      if (showCodexTier && saved.codexSpeedTier && !codexTierOptionsFor(selectedModel).some(([v]) => v === saved.codexSpeedTier)) unavailable.push('默认速度');
+      if (showAccount && saved.codexProfile && !codexAccounts.some(p => p.id === saved.codexProfile)) unavailable.push('默认账号');
+      const notices = [];
+      if (unavailable.length) notices.push(`${unavailable.join('、')}当前不可用，已显示可用选项，请确认后创建。`);
+      if (showFast && selectedFastMode) notices.push('快速模式可能影响回复记录；卡片收不到回复时可关闭。');
+      if (selectedKind === 'codex' && codexTuningCatalog?.refreshError) notices.push('在线模型目录刷新失败，当前使用缓存；下次打开会重试。');
+      warning.textContent = notices.join(' ');
+      warning.hidden = !notices.length;
+    }
     grid.style.gridTemplateColumns = (showEffort || showMcp || showFast || showCodexTier) ? '' : '1fr';
   }
 
@@ -1227,6 +1299,12 @@
 
   function openNewSessionModal(options = {}) {
     if (!menuEl) return;
+    const revision = ++modalRevision;
+    tuningMemory.clear();
+    accountNotice = '';
+    tuningTouchedByUser = false;
+    const details = document.getElementById('new-session-tuning-details');
+    if (details) details.open = false;
     const { kindAllowed } = require('../core/distribution');
     selectedKind = [panelKind(options.kind), panelKind(require('./codeagent-preference').preferredKind(Object.keys(KIND_LABELS).filter(kindAllowed)))]
       .find(kind => kind && kindAllowed(kind)) || require('./codeagent-preference').preferredKind(Object.keys(KIND_LABELS).filter(kindAllowed));
@@ -1239,7 +1317,6 @@
     void loadPreparedProjects();
     submitting = false;
     selectedModel = resolveDefaultModel(selectedKind, defaultModelConfig());
-    modelTouchedByUser = false;
     applyTuningMemory(selectedKind);
     // 配置可能在别处被改过（设置面板、手改 config.json）。重读一次再决定预选值。
     //
@@ -1248,14 +1325,11 @@
     // 当前清单里时就会这样），判据直接落空、用户设的默认值被丢掉；反过来，用户
     // 手选的模型若恰好等于出厂默认，又会被这次回读悄悄改掉。
     void loadHubDefaultModels().then(async () => {
-      await loadModelCatalog(selectedKind);
-      if (!modelTouchedByUser) {
-        selectedModel = resolveDefaultModel(
-          selectedKind,
-          defaultModelConfig(),
-          modelOptionsFor(selectedKind).map(option => option.id),
-        );
-      }
+      if (revision !== modalRevision) return;
+      const kind = selectedKind;
+      await loadModelCatalog(kind);
+      if (revision !== modalRevision || kind !== selectedKind) return;
+      if (!tuningTouchedByUser) applyTuningMemory(selectedKind);
       paint();
     }).catch(() => {});
     setError('');
@@ -1284,20 +1358,28 @@
   // 记住每个 kind 上次调过的档位：在 Claude / Codex 之间来回切时不用重选。
   // 键按 kind 存而不是全局一份 —— 两家的合法枚举和默认值都不一样。
   function rememberTuning(kind) {
+    if (!tuningTouchedByUser) { tuningMemory.delete(kind); return; }
     tuningMemory.set(kind, {
+      model: selectedModel,
       effort: selectedEffort,
       mcpProfile: selectedMcpProfile,
       fastMode: selectedFastMode,
       codexSpeedTier: selectedCodexTier,
+      codexProfile: codexAccountId,
+      deepseekRoute,
     });
   }
 
   function applyTuningMemory(kind) {
-    const saved = tuningMemory.get(kind);
-    selectedEffort = (saved && saved.effort) || defaultEffortFor(kind);
-    selectedMcpProfile = (saved && saved.mcpProfile) || defaultMcpFor(kind);
-    selectedFastMode = saved && typeof saved.fastMode === 'boolean' ? saved.fastMode : DEFAULT_FAST_MODE;
-    selectedCodexTier = (saved && saved.codexSpeedTier) || defaultCodexSpeedFor(kind, selectedModel);
+    const saved = tuningMemory.get(kind) || {};
+    const tuning = resolveSessionTuning(kind, saved.model || '', saved);
+    selectedModel = tuning.model;
+    selectedEffort = tuning.effort;
+    selectedMcpProfile = tuning.mcpProfile;
+    selectedFastMode = tuning.fastMode;
+    selectedCodexTier = tuning.codexSpeedTier;
+    if (kind === 'codex') codexAccountId = tuning.codexProfile;
+    if (kind === 'deepseek-claude') deepseekRoute = tuning.deepseekRoute;
   }
 
   // Main 优先调用 codex app-server model/list；失败再读 models_cache.json。
@@ -1406,6 +1488,7 @@
       mcpProfile: selectedMcpProfile,
       fastMode: selectedFastMode,
       codexSpeedTier: selectedCodexTier,
+      codexProfile: codexAccountId,
     });
     if (selectedKind === 'deepseek-claude') opts.deepseekRoute = deepseekRoute;
     return opts;
@@ -1465,15 +1548,11 @@
     document.getElementById('new-session-account')?.addEventListener('change', async event => {
       if (accountSaving) return;
       const profileId=event.target.value;
+      tuningTouchedByUser = true;
       accountSaving=true;pendingAccountId=profileId;configReadRevision++;accountNotice='';setError('');paint();
       try {
-        const result=await ipcRenderer.invoke('codex:set-global-account',{profileId,scope:'launch'});
-        if (!result?.ok) throw new Error(result?.error || '账号切换失败');
-        codexAccountId=result.profileId;
-        const failed=(result.sessions || []).filter(s=>s?.error).length;
-        const pending=(result.sessions || []).filter(s=>s?.pending).length;
-        accountNotice=result.scope==='launch' ? '后续会话的用量账号已切换；已打开的会话保持原账号，新建、恢复和重启使用新账号。' : failed ? `全局账号已保存；${failed} 个会话切换失败，请查看会话提示并重试恢复。`
-          : pending ? `全局账号已切换；${pending} 个进行中的会话将在本轮结束后切换。` : '全局账号已切换，新建、恢复和重启会话均跟随。';
+        if (!codexAccounts.some(p => p.id === profileId)) throw new Error('所选账号不可用，请重新选择');
+        codexAccountId=profileId;
         codexTuningCatalog=null;
         await loadCodexTuningCatalog({force:true});
       } catch(error) { setError(error.message); }
@@ -1488,6 +1567,7 @@
       button.addEventListener('click', () => {
         rememberTuning(selectedKind);
         selectedKind = panelKind(button.dataset.kind) || 'claude';
+        tuningTouchedByUser = tuningMemory.has(selectedKind);
         applyTuningMemory(selectedKind);
         setError('');
         paint();
@@ -1518,40 +1598,45 @@
     if (modelSelect) {
       modelSelect.addEventListener('change', () => {
         selectedModel = modelSelect.value;
-        modelTouchedByUser = true;
+        tuningTouchedByUser = true;
         paint();
       });
     }
     const defaultModelButton = document.getElementById('new-session-model-default');
     if (defaultModelButton) {
       defaultModelButton.addEventListener('click', async event => {
-        // 按钮嵌在 <label for="new-session-model"> 里，不拦住就会连带聚焦并展开下拉。
         event.preventDefault();
         event.stopPropagation();
         if (defaultModelButton.disabled) return;
         const kind = selectedKind;
-        const model = selectedModel;
-        defaultModelButton.disabled = true;
+        const selection = currentLaunchSelection();
+        defaultsSaving = true;
+        configReadRevision++;
+        paintDefaultModelButton();
         try {
-          const result = await ipcRenderer.invoke('session:set-default-model', {
+          const result = await ipcRenderer.invoke('session:set-launch-defaults', {
             kind,
-            model,
+            selection,
             // 把下拉里真正能选的清单一并带上：ACP 那几个 kind 会有用户自配的
             // 模型，main 侧的静态清单认不出来。
             available: modelOptionsFor(kind).map(option => option.id),
           });
           if (!result || !result.ok) throw new Error((result && result.error) || '保存失败');
           hubDefaultModels = result.defaultModels || {};
+          hubLaunchDefaults = readLaunchDefaults(result);
+          configReadRevision++;
           setError('');
         } catch (error) {
           setError(`设为默认失败：${error && error.message ? error.message : error}`);
         }
+        defaultsSaving = false;
         paint();
       });
     }
     const effortSelect = document.getElementById('new-session-effort');
     if (effortSelect) {
       effortSelect.addEventListener('change', () => {
+        tuningTouchedByUser = true;
         selectedEffort = effortSelect.value;
         paint();
       });
@@ -1559,6 +1644,7 @@
     const mcpSelect = document.getElementById('new-session-mcp');
     if (mcpSelect) {
       mcpSelect.addEventListener('change', () => {
+        tuningTouchedByUser = true;
         selectedMcpProfile = MCP_PROFILE_LABELS[mcpSelect.value] ? mcpSelect.value : defaultMcpFor(selectedKind);
         paint();
       });
@@ -1566,6 +1652,7 @@
     const fastCheckbox = document.getElementById('new-session-fast');
     if (fastCheckbox) {
       fastCheckbox.addEventListener('change', () => {
+        tuningTouchedByUser = true;
         selectedFastMode = !!fastCheckbox.checked;
         paint();
       });
@@ -1573,6 +1660,7 @@
     const codexTierSelect = document.getElementById('new-session-codex-tier');
     if (codexTierSelect) {
       codexTierSelect.addEventListener('change', () => {
+        tuningTouchedByUser = true;
         selectedCodexTier = codexTierSelect.value || 'inherit';
         paint();
       });

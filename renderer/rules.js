@@ -6,6 +6,7 @@
  *   通用规则  服务器统一发布、本地只读；开关默认开（本机已有个人基础规则时默认关）；
  *             点「检查更新」才去服务器拉，拉到新版立即生效，可回到上一版
  *   我的规则  本机个人基础规则（USER_CONTEXT.md）或 Hub 里自己写的补充规则，可直接编辑
+ *   场景      不同任务用不同的提示词（2026-10-13）：每个场景带什么、实际发给 AI 的全文、知识库索引、默认场景
  *   送达情况  每个会话最近一次带规则的消息：已送达 / 待确认 / 失败
  *
  * 数据都在主进程 main/ipc/hub-rules-handlers.js → core/hub-rules.js。
@@ -14,11 +15,12 @@
   const { ipcRenderer } = require('electron');
   const { lineDiff } = require('../core/hub-rules');
   const HUB_VERSION = (() => { try { return require('../package.json').version; } catch { return ''; } })();
-  const VIEWS = [['official', '通用规则'], ['mine', '我的规则'], ['delivery', '送达情况']];
+  const VIEWS = [['official', '通用规则'], ['mine', '我的规则'], ['scenes', '场景'], ['delivery', '送达情况']];
   const DELIVERY = { system: ['启动时写进系统提示', 'ok'], sent: ['已送达', 'ok'], unconfirmed: ['已发出，待确认', ''], pending: ['发送中', ''], failed: ['发送失败', 'bad'] };
   const REASON = { launch: '会话启动时写入', new: '会话第一条消息', changed: '规则换版后补送', compacted: '上下文压缩后补送' };
 
-  const S = { opened: false, view: 'official', data: null, officialMode: 'read', mineDraft: null, busy: false, lastUpdate: null };
+  const S = { opened: false, view: 'official', data: null, officialMode: 'read', mineDraft: null, busy: false, lastUpdate: null,
+    scenes: null, sceneSel: null, sceneMode: 'read', sceneDraft: null };
   let root = null;
 
   function h(tag, props, ...children) {
@@ -119,7 +121,17 @@
   async function load() {
     try { S.data = await call('snapshot'); }
     catch (e) { S.data = null; toast('读取规则失败：' + e.message, true); }
+    await loadScenes();
     paint();
+  }
+  async function sceneCall(name, args) {
+    const r = await ipcRenderer.invoke('session-scenes:' + name, args || {});
+    if (!r || !r.ok) throw new Error((r && r.error) || '调用失败');
+    return r.data;
+  }
+  async function loadScenes() {
+    try { S.scenes = await sceneCall('snapshot'); }
+    catch (e) { S.scenes = { scenes: [], error: e.message }; }
   }
 
   function mineDirty() { return S.mineDraft !== null && S.data && S.mineDraft !== S.data.mine.text; }
@@ -131,7 +143,7 @@
     const body = root.querySelector('#rl-body');
     paintSummary();
     if (!S.data) { body.replaceChildren(h('div', { class: 'rl-empty', text: '正在读取规则…' })); return; }
-    body.replaceChildren(S.view === 'mine' ? mineView() : S.view === 'delivery' ? deliveryView() : officialView());
+    body.replaceChildren(S.view === 'mine' ? mineView() : S.view === 'scenes' ? scenesView() : S.view === 'delivery' ? deliveryView() : officialView());
     paintBusy();
   }
 
@@ -256,6 +268,97 @@
       toast(sync ? sync.message : '已保存：每个会话的下一条消息会带上新内容', sync && !sync.ok);
       paint();
     });
+  }
+
+  /* ─────────────── 场景（2026-10-13，数据见 core/session-scenes.js） ─────────────── */
+
+  function sceneDirty(sc) { return S.sceneDraft !== null && sc && S.sceneDraft !== sc.body; }
+
+  function scenesView() {
+    const d = S.scenes;
+    if (!d) return h('div', { class: 'rl-empty', text: '正在读取场景…' });
+    if (!d.scenes || !d.scenes.length) {
+      return h('div', { class: 'rl-view' }, h('div', { class: 'rl-card' },
+        h('div', { class: 'rl-strong', text: '还没有场景' }),
+        h('div', { class: 'rl-muted', text: '场景让不同任务用不同的提示词：讨论技术、投研、写作时不再带编程助手那一套。把场景文件放进下面的目录（每个场景一个 md，开头写 id 和 label）就会出现在这里，输入框也会多出「场景」按钮。' }),
+        d.dir ? h('div', { class: 'rl-path', text: d.dir }) : null,
+        d.error ? h('div', { class: 'rl-note bad', text: d.error }) : null));
+    }
+    if (!d.scenes.some(x => x.id === S.sceneSel)) S.sceneSel = d.defaultScene && d.scenes.some(x => x.id === d.defaultScene) ? d.defaultScene : d.scenes[0].id;
+    const sc = d.scenes.find(x => x.id === S.sceneSel);
+    const pick = id => {
+      if (id === S.sceneSel) return;
+      if (sceneDirty(sc)) { toast('「' + sc.label + '」有未保存的修改，先保存或撤销', true); return; }
+      S.sceneSel = id; S.sceneDraft = null; if (S.sceneMode === 'edit' || S.sceneMode === 'kb') S.sceneMode = 'read'; paint();
+    };
+    const list = h('div', { class: 'rl-card rl-scene-list' },
+      h('div', { class: 'rl-scene-default' }, h('label', { for: 'rl-scene-default', text: '新会话默认' }),
+        h('select', { id: 'rl-scene-default', 'data-busy-lock': true, onchange: e => guarded(async () => {
+          S.scenes = await sceneCall('set-default', { id: e.target.value });
+          toast('之后新建的会话默认用「' + (S.scenes.scenes.find(x => x.id === e.target.value)?.label || e.target.value) + '」'); paint(); }) },
+        ...d.scenes.map(x => { const o = h('option', { value: x.id, text: x.label }); if (x.id === d.defaultScene) o.selected = true; return o; }))),
+      ...d.scenes.map(x => h('button', { type: 'button', class: 'rl-scene-item' + (x.id === S.sceneSel ? ' on' : ''), 'data-scene': x.id, onclick: () => pick(x.id) },
+        h('span', { class: 'rl-scene-name' }, x.label,
+          x.id === d.defaultScene ? h('span', { class: 'rl-pill', text: '默认' }) : null,
+          x.knowledgeInfo ? h('span', { class: 'rl-pill ok', text: '知识库 ' + x.knowledgeInfo.entries + ' 条' }) : null),
+        h('span', { class: 'rl-muted', text: x.desc }))));
+    return h('div', { class: 'rl-view rl-scenes' }, h('div', { class: 'rl-scene-grid' }, list, sceneDetail(sc)));
+  }
+
+  function sceneDetail(sc) {
+    const coding = sc.id === 'coding';
+    const kb = sc.knowledgeInfo;
+    const rows = coding
+      ? [['加载什么', '和现在完全一样：全局个人规则、输出风格、技能、MCP、通用规则都照常带']]
+      : [['关于用户', sc.base || '个人规则里「身份与沟通」「用户说明书（摘要）」两节，启动时现截'],
+        ['工程规则', sc.engineering || '不带'], ['输出风格', sc.outputStyle || '默认（格式写在场景里）'],
+        ['工具', sc.tools || '读写文件、检索、联网'], ['技能', sc.skills || '不带'],
+        ['知识库', kb ? `${kb.name}：${kb.entries} 条结论，索引 ${kb.indexEntries} 条（${(kb.indexBytes / 1024).toFixed(1)} KB，每轮都带），正文按需读` : '不挂'],
+        ['生效时机', '新开的会话；已经聊过的会话换场景会新开一个并引用原会话']];
+    const modes = [['read', '排版'], ['edit', '编辑'], ['sent', '实际发送内容']].concat(kb ? [['kb', '知识库索引']] : []);
+    const modeBar = coding ? null : h('div', { class: 'rl-seg', id: 'rl-scene-modes' }, ...modes.map(([id, label]) => h('button', { type: 'button', 'data-mode': id, class: S.sceneMode === id ? 'on' : '',
+      onclick: () => { S.sceneMode = id; paint(); } }, label)));
+    let content;
+    if (coding) content = h('div', { class: 'rl-muted', text: '编程开发是默认场景，不额外加载任何东西。要改编程时的规则，去「我的规则」。' });
+    else if (sc.error && S.sceneMode !== 'edit') content = h('div', { class: 'rl-note bad', text: sc.error });
+    else if (S.sceneMode === 'sent') content = h('pre', { class: 'rl-raw', id: 'rl-scene-sent', text: sc.sent });
+    else if (S.sceneMode === 'kb' && kb) content = renderMarkdown(h('div', { class: 'rl-doc', id: 'rl-scene-kb' }), kb.index);
+    else if (S.sceneMode === 'edit') content = sceneEditor(sc);
+    else content = renderMarkdown(h('div', { class: 'rl-doc' }), sc.body);
+    const sizeText = coding ? '' : `实际发送 ${(sc.sentBytes / 1024).toFixed(1)} KB`;
+    return h('div', { class: 'rl-scene-detail' },
+      h('div', { class: 'rl-card' },
+        h('div', { class: 'rl-row' }, h('div', { class: 'rl-grow' }, h('div', { class: 'rl-strong', text: sc.label }), h('div', { class: 'rl-muted', text: sc.desc })),
+          sc.file ? h('button', { type: 'button', class: 'rl-btn', text: '打开场景文件夹', onclick: () => guarded(() => sceneCall('open-folder', { id: sc.id, which: 'scenes' })) }) : null,
+          kb ? h('button', { type: 'button', class: 'rl-btn', text: '打开知识库', onclick: () => guarded(() => sceneCall('open-folder', { id: sc.id, which: 'knowledge' })) }) : null),
+        h('table', { class: 'rl-table rl-scene-load' }, h('tbody', null, ...rows.map(([k, v]) => h('tr', null, h('th', { text: k }), h('td', { text: v })))))),
+      h('div', { class: 'rl-card rl-doc-card' },
+        h('div', { class: 'rl-row rl-doc-head' }, h('div', { class: 'rl-strong', text: coding ? '提示词' : '场景提示词' }), h('span', { class: 'rl-muted', text: sizeText }), h('span', { class: 'rl-spacer' }), modeBar),
+        content,
+        sc.file ? h('div', { class: 'rl-path', text: sc.file }) : null));
+  }
+
+  function sceneEditor(sc) {
+    if (S.sceneDraft === null) S.sceneDraft = sc.body;
+    const area = h('textarea', { class: 'rl-editor', id: 'rl-scene-editor', spellcheck: 'false' });
+    area.value = S.sceneDraft;
+    const status = h('span', { class: 'rl-muted', id: 'rl-scene-status' });
+    const paintStatus = () => { status.textContent = sceneDirty(sc) ? '有未保存的修改' : '已保存'; status.classList.toggle('dirty', sceneDirty(sc)); };
+    area.addEventListener('input', () => { S.sceneDraft = area.value; paintStatus(); });
+    const save = () => {
+      if (!sceneDirty(sc)) { toast('没有修改'); return; }
+      guarded(async () => {
+        S.scenes = await sceneCall('save', { id: sc.id, body: S.sceneDraft, baseSha: sc.bodySha });
+        S.sceneDraft = null; toast('已保存「' + sc.label + '」：从下一个新开的该场景会话起生效（旧版备份在 _history）'); paint();
+      });
+    };
+    area.addEventListener('keydown', e => { if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') { e.preventDefault(); save(); } });
+    paintStatus();
+    return h('div', { class: 'rl-scene-edit' },
+      h('div', { class: 'rl-row' }, status, h('span', { class: 'rl-spacer' }),
+        h('button', { type: 'button', class: 'rl-btn', 'data-busy-lock': true, text: '撤销修改', onclick: () => { S.sceneDraft = null; paint(); } }),
+        h('button', { type: 'button', class: 'rl-btn primary', id: 'rl-scene-save', 'data-busy-lock': true, text: '保存', title: 'Ctrl+S', onclick: save })),
+      area);
   }
 
   function deliveryView() {

@@ -189,7 +189,25 @@ function upsertTrustedHashes(configText, entries) {
 }
 
 // 用 Python 标准库 tomllib 读出整份配置的语义（hook 本身就靠 python 运行）。
+// spawnSync 会冻住整个主进程（每次 0.1–1 s），DeepSeek-Codex / Codex API 每次启动
+// 要校验旧配置、模板、合并结果三份文本，稳态下三份都不变。按文本内容记住解析结果
+// （2026-10-14）；只记成功的，失败照旧每次重试。
+const parsedTomlByText = new Map();
+const PARSED_TOML_LIMIT = 16;
 function parseTomlWithPython(text) {
+  const key = require('crypto').createHash('sha256').update(String(text)).digest('hex');
+  if (parsedTomlByText.has(key)) {
+    const json = parsedTomlByText.get(key);
+    parsedTomlByText.delete(key); parsedTomlByText.set(key, json);
+    return JSON.parse(json);
+  }
+  const doc = parseTomlWithPythonUncached(text);
+  parsedTomlByText.set(key, JSON.stringify(doc));
+  while (parsedTomlByText.size > PARSED_TOML_LIMIT) parsedTomlByText.delete(parsedTomlByText.keys().next().value);
+  return doc;
+}
+
+function parseTomlWithPythonUncached(text) {
   const result = childProcess.spawnSync('python', ['-c',
     'import sys,json,tomllib;print(json.dumps(tomllib.loads(sys.stdin.read()),default=str,sort_keys=True))'], {
     input: text, encoding: 'utf8', windowsHide: true, timeout: 15000,

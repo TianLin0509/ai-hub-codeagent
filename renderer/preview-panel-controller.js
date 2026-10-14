@@ -340,11 +340,9 @@ function createPreviewPanelController({
 
   function setPreviewZoom(level, { persist = true } = {}) {
     previewZoomLevel = Math.max(0.25, Math.min(5.0, Number(level) || 1));
+    // The body's CSS zoom already scales an embedded page; zooming the page as
+    // well showed 120% as 144% (2026-10-14). The page itself stays at 1.
     previewBodyEl.style.zoom = previewZoomLevel;
-    const webview = previewBodyEl.querySelector('webview');
-    if (webview) {
-      try { webview.setZoomFactor(previewZoomLevel); } catch (_) {}
-    }
     previewZoomLabelEl.textContent = `${Math.round(previewZoomLevel * 100)}%`;
     if (persist) {
       const tab = getActiveTab();
@@ -354,6 +352,17 @@ function createPreviewPanelController({
 
   function resetPreviewZoom(options) {
     setPreviewZoom(1.0, options);
+  }
+
+  // Ctrl + wheel zooms the preview in 10% steps like a browser, over Hub-rendered
+  // content and inside an embedded page alike (its preload forwards the deltas).
+  // A touchpad's small deltas add up to one notch first.
+  const { createWheelStepper, wheelDeltaPixels } = require('./ctrl-wheel-zoom');
+  const previewWheelStep = createWheelStepper();
+  function zoomPreviewBy(steps) {
+    if (!steps || previewPanelEl.style.display !== 'flex') return;
+    setPreviewZoom(Math.round((previewZoomLevel + steps * 0.1) * 100) / 100);
+    window.__hubZoomLabel?.show(`预览 ${Math.round(previewZoomLevel * 100)}%`, previewBodyEl.getBoundingClientRect());
   }
 
   async function capturePreviewScroll() {
@@ -545,6 +554,8 @@ function createPreviewPanelController({
       else if (action === 'find-next' && previewFind.isOpen()) previewFind.next(Number(event.args && event.args[1]) < 0 ? -1 : 1);
       else if (action === 'escape' && immersive.isActive()) immersive.exit();
       else if (action === 'escape' && previewFind.isOpen()) previewFind.close();
+      // The page measures the wheel in its own zoomed pixels; scale back to screen pixels.
+      else if (action === 'wheel-zoom') zoomPreviewBy(previewWheelStep((Number(event.args && event.args[1]) || 0) * previewZoomLevel));
     });
     try {
       webview.addEventListener('dom-ready', () => {
@@ -584,7 +595,8 @@ function createPreviewPanelController({
     previewBodyEl.appendChild(webview);
     previewFind.attachWebview(webview);
     webview.src = src;
-    try { webview.setZoomFactor(previewZoomLevel); } catch (_) {}
+    // Zoom comes from the body's CSS zoom (see setPreviewZoom).
+    try { webview.setZoomFactor(1); } catch (_) {}
     restoreWebviewScroll(webview, scroll, token);
     return webview;
   }
@@ -2227,7 +2239,7 @@ function createPreviewPanelController({
   previewBodyEl.addEventListener('wheel', (event) => {
     if (!event.ctrlKey && !event.metaKey) return;
     event.preventDefault();
-    setPreviewZoom(previewZoomLevel + (event.deltaY < 0 ? 0.1 : -0.1));
+    zoomPreviewBy(previewWheelStep(wheelDeltaPixels(event)));
   }, { passive: false });
   initSplitterDrag();
   updateActionAvailability();

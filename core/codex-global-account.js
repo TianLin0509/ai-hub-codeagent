@@ -49,7 +49,8 @@ function resolveRunningAccount(config, active, env = process.env) {
 // History and writer ownership stay with their original home. Only credentials,
 // native config and future new threads follow the selected global account.
 function prepareLaunch(opts, config, env = process.env) {
-  const account = resolveAccount(config,env);
+  const sessionAccount = opts.codexAccountScope === 'session' && opts.codexProfile && !opts.codexSid && !opts.codexForkSid;
+  const account = resolveAccount(sessionAccount ? { ...config, codexSubscriptionProfile: opts.codexProfile } : config,env);
   require('./codex-auth-validation').assertUsableCredential(account.home);
   const oldProfile = config.codexSubscriptionProfiles.find(p => p.id === opts.codexProfile);
   const sid = opts.codexSid || opts.codexForkSid;

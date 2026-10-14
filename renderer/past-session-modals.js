@@ -31,11 +31,11 @@ function codexSessionScopeKey(session) {
   return 'profile:default';
 }
 
-function findReusableClaudeSession(sessionValues, native = {}) {
+function findReusableClaudeSession(sessionValues, native = {}, kinds = ['claude', 'claude-resume']) {
   const ccSessionId = String(native.sessionId || '').trim();
   const transcriptPath = normalizeTranscriptPath(native.path);
   const matches = [...(sessionValues || [])].filter((session) => {
-    if (!session || !['claude', 'claude-resume'].includes(session.kind)) return false;
+    if (!session || !kinds.includes(session.kind)) return false;
     if (ccSessionId && session.ccSessionId === ccSessionId) return true;
     return transcriptPath
       && normalizeTranscriptPath(session.transcriptPath) === transcriptPath;
@@ -138,12 +138,21 @@ function createPastSessionModals({
   const resumeModalEl = document.getElementById('resume-modal');
   const resumeListEl = document.getElementById('resume-list');
   const resumeFilterEl = document.getElementById('resume-filter');
+  const resumeTitleEl = document.getElementById('resume-modal-title');
 
   let resumeItems = [];
+  // 2026-10-13 公司版：CodeAgent 自带的 /resume 只列当前目录的会话。这里按提供方列出所有项目目录的记录，
+  // 点一条就在它原来的目录里用 --resume 接着聊（core/session-archive.js listRecent 的 provider）。
+  const PROVIDERS = {
+    claude: { title: 'Resume past Claude session', filter: 'Filter by cwd / preview…', scanning: 'Scanning…', empty: 'No past sessions found.', failed: 'Scan failed.', noPrompt: '(no user prompt captured)', kinds: ['claude', 'claude-resume'], limit: 50 },
+    codeagent: { title: '恢复 CodeAgent 历史会话（所有目录）', filter: '按目录 / 内容 / 模型筛选…', scanning: '正在读取所有目录的历史…', empty: '没有找到 CodeAgent 历史会话。', failed: '读取失败。', noPrompt: '（没有记录到提问）', kinds: ['codeagent', 'codeagent-resume'], limit: 200 },
+  };
+  let resumeProvider = 'claude';
+  const providerText = () => PROVIDERS[resumeProvider] || PROVIDERS.claude;
 
   function renderResumeList(items) {
     if (!items || items.length === 0) {
-      resumeListEl.innerHTML = '<div class="modal-empty">No past sessions found.</div>';
+      resumeListEl.innerHTML = `<div class="modal-empty">${escapeHtml(providerText().empty)}</div>`;
       return;
     }
     const frag = document.createDocumentFragment();
@@ -151,11 +160,12 @@ function createPastSessionModals({
       const existing = findReusableClaudeSession(
         typeof getSessions === 'function' ? getSessions().values() : [],
         it,
+        providerText().kinds,
       );
       const row = document.createElement('div');
       row.className = 'modal-row';
       const mtimeStr = it.mtime ? formatBeijingDateTime(it.mtime) : '';
-      const preview = it.firstUserMessage || '(no user prompt captured)';
+      const preview = it.firstUserMessage || providerText().noPrompt;
       const modelShort = (it.model || '').replace(/^claude-/, '').replace(/-\d+$/, '');
       row.innerHTML = `
         <div class="modal-row-main">
@@ -174,9 +184,20 @@ function createPastSessionModals({
         const reusable = findReusableClaudeSession(
           typeof getSessions === 'function' ? getSessions().values() : [],
           it,
+          providerText().kinds,
         );
         if (reusable && typeof selectSession === 'function') {
           await selectSession(reusable.id, { forceScrollBottom: true });
+          return;
+        }
+        if (resumeProvider === 'codeagent') {
+          // 模型：用户在启动中心「设为默认」的 CodeAgent 模型；没设就由 Hub 用默认模型。
+          let model;
+          try { model = ((await ipcRenderer.invoke('get-hub-config')) || {}).defaultModels?.codeagent || undefined; } catch { model = undefined; }
+          await ipcRenderer.invoke('create-session', {
+            kind: 'codeagent',
+            opts: { resumeCCSessionId: it.sessionId, resumeTranscriptPath: it.path || undefined, cwd: it.cwd || undefined, ...(model ? { model } : {}) },
+          });
           return;
         }
         await ipcRenderer.invoke('create-session', {
@@ -190,16 +211,23 @@ function createPastSessionModals({
     resumeListEl.appendChild(frag);
   }
 
-  function openResumeModal() {
+  function openResumeModal({ provider = 'claude' } = {}) {
+    resumeProvider = PROVIDERS[provider] ? provider : 'claude';
+    const text = providerText();
+    if (resumeTitleEl) resumeTitleEl.textContent = text.title;
+    resumeFilterEl.placeholder = text.filter;
     resumeModalEl.style.display = 'flex';
     resumeFilterEl.value = '';
-    resumeListEl.innerHTML = '<div class="modal-empty">Scanning…</div>';
+    resumeItems = [];
+    resumeListEl.innerHTML = `<div class="modal-empty">${escapeHtml(text.scanning)}</div>`;
     requestAnimationFrame(() => resumeFilterEl.focus());
-    ipcRenderer.invoke('list-past-sessions', { limit: 50 }).then((items) => {
+    const requested = resumeProvider;
+    ipcRenderer.invoke('list-past-sessions', { limit: text.limit, provider: requested }).then((items) => {
+      if (requested !== resumeProvider) return;
       resumeItems = items || [];
       renderResumeList(resumeItems);
     }).catch(() => {
-      resumeListEl.innerHTML = '<div class="modal-empty">Scan failed.</div>';
+      resumeListEl.innerHTML = `<div class="modal-empty">${escapeHtml(text.failed)}</div>`;
     });
   }
 

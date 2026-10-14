@@ -246,9 +246,11 @@ function registerMeetingCreateIpc(ipcMain, deps) {
     safe.groupChat = true;
     const devSlots = Array.isArray(safe.slots) ? safe.slots : safe.slotSpecs;
     if (ensureLaunchAuth) {
-      for (const slot of (Array.isArray(devSlots)?devSlots:[])) {
-        if (slot?.kind) await ensureLaunchAuth(slot.kind,{model:slot.model});
-      }
+      // Members with different accounts are checked together; the same account is
+      // checked once (LaunchAuth shares the flight and reuses a fresh answer).
+      await Promise.all((Array.isArray(devSlots)?devSlots:[])
+        .filter(slot => slot?.kind)
+        .map(slot => ensureLaunchAuth(slot.kind,{model:slot.model})));
     }
     for (const slot of (Array.isArray(devSlots) ? devSlots : [])) {
       require('../../core/community-provider').assertProviderAvailable(slot && slot.kind);

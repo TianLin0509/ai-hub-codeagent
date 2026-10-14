@@ -10,9 +10,11 @@ function registerArchiveIpc(ipcMain, deps = {}) {
     : () => ({ sessions: [], meetings: [] });
   const logger = deps.logger || console;
 
-  ipcMain.handle('list-past-sessions', async (_e, { limit = 50 } = {}) => {
+  ipcMain.handle('list-past-sessions', async (_e, { limit = 50, provider = null } = {}) => {
     try {
-      return await sessionArchive.listRecent(limit);
+      const safeLimit = Math.max(1, Math.min(500, Number(limit) || 50));
+      const safeProvider = ['claude', 'codeagent'].includes(provider) ? provider : null;
+      return await sessionArchive.listRecent(safeLimit, safeProvider ? { provider: safeProvider } : undefined);
     } catch (e) {
       logger.warn('[群聊] list-past-sessions failed:', e.message);
       return [];

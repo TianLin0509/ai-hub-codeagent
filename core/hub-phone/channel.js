@@ -7,7 +7,7 @@ const {SessionChat,SESSION_TYPES}=require('./session-chat');
 const TYPES=['text','voice','voice_message','hello','set_profile','set_front_desk','speak','memo_update','podcast_get','voice_prepare','workbench_get','workbench_action','session_cards_get','video_chunk_get','video_cover_get',...SESSION_TYPES];
 // 本 Hub 能处理的手机消息能力，随 profile 下发；手机据此决定是否发 voice_prepare（老 Hub 不认会回「校验未通过」）。
 // session_chat（App 2.1）：手机直接给会话发话、停止、按键，见 session-chat.js。
-const HUB_CAPS=['voice_prepare','workbench','session_cards','learning_video','session_chat'];
+const HUB_CAPS=['voice_prepare','workbench','session_cards','learning_video','session_chat','file_preview'];
 const MAX_VOICE_BYTES=16000*2*120;
 const ACTIVE=['dispatching','waiting','unknown'];
 const LONG_POLL_SECONDS=15; // 中继支持长等待时，新消息一到即返回；旧中继忽略该参数、立即返回
@@ -95,7 +95,7 @@ class PhoneChannel{
   if(!this.supports('profile')||!this.assistant.phoneProfile)return;
   const profile=await this.assistant.phoneProfile();
   this.journal.change(x=>{x.profileSignature=this.profileSignature();});
-  this.emit('profile-'+crypto.randomUUID(),{type:'profile',...(requestId?{requestId}:{}),...profile,hubCaps:HUB_CAPS.filter(c=>c==='workbench'?!!this.assistant.workbench:c==='session_cards'?typeof this.assistant.sessionCards==='function':c==='learning_video'?!!this.assistant.videos:c==='session_chat'?this.sessionChat.available():true),watching:this.watchingCount(),switching:!!this.assistant.switching});
+  this.emit('profile-'+crypto.randomUUID(),{type:'profile',...(requestId?{requestId}:{}),...profile,hubCaps:HUB_CAPS.filter(c=>c==='workbench'?!!this.assistant.workbench:c==='session_cards'?typeof this.assistant.sessionCards==='function':c==='learning_video'?!!this.assistant.videos:c==='session_chat'||c==='file_preview'?this.sessionChat.available():true),watching:this.watchingCount(),switching:!!this.assistant.switching});
  }
  async tick(){const s=this.journal.state;if(this.working||this.closed||!s.enabled||!s.credentials)return;this.working=true;this.lastPoll=Date.now();
  try{

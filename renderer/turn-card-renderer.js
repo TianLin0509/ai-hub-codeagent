@@ -65,8 +65,11 @@ function createTurnCardRenderer(options = {}) {
       if(!turn.clientSubmissionId&&assistantContext?.clientSubmissionId)turn={...turn,clientSubmissionId:assistantContext.clientSubmissionId};
       const feedback = require('../core/native-feedback');
       const receiptAuthoritative = feedback.hasNativeReceipt(turn);
+      // 手机 App 直接发来的话：按 Hub 记下的原文与时间认领，卡片头上标「手机」。
+      const phoneOrigin = require('../core/phone-prompt-origin').matchesPhonePrompt({ ...turn, assistantContext },
+        require('../core/phone-prompt-origin').promptsFor(sessionId));
       return { ...turn, simpleChat: true, attachmentCwd: session?.cwd || opts.cwd || turn.attachmentCwd,
-        assistantContext,
+        assistantContext, ...(phoneOrigin ? { phoneOrigin: true } : {}),
         receiptAuthoritative, promptReceipt: feedback.promptReceipt(session, turn.clientSubmissionId,
           {authoritative: receiptAuthoritative, deliveryStatus: turn.deliveryStatus}) };
     }
@@ -595,7 +598,7 @@ function renderTurnCard(turn) {
         <span class="turn-who">${escapeHtml(who)}</span>
         ${!isUser && turn.phase ? `<span class="conversation-phase">${turn.phase === 'final_answer' ? '结果' : turn.phase === 'commentary' ? '进展' : turn.phase === 'activity' ? '活动记录' : '消息'}</span>` : ''}
         ${!isUser && !isSimple ? require('./conversation-header-activity').renderHeaderActivity('', '', true) : ''}
-        ${turn.inherited ? '<span class="turn-branch-chip" title="分支前的对话，继承自父会话">分支前</span>' : ''}${nativeChip}
+        ${turn.inherited ? '<span class="turn-branch-chip" title="分支前的对话，继承自父会话">分支前</span>' : ''}${nativeChip}${isUser && turn.phoneOrigin ? '<span class="turn-branch-chip turn-phone-chip" title="这句话是从手机 App 发给会话的">手机</span>' : ''}
         <span class="turn-meta">${escapeHtml(ts)}</span>
         ${isUser ? `<button class="ta-btn turn-compose-btn" data-action="prompt-composition" title="查看这条消息发出去的组成：系统提示、规则、记忆和你输入的正文">发送内容${turn.hubAttached?.length ? `<span class="turn-compose-count"> +${turn.hubAttached.length}</span>` : ''}</button>` : ''}
         ${!isUser ? renderTurnSpeed(turn) : ''}
@@ -977,6 +980,7 @@ function turnRenderSignature(turn) {
     usage: turn.usage || null,
     turnSpeed: turn.turnSpeed || null,
     promptReceipt: turn.promptReceipt || '',
+    phoneOrigin: turn.phoneOrigin === true,
     chatProcessMessages: turn.chatProcessMessages || null,
   });
   let hash = 2166136261;
@@ -1116,7 +1120,10 @@ function mountSessionTurnCard(sessionId, turn, opts = {}) {
   // NotFoundError → for 循环中断后续 turn 全丢，外层 .catch 静默吞。
   const _wasAtBottom = _isCardOverlayAtBottom(container);
   const _streamingTail = container.querySelector(':scope > .streaming-indicator');
-  if (_streamingTail) {
+  if (opts.before && opts.before.parentNode === container) {
+    // 增量刷新补回的较早卡片（例如手机发的话）插在已显示的更晚卡片之前，保持时间顺序。
+    container.insertBefore(cardEl, opts.before);
+  } else if (_streamingTail) {
     container.insertBefore(cardEl, _streamingTail);
   } else {
     container.appendChild(cardEl);

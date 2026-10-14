@@ -205,6 +205,8 @@ function registerSessionIpc(ipcMain, deps) {
       runtimeKind: source ? runtimeKindForSession(source) : '',
     });
     if (!plan.ok) return plan;
+    // 分支沿用源会话的场景（core/session-scenes.js）：同一份系统提示，接着同一段对话
+    if (source && require('../../core/session-scenes').isScenePurpose(source.purpose)) plan.opts.purpose = source.purpose;
 
     const { kind, opts } = plan;
     const createFork = (preparedOpts = opts) => {

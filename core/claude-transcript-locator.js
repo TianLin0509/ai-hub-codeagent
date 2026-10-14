@@ -13,14 +13,19 @@ function defaultHomeDir() {
   return process.env.USERPROFILE || process.env.HOME || os.homedir();
 }
 
-function claudeProjectRoots(homeDir = defaultHomeDir()) {
-  const roots = CLAUDE_PROJECT_ROOT_DIRS.map(dir => path.join(homeDir, dir, 'projects'));
-  // 公司 Code Agent 的记录与 Claude 同格式，放在它自己的配置目录（默认 ~/.cac）下。
+// 公司 Code Agent 的记录与 Claude 同格式，放在它自己的配置目录（默认 ~/.cac）的 projects/ 下。
+// 配置无效时返回 null（只是少一个根，不影响 Claude 记录）。
+function codeAgentProjectsRoot(homeDir = defaultHomeDir()) {
   try {
     const { configDir } = require('./codeagent-config').resolveCodeAgentConfig({ ...process.env, USERPROFILE: homeDir, HOME: homeDir });
-    const root = path.join(configDir, 'projects');
-    if (!roots.some(item => path.resolve(item).toLowerCase() === path.resolve(root).toLowerCase())) roots.push(root);
-  } catch {}
+    return path.join(configDir, 'projects');
+  } catch { return null; }
+}
+
+function claudeProjectRoots(homeDir = defaultHomeDir()) {
+  const roots = CLAUDE_PROJECT_ROOT_DIRS.map(dir => path.join(homeDir, dir, 'projects'));
+  const root = codeAgentProjectsRoot(homeDir);
+  if (root && !roots.some(item => path.resolve(item).toLowerCase() === path.resolve(root).toLowerCase())) roots.push(root);
   return roots;
 }
 
@@ -142,6 +147,7 @@ function healPersistedCwds(sessions, opts = {}) {
 module.exports = {
   CLAUDE_PROJECT_ROOT_DIRS,
   claudeProjectRoots,
+  codeAgentProjectsRoot,
   extractCwdFromTranscript,
   findTranscriptByCCSessionId,
   healPersistedCwds,

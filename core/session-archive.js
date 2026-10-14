@@ -21,10 +21,23 @@ const CACHE_TTL_MS = 30 * 1000;
 
 let _cache = { at: 0, key: null, items: null };
 
-async function listAllJsonls() {
+// 公司 CodeAgent 的记录目录（<配置目录>/projects）。按它区分一条记录属于哪个提供方。
+function codeAgentProjectsRoot() {
+  try { return path.resolve(path.join(require('./codeagent-config').resolveCodeAgentConfig(process.env).configDir, 'projects')); }
+  catch { return null; }
+}
+
+function samePath(a, b) {
+  return !!a && !!b && path.resolve(a).toLowerCase() === path.resolve(b).toLowerCase();
+}
+
+async function listAllJsonls({ provider = null } = {}) {
   const out = [];
   const seen = new Set();
+  const codeagentRoot = codeAgentProjectsRoot();
   for (const projectsDir of claudeProjectRoots()) {
+    const rootProvider = samePath(projectsDir, codeagentRoot) ? 'codeagent' : 'claude';
+    if (provider && provider !== rootProvider) continue;
     let entries;
     try { entries = await fs.promises.readdir(projectsDir); } catch { continue; }
     for (const proj of entries) {
@@ -41,7 +54,7 @@ async function listAllJsonls() {
         seen.add(full);
         try {
           const s = await fs.promises.stat(full);
-          out.push({ path: full, mtime: s.mtimeMs, size: s.size, sessionId: f.slice(0, -6) });
+          out.push({ path: full, mtime: s.mtimeMs, size: s.size, sessionId: f.slice(0, -6), provider: rootProvider });
         } catch {}
       }
     }
@@ -117,18 +130,20 @@ function scanSessionMetadata(filePath) {
   });
 }
 
-async function listRecent(limit = 50) {
-  const key = String(limit);
+// provider：'codeagent' 只列公司 CodeAgent 的记录，'claude' 只列 Claude 家族，不传就全部（所有项目目录）。
+async function listRecent(limit = 50, { provider = null } = {}) {
+  const key = `${limit}|${provider || ''}`;
   if (_cache.items && _cache.key === key && Date.now() - _cache.at < CACHE_TTL_MS) {
     return _cache.items;
   }
-  const all = await listAllJsonls();
+  const all = await listAllJsonls({ provider });
   all.sort((a, b) => b.mtime - a.mtime);
   const top = all.slice(0, limit);
   const metas = await Promise.all(top.map(async (f) => {
     const meta = await scanSessionMetadata(f.path);
     return {
       sessionId: f.sessionId,
+      provider: f.provider,
       path: f.path,
       mtime: f.mtime,
       size: f.size,

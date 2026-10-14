@@ -143,6 +143,13 @@ function createCodexModelCatalogService(options = {}) {
     if (!request.force && existing && current - existing.cachedAt < ttlMs) {
       return { ...existing.value, cached: true };
     }
+    // An expired list is still the best answer for this click: a cold
+    // `codex app-server` takes ~3 s, and «创建群聊» awaited it before doing
+    // anything else. Answer with the last list and refresh behind it.
+    if (!request.force && existing) {
+      if (!inFlightByHome.has(cacheKey)) void getCatalog({ ...request, force: true }).catch(() => {});
+      return { ...existing.value, cached: true, stale: true };
+    }
     if (inFlightByHome.has(cacheKey)) return inFlightByHome.get(cacheKey);
     const inFlight = (async () => {
       const staticSlugs = (MODEL_OPTIONS_BY_KIND.codex || []).map(option => option.id);

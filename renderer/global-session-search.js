@@ -41,6 +41,7 @@ function catalogueHit(entry) {
 const PROVIDER_META = Object.freeze({
   claude: { label: 'Claude', className: 'provider-claude' },
   codex: { label: 'Codex', className: 'provider-codex' },
+  codeagent: { label: 'CodeAgent', className: 'provider-codeagent' },
   meeting: { label: '群聊', className: 'provider-meeting' },
   deepseek: { label: 'DeepSeek', className: 'provider-deepseek' },
   kimi: { label: 'Kimi', className: 'provider-kimi' },
@@ -51,8 +52,10 @@ const PROVIDER_META = Object.freeze({
   all: { label: '全部', className: 'provider-all' },
 });
 
-// 这几个来源平时没几条，零命中时不占筛选栏的位置（deepseek 一直是这个待遇）
-const OPTIONAL_PROVIDERS = Object.freeze(['deepseek', 'kimi', 'gemini']);
+// 这几个来源平时没几条，零命中时不占筛选栏的位置（deepseek 一直是这个待遇）。
+// 前三个在「筛选」里的「其他模型」细分；CodeAgent 在主筛选栏（公司版由 edition-trim 设为常显）。
+const ADVANCED_PROVIDERS = Object.freeze(['deepseek', 'kimi', 'gemini']);
+const OPTIONAL_PROVIDERS = Object.freeze([...ADVANCED_PROVIDERS, 'codeagent']);
 
 const SCOPE_LABELS = Object.freeze({
   title: '标题',
@@ -420,6 +423,8 @@ function createGlobalSessionSearch(options) {
 
   function setProvider(provider) {
     activeProvider = provider || 'all';
+    // 记住的筛选在本发行版里没有按钮（例如公司版没有「其他」）时回到「全部」，免得结果被看不见的条件筛空。
+    if (activeProvider !== 'all' && !providerRoot.querySelector(`[data-provider="${activeProvider}"]`)) activeProvider = 'all';
     for (const button of providerRoot.querySelectorAll('[data-provider]')) {
       const active = button.dataset.provider === activeProvider;
       button.classList.toggle('active', active);
@@ -447,7 +452,7 @@ function createGlobalSessionSearch(options) {
         : (Number(providerCounts[provider]) || 0);
       const countNode = button.querySelector('b');
       if (countNode) countNode.textContent = String(count);
-      if (OPTIONAL_PROVIDERS.includes(provider)) button.hidden = count === 0 && activeProvider !== provider;
+      if (OPTIONAL_PROVIDERS.includes(provider) && button.dataset.alwaysVisible !== '1') button.hidden = count === 0 && activeProvider !== provider;
     }
 
   }
@@ -802,7 +807,7 @@ function createGlobalSessionSearch(options) {
   function updateAdvancedFilters() {
     const count=Number(activeAgent!=='all')+Number(activeScope!=='dialogue')+Number(timeField.value!=='eventTime')+
       Number(sortSelect.value!==(queryInput.value.trim()?'relevance':'conversationTime'))+
-      Number(OPTIONAL_PROVIDERS.includes(activeProvider));
+      Number(ADVANCED_PROVIDERS.includes(activeProvider));
     filterToggle.textContent=count?`筛选 · ${count}`:'筛选';
     filterToggle.classList.toggle('active',count>0);
   }

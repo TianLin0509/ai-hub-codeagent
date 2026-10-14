@@ -14,10 +14,16 @@
     }
     // 会话搜索的提供方筛选：去掉不提供的 AI（「全部」「其他模型」「群聊」不是 AI 名，保留）。
     const { ALL_AI_KINDS } = require('../core/ai-kinds');
+    const { isOtherSearchProvider } = require('../core/session-search-providers');
     document.querySelectorAll('.session-search-chip[data-provider]').forEach(chip => {
       const provider = chip.dataset.provider;
       if (ALL_AI_KINDS.includes(provider) && !kindAllowed(provider)) chip.remove();
+      // 留下的 AI 按钮常显（个人版零命中时隐藏，公司版只有这几个，得一直在）。
+      else if (ALL_AI_KINDS.includes(provider)) { chip.hidden = false; chip.dataset.alwaysVisible = '1'; }
     });
+    // 允许的 AI 都有自己的按钮时，「其他」永远是 0（公司版：全部 / CodeAgent / 群聊）。
+    if (!allowedKinds.some(isOtherSearchProvider)) document.querySelector('.session-search-chip[data-provider="other"]')?.remove();
+    document.querySelectorAll('.session-search-specific-providers').forEach(group => { if (!group.querySelector('[data-provider]')) group.remove(); });
   }
   // 产品显示名与版本标注（公司版 2026-10-13 起有自己的名字和「内测先锋版」标注，见 target.json）；社区版没改名就不动。
   const { productName, editionBadge } = require('../core/distribution');

@@ -164,6 +164,7 @@ function getConfig() {
     codexApiProvider: getConfigValue('codexApiProvider', 'HUB_CODEX_API_PROVIDER', 'providers.codex.provider', DEFAULTS.codex_api_provider),
     // 每个 CLI 的默认模型。对象类型，不走 getConfigValue（那条路是给标量用的）。
     defaultModels: (rawConfig.models && rawConfig.models.defaults) || DEFAULTS.models_defaults,
+    launchDefaults: require('./launch-defaults').readLaunchDefaults({ launchDefaults: rawConfig.launch?.defaults }),
     uiToolFoldThreshold: parseInt(getConfigValue('uiToolFoldThreshold', 'HUB_UI_TOOL_FOLD', 'ui.tool_fold_threshold', DEFAULTS.ui_tool_fold_threshold), 10),
     uiCodeFoldThreshold: parseInt(getConfigValue('uiCodeFoldThreshold', 'HUB_UI_CODE_FOLD', 'ui.code_fold_threshold', DEFAULTS.ui_code_fold_threshold), 10),
     cardFontSize: normalizeCardFontSize(getConfigValue('cardFontSize', 'HUB_UI_CARD_FONT_SIZE', 'ui.card_font_size', DEFAULTS.ui_card_font_size)),

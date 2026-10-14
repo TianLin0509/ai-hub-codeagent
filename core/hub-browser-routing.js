@@ -20,12 +20,15 @@ function normalizeProxy(value){
     throw Error('Hub 代理地址无效：专属 Chrome 需要无账号密码的 HTTP/HTTPS/SOCKS 代理地址，请检查 Hub 代理设置');
   return u.protocol+'//'+u.host;
 }
+// 没配 Hub 代理时不加任何代理参数，专属 Chrome 跟普通浏览器一样跟随系统网络设置。
+// 2026-10-01 曾改成 --no-proxy-server（强制直连、无视系统代理）；2026-10-13 公司版反馈账号页网页全部打不开——
+// 公司电脑上网要经过系统里配的公司代理，强制直连就断了。配了 Hub 代理（用户家里）的分流规则不变。
 function policy(value){
   const proxy=normalizeProxy(value),bypass=[...LOCAL_BYPASS,...DIRECT_DOMAINS.flatMap(d=>[d,'*.'+d])].join(';');
-  const args=proxy?['--proxy-server='+proxy,'--proxy-bypass-list='+bypass]:['--no-proxy-server'];
+  const args=proxy?['--proxy-server='+proxy,'--proxy-bypass-list='+bypass]:[];
   return {proxy,bypass,args,fingerprint:crypto.createHash('sha256').update(JSON.stringify(args)).digest('hex')};
 }
-function route(url,proxy){const h=new URL(url).hostname.toLowerCase();return !proxy||DIRECT_DOMAINS.some(d=>h===d||h.endsWith('.'+d))?'direct':'hub_proxy';}
+function route(url,proxy){const h=new URL(url).hostname.toLowerCase();if(!proxy)return 'system';return DIRECT_DOMAINS.some(d=>h===d||h.endsWith('.'+d))?'direct':'hub_proxy';}
 const file=root=>path.join(root,'browser-routing.json');
 function read(root){try{return JSON.parse(fs.readFileSync(file(root),'utf8'));}catch{return null;}}
 function record(root,plan,pid){fs.mkdirSync(root,{recursive:true});const dest=file(root),tmp=dest+'.'+crypto.randomUUID()+'.tmp';fs.writeFileSync(tmp,JSON.stringify({version:1,pid,proxy:plan.proxy,fingerprint:plan.fingerprint,startedAt:Date.now()}));fs.renameSync(tmp,dest);}
@@ -33,7 +36,7 @@ function status(root,plan,held){
   const saved=read(root);let live=false;
   if(saved?.pid)try{process.kill(saved.pid,0);live=true;}catch{}
   const state=!held?'next_launch':!live?'restart_required':saved.fingerprint===plan.fingerprint?'applied':'restart_required';
-  return {state,proxy:plan.proxy,domestic:'direct',foreign:plan.proxy?'hub_proxy':'direct',message:state==='restart_required'?'专属 Chrome 仍在使用旧网络设置；请先保存并关闭其中的网站标签页，再打开账号网页，登录记录会保留。':plan.proxy?'国外 AI 使用 Hub 代理，国内 AI 直连':'Hub 未配置代理，专属 Chrome 全部直连'};
+  return {state,proxy:plan.proxy,domestic:plan.proxy?'direct':'system',foreign:plan.proxy?'hub_proxy':'system',message:state==='restart_required'?'专属 Chrome 仍在使用旧网络设置；请先保存并关闭其中的网站标签页，再打开账号网页，登录记录会保留。':plan.proxy?'国外 AI 使用 Hub 代理，国内 AI 直连':'Hub 未配置代理，专属 Chrome 跟随系统网络设置（公司电脑走系统里的公司代理）'};
 }
 function assertCurrent(root,plan,held){const s=status(root,plan,held);if(s.state==='restart_required')throw Object.assign(Error(s.message),{code:'HUB_BROWSER_ROUTE_CHANGED'});}
 module.exports={DIRECT_DOMAINS,normalizeProxy,policy,route,read,record,status,assertCurrent};

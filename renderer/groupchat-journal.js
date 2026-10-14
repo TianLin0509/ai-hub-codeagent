@@ -56,14 +56,21 @@ function disclosure() { return '<button type="button" class="gc-journal-expand" 
 function enhance(panel) {
   if (!panel) return;
   require('./message-disclosure-state').restore(panel);
+  // Three passes: write every card's state, measure them all, then write the
+  // results. Writing and measuring card by card forced one full layout of the
+  // whole history per card (200 short answers ≈ 4–8 s on entering a room).
+  const cards = [];
   for (const article of panel.querySelectorAll('[data-journal-key]')) {
     const text = article.querySelector('.gc-journal-text');
     if (!text) continue;
     const p = preference(article.dataset.journalKey);
     article.dataset.journalExpanded = String(!!p.expanded);
     article.dataset.journalMinimized = String(!!p.minimized);
-    // Apply visibility before measuring a restored card; a hidden text box is 0px.
-    const long = text.scrollHeight > 260;
+    cards.push({ article, text, p });
+  }
+  // Apply visibility before measuring a restored card; a hidden text box is 0px.
+  for (const card of cards) card.long = card.text.scrollHeight > 260;
+  for (const { article, text, p, long } of cards) {
     article.classList.toggle('gc-journal-long', long);
     const expand = article.querySelector('.gc-journal-expand');
     if (expand) { expand.hidden = !long; expand.textContent = p.expanded ? '收起全文' : `长消息 · ${(text.textContent || '').length.toLocaleString('zh-CN')} 字 · 展开全文`; expand.setAttribute('aria-expanded',String(!!p.expanded)); }

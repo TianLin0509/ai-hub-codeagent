@@ -89,6 +89,7 @@
 .provider-dot {width:5px;height:5px;border-radius:50%;background:currentColor;flex:none;}
 .session-search-overlay .provider-codex {color:#618b79;}
 .session-search-overlay .provider-claude {color:#b28d74;}
+.session-search-overlay .provider-codeagent {color:#5f86a8;}
 .session-search-overlay .provider-meeting {color:#7a88b2;}
 .session-search-overlay .provider-other,.session-search-overlay .provider-kimi {color:#947fad;}
 .session-search-overlay .provider-gemini,.session-search-overlay .provider-deepseek {color:#678d9b;}

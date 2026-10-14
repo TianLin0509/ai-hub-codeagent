@@ -115,3 +115,19 @@
 
 .rl-toast { position: fixed; right: 24px; bottom: 24px; z-index: 9999; background: var(--surface-raised); color: var(--fg-strong); border: 1px solid var(--border-strong); border-radius: var(--radius-md); padding: 10px 14px; font-size: 13px; box-shadow: 0 6px 24px rgba(0,0,0,.18); max-width: 440px; }
 .rl-toast.bad { border-color: var(--status-danger, #c53030); }
+
+/* 场景（2026-10-13） */
+.rl-scene-grid { display: grid; grid-template-columns: 260px minmax(0, 1fr); gap: 14px; align-items: start; }
+.rl-scene-list { display: flex; flex-direction: column; gap: 4px; padding: 10px; position: sticky; top: 0; }
+.rl-scene-default { display: flex; align-items: center; gap: 8px; padding: 2px 6px 10px; border-bottom: 1px solid var(--border-subtle); margin-bottom: 4px; font-size: 12.5px; color: var(--fg-muted); }
+.rl-scene-default select { flex: 1; font: inherit; font-size: 13px; padding: 4px 6px; border-radius: var(--radius-md); border: 1px solid var(--border-subtle); background: var(--surface-sunken); color: var(--fg-default); }
+.rl-scene-item { display: flex; flex-direction: column; gap: 2px; text-align: left; border: 0; border-radius: var(--radius-md); background: transparent; padding: 8px 10px; cursor: pointer; font: inherit; color: var(--fg-default); }
+.rl-scene-item:hover { background: var(--surface-sunken); }
+.rl-scene-item.on { background: var(--surface-sunken); box-shadow: inset 3px 0 0 var(--brand); }
+.rl-scene-name { display: flex; align-items: center; gap: 6px; font-size: 14px; font-weight: 600; color: var(--fg-strong); flex-wrap: wrap; }
+.rl-scene-detail { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+.rl-scene-load { margin-top: 10px; }
+.rl-scene-load th { width: 88px; color: var(--fg-muted); font-weight: 500; vertical-align: top; border-bottom: 1px solid var(--border-subtle); }
+.rl-scene-load tr:last-child th, .rl-scene-load tr:last-child td { border-bottom: 0; }
+.rl-scene-edit { display: flex; flex-direction: column; gap: 8px; }
+.rl-scene-edit .rl-editor { min-height: 460px; }

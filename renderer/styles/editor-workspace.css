@@ -1,5 +1,5 @@
 /* C: quiet editor surfaces, two time scopes and user-owned navigation. */
-:root:has(.app-container.rail-hidden) { --hub-rail-slot:0px; }
+:root.hub-app.hub-rail-hidden { --hub-rail-slot:0px; }
 :root body .app-container.rail-hidden #app-body #scene-rail { display:none; }
 .app-toolbar .btn-toggle-navigation { order:-1; display:grid; place-items:center; flex:none; width:28px; height:28px; padding:0; border:1px solid var(--border-subtle); border-radius:6px; background:transparent; color:var(--fg-muted); cursor:pointer; }
 .btn-toggle-navigation:hover { background:var(--surface-hover); color:var(--fg-strong); }

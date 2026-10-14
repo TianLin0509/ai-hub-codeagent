@@ -19,6 +19,8 @@ const KEEP_VERSIONS = 5;
 const FETCH_TIMEOUT_MS = 10000;
 // 有自己固定人设和回复格式的内部会话不带通用规则。
 const SKIP_PURPOSES = new Set(['memory-dream', 'writing', 'hub-assistant', 'hub-photo-assistant', 'xresearch-research']);
+// 会话场景（scene-<id>，core/session-scenes.js）的系统提示自成一套，也不带通用规则
+const skipsHubRules = purpose => SKIP_PURPOSES.has(purpose) || /^scene-./.test(String(purpose || ''));
 const PREAMBLE = label => `以下是 AI Hub 默认带上的规则（${label}，可在 Hub 左侧「规则」页查看或关闭），作为默认工作方式，不覆盖用户本次的明确要求和项目规则。`;
 const BUILTIN = Object.freeze({ version: 1, notes: '第一版（随 Hub 内置）', publishedAt: '2026-10-12', file: path.join(__dirname, 'hub-rules-default.md') });
 
@@ -318,4 +320,4 @@ function defaultRunSync(home) {
   return { ran: true, ok: result.status === 0, message: result.status === 0 ? '已保存并同步到各 CLI' : `已保存，但同步脚本报错（退出码 ${result.status}）`, output };
 }
 
-module.exports = { createHubRulesStore, lineDiff, SKIP_PURPOSES, PREAMBLE, DEFAULT_BASE_URL, OFFICIAL_LIMIT, MINE_LIMIT, sha256 };
+module.exports = { createHubRulesStore, lineDiff, SKIP_PURPOSES, skipsHubRules, PREAMBLE, DEFAULT_BASE_URL, OFFICIAL_LIMIT, MINE_LIMIT, sha256 };

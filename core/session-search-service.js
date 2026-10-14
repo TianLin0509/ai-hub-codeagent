@@ -24,6 +24,8 @@ class SessionSearchService {
       databasePath: options.databasePath || sqlitePathForLegacyCache(options.cachePath),
       backgroundWriter: options.backgroundWriter !== false,
       claudeRoots: Array.isArray(options.claudeRoots) ? options.claudeRoots : [],
+      // claudeRoots 里哪些是 CodeAgent 的记录目录（结果按 CodeAgent 标注、可单独筛选）。
+      codeagentRoots: Array.isArray(options.codeagentRoots) ? options.codeagentRoots : [],
       codexRoots: Array.isArray(options.codexRoots) ? options.codexRoots : [],
       kimiRoots: Array.isArray(options.kimiRoots) ? options.kimiRoots : [],
       geminiRoots: Array.isArray(options.geminiRoots) ? options.geminiRoots : [],

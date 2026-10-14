@@ -1,6 +1,6 @@
 /* One layout and palette for the whole Hub. CLI surfaces use coldwhite-cli.css. */
 :root { --hub-rail-slot:162px; --hub-rail-open:162px; --hub-session-width:224px; --hub-footer-height:34px; }
-:root:has(.app-container:not(.rail-pinned)) { --hub-rail-slot:56px; }
+:root.hub-app.hub-rail-unpinned { --hub-rail-slot:56px; }
 :root[data-theme='codex'] {
   --surface-canvas:#fbfcfd; --surface-raised:#fff; --surface-overlay:#fff; --surface-card:#fff;
   --surface-sunken:#f1f4f7; --surface-hover:#edf1f6; --surface-active:#e7eefb;

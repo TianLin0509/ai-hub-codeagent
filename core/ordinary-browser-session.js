@@ -23,6 +23,7 @@ class OrdinarySession {
     if(!['main','alt'].includes(options.identity)||!['browserRoot','playwright','tokenFile'].every(k=>typeof options[k]==='string'&&path.isAbsolute(options[k])))throw Error('Invalid ordinary browser binding');
     Object.assign(this,{options,factory,launch,token,wait,now,settleMs,risk,log});
     this.pages=new Map();this.browser=null;this.connecting=null;
+    this.selectorPages=[];this.recoveryUrls=new Map();this.epochs=new Map();this.inputTail=Promise.resolve();this.touched=new Map();this.reaping=false;
   }
   async connection(){
     if(this.browser?.isConnected())return this.browser;
@@ -32,8 +33,14 @@ class OrdinarySession {
   async connect(){
     const token=this.token(this.options);
     if(this.launch)await this.launch(this.options);
-    else await new (require('./personal-chrome').PersonalChrome)({root:this.options.browserRoot})
-      .open(this.options.identity,[`chrome-extension://${EXTENSION_ID}/status.html`]);
+    else {
+      const personal=new (require('./personal-chrome').PersonalChrome)({root:this.options.browserRoot});
+      let lastUsed;try{lastUsed=JSON.parse(fs.readFileSync(path.join(this.options.browserRoot,'Local State'),'utf8')).profile?.last_used;}catch{}
+      // The relay opens its own connect tab. Launch a profile hint only when
+      // Chrome is closed or a different identity was most recently selected.
+      if(!personal.held()||lastUsed!==this.options.identity)
+        await personal.open(this.options.identity,[`chrome-extension://${EXTENSION_ID}/status.html`]);
+    }
     let factory=this.factory;
     if(!factory){
       const runtime=path.dirname(require.resolve(this.options.playwright));
@@ -47,10 +54,55 @@ class OrdinarySession {
     const browser=result.browser,contexts=browser.contexts();
     if(contexts.length!==1||contexts[0].pages().some(p=>!p.url().startsWith(`chrome-extension://${EXTENSION_ID}/connect.html`))){await browser.close();throw Error('Extension ownership check failed');}
     this.browser=browser;
-    browser.once('disconnected',()=>{if(this.browser===browser){this.browser=null;this.pages.clear();}});
+    this.selectorPages=contexts[0].pages().slice();
+    browser.once('disconnected',()=>{if(this.browser===browser){this.browser=null;this.pages.clear();this.selectorPages=[];}});
     return browser;
   }
-  async disconnect(){const browser=this.browser;this.browser=null;this.pages.clear();if(browser)await browser.close();}
+  async closeOwned(page){
+    if(!page||page.isClosed())return;
+    let timer;try{await Promise.race([page.close(),new Promise((_,reject)=>{timer=setTimeout(()=>reject(Error('Owned page close timeout')),3000);})]);}
+    finally{clearTimeout(timer);}
+  }
+  async disconnect({preservePages=true}={}){
+    const browser=this.browser;if(!browser)return;
+    const owned=[...this.selectorPages,...(preservePages?[]:this.pages.values())];
+    this.browser=null;this.pages.clear();this.selectorPages=[];this.touched.clear();
+    const closed=await Promise.allSettled(owned.map(page=>this.closeOwned(page)));
+    this.log('transport_disconnected',{preserved:preservePages,ownedClosed:closed.filter(x=>x.status==='fulfilled').length,closeFailures:closed.filter(x=>x.status==='rejected').length});
+    await browser.close();
+  }
+  async abortLane(lane){
+    this.epochs.set(lane,(this.epochs.get(lane)||0)+1);
+    const page=this.pages.get(lane);this.pages.delete(lane);this.touched.delete(lane);
+    if(page&&!page.isClosed()){
+      const url=page.url();if(/^https:\/\/chatgpt\.com\/c\/[a-zA-Z0-9-]+$/.test(url))this.recoveryUrls.set(lane,url);
+      try{await this.closeOwned(page);}catch{this.log('lane_close_failed',{lane});}
+    }
+    this.log('lane_deadline',{lane,recoverable:this.recoveryUrls.has(lane),otherLanes:this.pages.size});
+  }
+  async reapIdlePages({idleMs=120000,busyLanes=[]}={}){
+    if(this.reaping||this.risk.handoff(this.options.browserRoot))return 0;
+    this.reaping=true;let closed=0;
+    try{
+      for(const [lane,page] of this.pages){
+        if(busyLanes.includes(lane)||page.url()!=='about:blank'||this.now()-(this.touched.get(lane)||0)<idleMs)continue;
+        this.pages.delete(lane);this.touched.delete(lane);
+        try{await this.closeOwned(page);closed++;}catch{this.log('idle_page_close_failed',{lane});}
+      }
+      if(closed)this.log('idle_pages_closed',{count:closed});
+      return closed;
+    }finally{this.reaping=false;}
+  }
+  async interact(lane,fn,{focus=true}={}){
+    const epoch=this.epochs.get(lane)||0;
+    const work=this.inputTail.catch(()=>{}).then(async()=>{
+      if(epoch!==(this.epochs.get(lane)||0))throw Error('Target closed after deadline');
+      this.assert();
+      if(focus){const page=await this.page(lane);await page.bringToFront();}
+      return fn();
+    });
+    this.inputTail=work.catch(()=>{});return work;
+  }
   assert(url,navigate=false){this.risk.assertAutomationAllowed(this.options.browserRoot,{identity:this.options.identity,url,navigate});}
   async page(lane){const page=this.pages.get(lane);if(!page||page.isClosed()||!this.browser?.isConnected())throw Error('No browser session');return page;}
   async inspect(page,lane){
@@ -79,8 +131,12 @@ class OrdinarySession {
     return result;
   }
   async execute(lane,argv){
+    this.touched.set(lane,this.now());
     const [command,...args]=require('./hub-browser-tool').argumentsOf(argv);
-    if(command==='transport-release'){await this.disconnect();return {released:true,browserPreserved:true};}
+    if(command==='transport-release'){
+      if([...this.pages.keys()].some(key=>key!==lane))throw Error('Browser busy: other lanes own pages');
+      await this.disconnect({preservePages:false});return {released:true,browserPreserved:true};
+    }
     if(command==='human-open'){
       await this.disconnect();const url=args[0]||'https://chatgpt.com/',site=this.risk.siteOf(url);
       const lease=this.risk.startHandoff(this.options.browserRoot,{identity:this.options.identity,site,by:lane,mode:'extension'});
@@ -96,7 +152,7 @@ class OrdinarySession {
       if(site)this.risk.releaseSite(this.options.browserRoot,this.options.identity,site);
       return {handoff:false,site};
     }
-    if(command==='close'){const page=this.pages.get(lane);this.pages.delete(lane);if(page&&!page.isClosed())await page.close();return {closed:!!page};}
+    if(command==='close'){const page=this.pages.get(lane);this.pages.delete(lane);this.touched.delete(lane);this.recoveryUrls.delete(lane);if(page&&!page.isClosed())await page.close();return {closed:!!page};}
     if(command==='state-load')return {managedBy:'ordinary-chrome-extension',imported:false};
     if(command==='state-save'){
       // Legacy bridge saves via .new, then atomically renames. Preserve the
@@ -110,11 +166,15 @@ class OrdinarySession {
     this.assert();
     if(command==='open'){
       if(this.pages.has(lane)&&!this.pages.get(lane).isClosed())return {reused:true,sharedBrowser:true};
+      const epoch=this.epochs.get(lane)||0;
       const browser=await this.connection();this.assert();
-      const page=await browser.contexts()[0].newPage();this.pages.set(lane,page);
+      const page=await this.interact(lane,()=>browser.contexts()[0].newPage(),{focus:false});
+      if(epoch!==(this.epochs.get(lane)||0)){await this.closeOwned(page);throw Error('Target closed after deadline');}
+      this.pages.set(lane,page);
       const errors=[];page.on('response',r=>{if(r.status()>=400){try{const u=new URL(r.url());errors.push({site:u.origin,path:u.pathname.replace(/[0-9a-f-]{30,}/gi,'<id>'),status:r.status()});if(errors.length>10)errors.shift();}catch{}}});page.hubNetworkErrors=errors;
-      const url=args.find(a=>!a.startsWith('--'))||'about:blank';
+      const url=this.recoveryUrls.get(lane)||args.find(a=>!a.startsWith('--'))||'about:blank';
       if(url!=='about:blank')await this.navigate(lane,page,url);
+      this.recoveryUrls.delete(lane);
       return {reused:false,sharedBrowser:true};
     }
     const page=await this.page(lane);
@@ -126,7 +186,8 @@ class OrdinarySession {
       const at=args.indexOf('--filename');if(at<0||!args[at+1])throw Error('run-code requires filename');
       const source=require('./chatgpt-selector-compat').adaptSource(fs.readFileSync(args[at+1],'utf8'));
       const fn=new Function('return ('+source+'\n)')();
-      const result=await this.step(page,lane,()=>fn(page));
+      const action=()=>this.step(page,lane,()=>fn(page));
+      const result=source.startsWith('/* @web-images-interactive */')?await this.interact(lane,action):await action();
       if(result?.challenge===true){
         const probe=await page.evaluate(this.risk.CHALLENGE_PROBE);
         if(!probe?.challenge){const corrected={...result,challenge:false,cloudflare:false,auth_state:'page_not_ready'};if(corrected.error_code==='browser_challenge')delete corrected.error_code;return corrected;}

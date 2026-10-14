@@ -25,6 +25,9 @@ function safeObservation(raw = {}, previous = null) {
     // this is the label the owning tool already keeps in plaintext next to its profile,
     // and it is what the UI shows — "同一个平台" is useless when two accounts share a card.
     accountLabel:String(raw.accountLabel || previous?.accountLabel || '').slice(0,120),
+    // Signature of the local credential files when this was observed (sizes and times
+    // only, never contents). A launch reuses an observation only while it still matches.
+    credential:String(raw.credential || '').slice(0,80),
     source:String(raw.source || '连接检查').slice(0,80) };
 }
 // Reads only the display name/email the official CLI already wrote next to its own profile.
@@ -106,7 +109,8 @@ class AccountCenter {
       let pending=this.leaseActive(row);
       if(pending&&observation.state==='signed_in'){this.clearLease(key,this.leaseToken(key));pending=false;}
       const {home,observation:unused,...safe}=row;
-      return {...safe,signedInAt:0,accountLabel:'',...observation,...(row.accountLabel?{accountLabel:row.accountLabel}:{}),webRecovery:row.managedBrowser?webTasks.filter(t=>t.accountId===row.id):[],stale:!!observation.observedAt&&Date.now()-observation.observedAt>300000,pending};
+      const {credential:_credential,...shown}=observation;
+      return {...safe,signedInAt:0,accountLabel:'',...shown,...(row.accountLabel?{accountLabel:row.accountLabel}:{}),webRecovery:row.managedBrowser?webTasks.filter(t=>t.accountId===row.id):[],stale:!!observation.observedAt&&Date.now()-observation.observedAt>300000,pending};
     });
     // Whoever produced a snapshot with nothing pending has answered the pump's only question.
     if(this.pumpTimer&&!connections.some(r=>r.pending))this.stopPump();
@@ -127,16 +131,47 @@ class AccountCenter {
   }
   leaseToken(key){try{return JSON.parse(fs.readFileSync(this.file(key,'login'),'utf8')).token;}catch(e){if(e.code==='ENOENT')return null;throw e;}}
   clearLease(key,token){if(!token||this.leaseToken(key)!==token)return;try{fs.unlinkSync(this.file(key,'login'));}catch(e){if(e.code!=='ENOENT')throw e;}}
-  async row(id){const row=(await this.connections()).find(r=>r.id===id);if(!row)throw new Error('连接不存在，请刷新账号列表');return row;}
+  // Fixed rows first: listing the image pool starts a Python process, and only image rows need it.
+  async row(id){const row=this.baseConnections().find(r=>r.id===id)||(await this.connections()).find(r=>r.id===id);if(!row)throw new Error('连接不存在，请刷新账号列表');return row;}
+  // Last stored observation of a fixed connection, without probing anything.
+  // Local files that hold a native CLI's login. Only their sizes and times are signed.
+  credentialFiles(row){
+    if(row.type!=='native'||!row.home)return [];
+    if(row.provider==='codex')return [path.join(row.home,'auth.json')];
+    if(row.provider==='claude')return [path.join(row.home,'.credentials.json')];
+    if(row.provider==='kimi')return [path.join(row.home,'credentials','kimi-code.json')];
+    if(row.provider==='gemini'){try{return fs.readdirSync(row.home).filter(f=>/oauth|cred|token|account|auth/i.test(f)).sort().map(f=>path.join(row.home,f));}catch{return [];}}
+    return [];
+  }
+  credentialSignature(row){
+    const parts=this.credentialFiles(row).map(file=>{try{const s=fs.statSync(file);return file+':'+s.size+':'+s.mtimeMs;}catch{return file+':-';}});
+    return parts.length?crypto.createHash('sha256').update(parts.join('|')).digest('hex').slice(0,32):'';
+  }
+  // Last stored observation of a fixed connection, without probing anything. `sameCredential`
+  // says whether the local login files are still the ones that were observed.
+  recentObservation(id){
+    const row=this.baseConnections().find(r=>r.id===id);if(!row)return null;
+    const seen=this.read(this.scope(row));
+    return seen?{...seen,sameCredential:(seen.credential||'')===this.credentialSignature(row)}:null;
+  }
+  // A running CLI reported that its login is gone. Record it where every launch looks, so an
+  // older "signed in" cannot be reused; the next successful check replaces it.
+  markLoginRequired(id,message='运行中的 CLI 报告登录已失效'){
+    const row=this.baseConnections().find(r=>r.id===id);if(!row)return null;
+    return this.save(this.scope(row),{state:'login_required',message,source:'CLI 运行报告',credential:this.credentialSignature(row)});
+  }
+  // Identity of a fixed connection: id, home directory and credential. A launch may reuse a
+  // login answer only while this stays the same.
+  scopeOf(id){const row=this.baseConnections().find(r=>r.id===id);return row?this.scope(row):null;}
   // An explicit check still resumes the tasks that were waiting for this login. Only the
   // background poll passes resume:false, so it can never restart web tasks on its own.
   async check(id,{quiet=false,resume=true}={}){
-    const row=await this.row(id),key=this.scope(row),token=this.leaseToken(key);
+    const row=await this.row(id),key=this.scope(row),token=this.leaseToken(key),credential=this.credentialSignature(row);
     const mayResume=resume!==false;
     if(this.flights.has(key))return this.flights.get(key);
     const promise=(async()=>{
       try {
-        const raw=await this.adapter.check(row);const result=this.save(key,raw);
+        const raw=await this.adapter.check(row);const result=this.save(key,{...raw,credential});
         if(result.state==='signed_in')for(const batch of this.batches.values()){const item=batch.items.find(x=>x.id===id);if(item)Object.assign(item,{stage:'signed_in',message:'已有明确登录证据'});}
         if(result.state==='signed_in')this.clearLease(key,token);
         if(!quiet)this.log(row,result.state==='signed_in'?'检查完成：已有登录证据':result.state==='login_required'?'检查完成：需要登录':'检查完成：'+result.message);
@@ -147,7 +182,7 @@ class AccountCenter {
           }catch(e){result.message='登录已确认，但任务恢复未完成：'+e.message;result.recovery={started:0,errors:[{message:e.message}]};this.log(row,'登录已确认，任务恢复失败；可再次检查重试');}
         }
         return result;
-      }catch(e){this.save(key,{state:'unknown',message:'检查未完成；未将网络或工具错误判为未登录',source:'连接检查'});if(!quiet)this.log(row,'检查失败，请重试或打开原工具');throw new Error('检查失败：'+(e.code==='ENOENT'?'未找到所需工具':'工具未返回有效状态，请在原工具检查'));}
+      }catch(e){this.save(key,{state:'unknown',message:'检查未完成；未将网络或工具错误判为未登录',source:'连接检查',credential});if(!quiet)this.log(row,'检查失败，请重试或打开原工具');throw new Error('检查失败：'+(e.code==='ENOENT'?'未找到所需工具':'工具未返回有效状态，请在原工具检查'));}
       finally{this.flights.delete(key);}
     })();this.flights.set(key,promise);return promise;
   }

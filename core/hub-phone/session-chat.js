@@ -7,10 +7,12 @@
 //  - session_stop：等同电脑上的停止（PTY 发一次 Esc，原生后端调用自己的中断）
 //  - session_key：会话「在等你」（权限确认、选择题）时按键：数字、回车、Esc、上下
 //  - session_cancel：取消还在排队的消息
+//  - file_get（2.1.1）：手机点卡片里的网页 / 图片路径时取文件；只给这个会话卡片里出现过的路径，手机缓存没变就只回「未变化」
 // 群聊成员与助理自身只读；手机发出的每条消息与结果写进助理对话记录（「手机 → 会话名」）。
 const crypto = require('node:crypto');
 
-const TYPES = ['session_turns_get', 'session_send', 'session_stop', 'session_key', 'session_watch', 'session_cancel'];
+const TYPES = ['session_turns_get', 'session_send', 'session_stop', 'session_key', 'session_watch', 'session_cancel', 'file_get'];
+const preview = require('./file-preview');
 const KEYS = { enter: '\r', esc: '\x1b', up: '\x1b[A', down: '\x1b[B', tab: '\t', space: ' ', y: 'y', n: 'n',
   1: '1', 2: '2', 3: '3', 4: '4', 5: '5', 6: '6', 7: '7', 8: '8', 9: '9' };
 const NATIVE_BACKENDS = ['claude-stream-json', 'codex-app-server', 'acp'];
@@ -28,15 +30,26 @@ function toolBrief(call) {
   const what = input.description || input.command || (file ? String(file).split(/[\\/]/).slice(-2).join('/') : '') || input.pattern || input.url || input.query || input.prompt || '';
   return { name: String(call?.name || '工具').slice(0, 40), text: brief(what, 70), error: !!call?.isError };
 }
+// 卡片里提到、电脑上确实存在的网页 / 图片（含工具写出的文件），手机上显示成可点的文件条。
+function cardFiles(turn) {
+  const fs = require('node:fs'), out = [];
+  for (const p of preview.mentionedPaths(preview.turnTexts([turn])).values()) {
+    if (out.length >= 6) break;
+    try { if (fs.statSync(p).isFile()) out.push(p); } catch {}
+  }
+  return out;
+}
 function cardOf(turn, running) {
   const role = turn.role === 'user' ? 'user' : 'assistant';
   const full = String(turn.text || '');
   const calls = Array.isArray(turn.toolCalls) ? turn.toolCalls : [];
+  const files = cardFiles(turn);
   return {
     id: String(turn.id || crypto.createHash('sha256').update(JSON.stringify([turn.ts, full.slice(0, 200)])).digest('hex')).slice(0, 160),
     role, text: full.length > TEXT_MAX ? full.slice(0, TEXT_MAX) : full, truncated: full.length > TEXT_MAX,
     timestamp: Number(turn.ts || turn.timestamp) || null,
     tools: role === 'assistant' ? { count: calls.length, recent: calls.slice(-3).map(toolBrief) } : null,
+    ...(files.length ? { files } : {}),
     ...(running ? { running: true } : {}),
   };
 }
@@ -86,6 +99,10 @@ class SessionChat {
     if (m.type === 'session_watch' && (typeof m.on !== 'boolean' || m.screen !== undefined && typeof m.screen !== 'boolean')) throw Error('订阅请求无效');
     if (m.type === 'session_key' && !Object.prototype.hasOwnProperty.call(KEYS, String(m.key))) throw Error('按键无效');
     if (m.type === 'session_cancel' && (typeof m.target !== 'string' || m.target.length > 100)) throw Error('取消请求无效');
+    if (m.type === 'file_get') {
+      if (typeof m.path !== 'string' || !m.path || m.path.length > 1000) throw Error('文件路径无效');
+      if (m.have != null && (typeof m.have !== 'object' || Array.isArray(m.have) || m.have.sha != null && (typeof m.have.sha !== 'string' || m.have.sha.length > 64))) throw Error('缓存信息无效');
+    }
     if (m.type === 'session_send') {
       const hasText = typeof m.text === 'string' && m.text.trim(), hasVoice = typeof m.pcm === 'string' && m.pcm;
       if (!hasText && !hasVoice && !m.attachment) throw Error('消息为空');
@@ -204,12 +221,17 @@ class SessionChat {
           if (!st.busy && !st.waiting) throw Error('会话现在没有在等你，按键未发送');
           this.deps.sessionKeys(row.sessionId, KEYS[String(row.key)]);
           this.done(row); this.reply(row, 'done', '已按下 ' + ({ enter: '回车', esc: 'Esc', up: '↑', down: '↓', tab: 'Tab', space: '空格' }[row.key] || row.key) + '。'); this.refresh(row.sessionId);
+        } else if (row.type === 'file_get') {
+          await this.fileGet(row);
         } else if (row.type === 'session_cancel') {
           const target = this.rows().find(r => r.id === row.target && r.type === 'session_send' && ['session-queued', 'session-held'].includes(r.state));
           if (target) { this.done(target, 'rejected', { issue: '手机上已取消' }); this.reply(target, 'cancelled', '已取消，这条没有发给会话。'); }
           this.done(row); this.refresh(row.sessionId);
         }
-      } catch (e) { this.done(row, 'rejected', { issue: e.message }); this.reply(row, 'rejected', e.message); }
+      } catch (e) {
+        this.done(row, 'rejected', { issue: e.message }); this.reply(row, 'rejected', e.message);
+        if (row.type === 'file_get') this.c.log({ id: row.id, role: 'user', input: 'text', text: '手机 → 预览「' + String(row.path || '').split(/[\\/]/).pop().slice(0, 80) + '」：未发送，' + e.message });
+      }
     }
     for (const row of this.rows().filter(r => r.type === 'session_send' && ['session-queued', 'session-held'].includes(r.state))) await this.send(row);
     await this.logResults();
@@ -246,15 +268,42 @@ class SessionChat {
       this.stopHints.delete(row.sessionId);
       const r = await this.deps.sendPrompt(row.sessionId, wire, row.id);
       const confirmed = r?.ok === true && r?.receipt?.status === 'confirmed' && !r.notSent && !r.contentMismatch;
-      if (confirmed) { this.done(row, 'done', { awaitResult: true, sentAt: Date.now() }); this.reply(row, 'received', '已发给「' + st.title + '」。'); }
+      if (confirmed) { this.done(row, 'done', { awaitResult: true, sentAt: Date.now(), sentText: text }); this.reply(row, 'received', '已发给「' + st.title + '」。'); this.announce(row); }
       else if (r?.notSent) { this.done(row, 'rejected', { issue: r.message || r.error || '未发送' }); this.reply(row, 'rejected', (r.message || r.error || '会话没有接收') + '。这条没有发送，可以再发一次。'); }
-      else { this.done(row, 'unknown', { issue: r?.message || r?.error || '送达未确认', awaitResult: true, sentAt: Date.now() }); this.reply(row, 'unknown', '是否送达尚未确认，请看卡片；不会自动重发。'); }
+      else { this.done(row, 'unknown', { issue: r?.message || r?.error || '送达未确认', awaitResult: true, sentAt: Date.now(), sentText: text }); this.reply(row, 'unknown', '是否送达尚未确认，请看卡片；不会自动重发。'); this.announce(row); }
       this.refresh(row.sessionId);
     } catch (e) {
       const sending = row.state === 'session-sending';
       this.done(row, sending ? 'unknown' : 'rejected', { issue: e.message });
       this.reply(row, sending ? 'unknown' : 'rejected', sending ? '提交中断：' + e.message + '。请看卡片确认，不会自动重发。' : e.message);
     }
+  }
+  // 手机点了卡片里的文件：路径必须在这个会话最近的卡片（正文或工具参数）里出现过，才读给手机。
+  async fileGet(row) {
+    const s = this.target(row.sessionId);
+    const file = preview.checkPath(row.path);
+    const key = preview.norm(file);
+    const cached = this.mentionCache?.get(row.sessionId);
+    let known = cached && Date.now() - cached.at < 15000 ? cached.paths : null;
+    if (!known || !known.has(key)) {
+      const result = await this.deps.readSessionTurns(row.sessionId, { limit: 120, fromTail: true, compactToolOutputs: true });
+      known = preview.mentionedPaths(preview.turnTexts(result?.turns));
+      (this.mentionCache ||= new Map()).set(row.sessionId, { at: Date.now(), paths: known });
+    }
+    if (!known.has(key)) throw Error('这个文件没有出现在该会话的卡片里，出于安全不发送');
+    let nativeImage = null; try { nativeImage = require('electron').nativeImage || null; } catch {}
+    const body = preview.buildPreview(file, row.have || null, { nativeImage });
+    this.c.emit('file-' + row.id, { type: 'file', requestId: row.id, sessionId: row.sessionId, path: file, ...body });
+    this.done(row);
+    const mb = n => (n / 1048576).toFixed(n < 1048576 ? 2 : 1) + ' MB';
+    this.c.log({ id: row.id, role: 'user', input: 'text', text: '手机 → 预览「' + body.name + '」（' + String(s.title || s.name || '会话').slice(0, 40) + '）：'
+      + (body.status === 'not_modified' ? '文件未变化，手机用缓存' : '已发送 ' + mb(Buffer.byteLength(body.data || body.html || ''))) });
+  }
+  // 电脑卡片视图：手机发出的话没有电脑输入框的占位卡，告诉界面立即补卡并标「手机」。
+  announce(row) { try { this.deps.onPhonePrompt?.({ sessionId: row.sessionId, text: row.sentText, at: row.sentAt }); } catch (e) { console.warn('[phone] announce', e.message); } }
+  sentPrompts(id) {
+    return this.rows().filter(r => r.type === 'session_send' && r.sessionId === id && r.sentText && r.sentAt)
+      .slice(-50).map(r => ({ text: r.sentText, at: r.sentAt }));
   }
   // 手机发出的消息跑完后，把会话最后一张回答记进助理对话记录（电脑助理页也看得到手机都干了什么）。
   async logResults() {

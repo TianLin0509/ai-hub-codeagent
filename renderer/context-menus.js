@@ -1,6 +1,8 @@
 'use strict';
 
 const { supportsRecoverableSession } = require('../core/session-capabilities.js');
+const { buildReferenceText, referenceableRows } = require('../core/session-reference.js');
+const { showForkToast } = require('./groupchat-fork-ui.js');
 
 function supportsRecoverableSessionKind(session) {
   return !!(session && session.purpose !== 'xresearch-research' && supportsRecoverableSession(session));
@@ -22,6 +24,7 @@ function createSessionContextMenuController({
   renderSessionList,
   schedulePersist,
   notify,
+  copyText,
   wakeDormantSession,
   confirmAction = (message, options) => require('./ui-feedback').confirmHubAction(message, { document, ...options }),
   selectMeeting = null,
@@ -44,6 +47,7 @@ function createSessionContextMenuController({
   });
   const roomAlreadyAsleep = meeting => meeting?.status === 'dormant'
     && !(meeting.subSessions || []).some(id => sessions.has(id) && sessions.get(id).status !== 'dormant');
+  const canReference = session => typeof copyText === 'function' && referenceableRows([session]).length > 0;
 
   function open(sessionId, x, y) {
     contextMenuSessionId = sessionId;
@@ -64,6 +68,8 @@ function createSessionContextMenuController({
     if (pinBtn) pinBtn.style.display = '';
     const session = sessions.get(sessionId);
     const meeting = meetings[sessionId];
+    const referenceBtn = contextMenuEl.querySelector('[data-action="reference"]');
+    if (referenceBtn) referenceBtn.style.display = canReference(session) ? '' : 'none';
     if (restartBtn) {
       const restartAllowed = !!(session && session.purpose !== 'xresearch-research');
       restartBtn.style.display = restartAllowed ? '' : 'none';
@@ -130,6 +136,30 @@ function createSessionContextMenuController({
 
         const session = sessions.get(sid);
         const meeting = meetings[sid];
+
+        if (action === 'reference') {
+          if (!canReference(session)) return;
+          showForkToast(document, '正在准备会话引用…');
+          try {
+            const result = await ipcRenderer.invoke('session-reference:resolve', { sessionId: sid });
+            if (!result?.ok || !result.path) {
+              showNotice('引用失败：' + (result?.message || result?.error || '没有可读取的聊天记录'));
+              return;
+            }
+            const text = buildReferenceText({ title: session.title || result.title, kind: session.kind, path: result.path });
+            const copied = await copyText(text, { source: 'session-reference', silent: true });
+            if (!copied?.ok) {
+              showNotice('引用复制失败：剪贴板暂时不可用，请重试。');
+              return;
+            }
+            showForkToast(document, result.fresh
+              ? '已复制会话引用，切换到目标会话后粘贴即可'
+              : '已复制会话引用；源会话最新的内容可能还没写进记录');
+          } catch (error) {
+            showNotice('引用失败：' + (error?.message || String(error)));
+          }
+          return;
+        }
 
         if (action === 'close' && meeting) {
           if (roomAlreadyAsleep(meeting)) return;

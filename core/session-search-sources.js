@@ -91,7 +91,11 @@ function providerForHubSession(session) {
   return isAiKind(kind) ? kind : 'unknown';
 }
 
-function providerForClaudeRoot(root) {
+// CodeAgent（公司 CLI）的记录与 Claude 同格式，放在它自己配置目录的 projects/ 下；
+// 由调用方把这个根（codeagentRoots）传进来，按根区分提供方。
+function providerForClaudeRoot(root, codeagentRoots = []) {
+  const key = normalizePath(root);
+  if (key && (codeagentRoots || []).some(item => normalizePath(item) === key)) return 'codeagent';
   return /(?:^|[\\/])\.claude-deepseek(?:[\\/]|$)/i.test(String(root || '')) ? 'deepseek' : 'claude';
 }
 
@@ -102,6 +106,7 @@ function providerLabel(provider) {
   if (provider === 'meeting') return '群聊';
   if (provider === 'kimi') return 'Kimi';
   if (provider === 'gemini') return 'Gemini';
+  if (provider === 'codeagent') return 'CodeAgent';
   return isAiKind(provider) ? getKindLabel(provider) : 'AI';
 }
 
@@ -148,7 +153,7 @@ function createMetadataMaps(snapshot = {}) {
       list.push(session);
       byTranscriptPath.set(transcriptPath, list);
     }
-    if ((provider === 'claude' || provider === 'deepseek') && session.ccSessionId) {
+    if ((provider === 'claude' || provider === 'deepseek' || provider === 'codeagent') && session.ccSessionId) {
       const key = `${provider}:${session.ccSessionId}`;
       const list = byClaudeNative.get(key) || [];
       list.push(session);
@@ -225,10 +230,10 @@ function recordDiscoveryError(diagnostics, label, error) {
   diagnostics.push(`${label}: ${error.message || error}`);
 }
 
-function listClaudeDescriptors(roots, maps, diagnostics = []) {
+function listClaudeDescriptors(roots, maps, diagnostics = [], codeagentRoots = []) {
   const groups = new Map();
   for (const root of roots || []) {
-    const provider = providerForClaudeRoot(root);
+    const rootProvider = providerForClaudeRoot(root, codeagentRoots);
     let projectDirs;
     try { projectDirs = fs.readdirSync(root, { withFileTypes: true }); }
     catch (error) { recordDiscoveryError(diagnostics, `Claude root ${root}`, error); continue; }
@@ -245,7 +250,9 @@ function listClaudeDescriptors(roots, maps, diagnostics = []) {
         try { stat = fs.statSync(filePath); }
         catch (error) { recordDiscoveryError(diagnostics, `Claude transcript ${filePath}`, error); continue; }
         const sid = entry.name.slice(0, -6);
-        const hubSession = matchClaudeHubSession(filePath, sid, provider, maps);
+        const hubSession = matchClaudeHubSession(filePath, sid, rootProvider, maps);
+        // 绑定在 CodeAgent 会话上的记录，即使所在目录没被认作 CodeAgent 的根，也按 CodeAgent 标注。
+        const provider = providerForHubSession(hubSession) === 'codeagent' ? 'codeagent' : rootProvider;
         const descriptor = {
           type: 'claude', key: `claude:${provider}:${sid}`,
           filePath, root, provider, nativeSessionId: sid, hubSession,
@@ -491,7 +498,7 @@ function addExplicitTranscriptDescriptors(descriptors, maps, diagnostics = []) {
   for (const session of maps.sessions) {
     const filePath = session.transcriptPath;
     const provider = providerForHubSession(session);
-    if (!filePath || !['claude', 'codex', 'deepseek', 'kimi'].includes(provider)) continue;
+    if (!filePath || !['claude', 'codex', 'deepseek', 'kimi', 'codeagent'].includes(provider)) continue;
     const normalized = normalizePath(filePath);
     if (!normalized || knownPaths.has(normalized)) continue;
     let stat;
@@ -536,7 +543,7 @@ function collectSourceDescriptors(options = {}, snapshot = {}, metaCache = null)
   const maps = createMetadataMaps(snapshot);
   const diagnostics = [];
   const descriptors = [
-    ...listClaudeDescriptors(options.claudeRoots || [], maps, diagnostics),
+    ...listClaudeDescriptors(options.claudeRoots || [], maps, diagnostics, options.codeagentRoots || []),
     ...listCodexDescriptors(options.codexRoots || [], maps, diagnostics, metaCache),
     ...listKimiDescriptors(options.kimiRoots || [], maps, diagnostics),
     ...listGeminiDescriptors(options.geminiRoots || [], maps, diagnostics),
@@ -577,6 +584,13 @@ function projectLabelFor(meta, cwd) {
   return path.basename(normalized) || normalized;
 }
 
+// 没有对应 Hub 会话时，从这条记录恢复要用的会话类型。
+function resumeKindForDescriptor(descriptor) {
+  if (descriptor.provider === 'deepseek') return 'deepseek-resume';
+  if (descriptor.provider === 'codeagent') return 'codeagent-resume';
+  return `${descriptor.type}-resume`;
+}
+
 function sessionRecordFromDescriptor(descriptor, turns, extra = {}) {
   const hub = descriptor.hubSession || null;
   const cwd = (hub && hub.cwd) || extra.cwd || null;
@@ -594,7 +608,7 @@ function sessionRecordFromDescriptor(descriptor, turns, extra = {}) {
     key: descriptor.key,
     provider: descriptor.provider,
     nativeFamily: descriptor.type,
-    kind: (hub && hub.kind) || (descriptor.provider === 'deepseek' ? 'deepseek-resume' : `${descriptor.type}-resume`),
+    kind: (hub && hub.kind) || resumeKindForDescriptor(descriptor),
     title,
     cwd,
     projectLabel: projectLabelFor(hub, cwd),
@@ -809,7 +823,9 @@ function parseClaudeDescriptor(descriptor, options = {}) {
     ? options.scanCache.readRecords(descriptor.filePath, 'claude-search', { lineFilter: claudeSearchLineFilter }).map(item => item.record)
     : streamJsonlEntriesSync(descriptor.filePath, claudeSearchLineFilter);
   const turns = parseClaudeTranscriptEntries(entries);
-  const session = sessionRecordFromDescriptor(descriptor, turns);
+  // 没有 Hub 会话的记录也要知道原来的工作目录：从搜索结果恢复时 CLI 只在该目录的项目桶里找得到这段对话。
+  const cwdEntry = entries.find(entry => entry && typeof entry.cwd === 'string' && entry.cwd);
+  const session = sessionRecordFromDescriptor(descriptor, turns, { cwd: cwdEntry ? cwdEntry.cwd : null });
   const docs = docsFromTurns(turns, session.title, descriptor.provider);
   if (docs[0]) docs[0].timestamp = session.updatedAt;
   return {
@@ -1169,6 +1185,7 @@ module.exports = {
   recordDiscoveryError,
   providerForHubSession,
   providerForClaudeRoot,
+  resumeKindForDescriptor,
   providerLabel,
   readBoundedJsonlTailText,
   statSignature,

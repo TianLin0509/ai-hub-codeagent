@@ -32,6 +32,8 @@ function isSafeModelId(value) {
 }
 
 // 别的 CLI 的模型名（从 Claude / Codex 等会话带过来的设置）不是 CodeAgent 的，回到默认。
+// 2026-10-13 用户确认：Qwen（含 Qwen3.6-27B-CodeAgent-VL）是他用过的另一个 harness 的模型，不是 CodeAgent 的，
+// 即使出现在 .cac.json 里也不认。
 const OTHER_CLI_MODEL = /^(?:claude-|fable|opus|sonnet|haiku|gpt-|o\d|gemini|kimi|qwen|chatgpt-web)/i;
 
 // 已知模型按名单的大小写；其余安全的名字原样保留（公司内部名大小写敏感与否未知，不改它）。
@@ -55,16 +57,92 @@ function modelFamily(value) {
 
 // ---------------------------------------------------------------- 本机 CodeAgent 配置里的模型
 // 2026-10-13 公司探测：~/.cac/settings.json 的 model 是默认模型，.cac.json 的 tieredModelConfig / tierModelParams /
-// modelParam 里列着这台电脑能用的模型（例如 GLM-5.2-WX、MiniMax-M2.7-CodeAgentCLI、Qwen3.6-27B-CodeAgent-VL），
+// modelParam 里列着这台电脑能用的模型（例如 GLM-5.2-WX、MiniMax-M2.7-CodeAgentCLI），
 // 每个人的权限不同，列表也不同。只看键名带 model 的那几段（不碰 projects / history 里的聊天记录），
 // 收集长得像模型名的字符串（厂商名 + 至少一个数字）。
-const CONFIG_MODEL_NAME = /^(?:glm|deepseek|minimax|qwen|kimi)[A-Za-z0-9_.\-]*\d[A-Za-z0-9_.\-]*$/i;
-const CONFIG_MAX_BYTES = 8 * 1024 * 1024;
+// 2026-10-13 公司真机：.cac.json 里还存着各项目的历史（几千个会话），超过原来的 8 MB 上限被整个跳过，
+// 启动中心只剩内置的两个模型 + 见过的模型。上限放到 64 MB，按 (路径, 修改时间, 大小) 缓存解析结果；
+// 超上限或 JSON 读不懂时，退回在原始文本里找：键名含 model 的键后面约 4000 字符内、单独成串的模型名。
+// 只认 CodeAgent 自家的三家（GLM / DeepSeek / MiniMax）；Qwen、Kimi 是别的 CLI 的模型（见 OTHER_CLI_MODEL）。
+const CONFIG_MODEL_NAME = /^(?:glm|deepseek|minimax)[A-Za-z0-9_.\-]*\d[A-Za-z0-9_.\-]*$/i;
+const CONFIG_MAX_BYTES = 64 * 1024 * 1024;
+const CONFIG_SCAN_WINDOW = 4000;
+const configFileCache = new Map();
+
+// 原始文本扫描：只认没被反斜杠转义的键（聊天记录里的 JSON 字符串是转义过的 \"model\"，不算），
+// 只收前后都是引号、单独成串的模型名（聊天里「试试 GLM-9.9」这种夹在句子里的不算）。
+function scanModelNamesInText(text, out) {
+  const keyRe = /"((?:[^"\\]|\\.)*)"\s*:/g;
+  const nameRe = /(?<!\\)"((?:glm|deepseek|minimax)[A-Za-z0-9_.\-]*\d[A-Za-z0-9_.\-]*)"/gi;
+  let m;
+  while ((m = keyRe.exec(text)) && out.size <= 60) {
+    if (m.index > 0 && text[m.index - 1] === '\\') continue;
+    if (!/model/i.test(m[1]) || m[1].includes('\\')) continue;
+    const windowText = text.slice(keyRe.lastIndex, keyRe.lastIndex + CONFIG_SCAN_WINDOW);
+    for (const n of windowText.matchAll(nameRe)) if (isSafeModelId(n[1])) out.add(n[1]);
+  }
+}
+
+function readConfigFile(full, fsModule) {
+  const stat = fsModule.statSync(full);
+  const cached = configFileCache.get(full);
+  if (cached && cached.mtimeMs === stat.mtimeMs && cached.size === stat.size) return cached.result;
+  const text = String(fsModule.readFileSync(full, 'utf8')).replace(/^﻿/, '');
+  const names = new Set();
+  let data = null;
+  if (stat.size <= CONFIG_MAX_BYTES) { try { data = JSON.parse(text); } catch { data = null; } }
+  if (data) collectModelNames(data, false, names);
+  else scanModelNamesInText(text, names);
+  const defaultModel = data && isSafeModelId(data.model) ? String(data.model).trim() : '';
+  const result = { names: [...names], defaultModel, parsed: !!data, enterprise: data ? enterpriseModels(data) : null,
+    windows: data ? enterpriseWindows(data) : {} };
+  configFileCache.set(full, { mtimeMs: stat.mtimeMs, size: stat.size, result });
+  return result;
+}
+
+// 2026-10-13 公司真机：可用模型清单在 .cac.json 的 enterpriseModelOptionsCache 里；缓存类的值有时是
+// 再编码过一次的 JSON 文本，按 JSON 再解一层再找。
+// 2026-10-13 公司真机第二轮排查：.cac.json 的 enterpriseModelOptionsCache 就是 CodeAgent 自己给这个账号的模型清单，
+// 每项一个 value（用户的账号只有 GLM-5.2-WX-Auto 与 MiniMax-M2.7）。GLM-5.2-WX、Qwen3.6-27B-CodeAgent-VL 只是
+// GLM Auto 那一项里的分档配置（tieredModelConfig），不能单独选；之前在模型段里见名就收，把它们也列了出来。
+// 有这份清单时只认清单里的 value；没有（老版本 CodeAgent）才退回在模型段里找名字。
+function enterpriseModels(data) {
+  let list = data && data.enterpriseModelOptionsCache;
+  if (typeof list === 'string') { try { list = JSON.parse(list); } catch { list = null; } }
+  if (!Array.isArray(list)) return null;
+  const ids = [];
+  for (const item of list.slice(0, 100)) {
+    const id = clean(typeof item === 'string' ? item : item && (item.value || item.model || item.id));
+    if (!isSafeModelId(id) || OTHER_CLI_MODEL.test(id)) continue;
+    if (!ids.some(other => other.toLowerCase() === id.toLowerCase())) ids.push(id);
+  }
+  return ids.length ? ids : null;
+}
+
+// 账号清单里每个模型的上下文上限（contextWindow，公司真机：GLM-5.2-WX-Auto 202752、MiniMax-M2.7 192000）。
+function enterpriseWindows(data) {
+  let list = data && data.enterpriseModelOptionsCache;
+  if (typeof list === 'string') { try { list = JSON.parse(list); } catch { list = null; } }
+  const windows = {};
+  if (!Array.isArray(list)) return windows;
+  for (const item of list.slice(0, 100)) {
+    const id = clean(item && typeof item === 'object' ? (item.value || item.model || item.id) : '');
+    const size = Number(item && item.contextWindow);
+    if (isSafeModelId(id) && Number.isFinite(size) && size >= 1000) windows[id.toLowerCase()] = Math.round(size);
+  }
+  return windows;
+}
 
 function collectModelNames(node, inModelSection, out, depth = 0) {
   if (depth > 8 || out.size > 60 || node == null) return;
   if (typeof node === 'string') {
-    if (inModelSection && CONFIG_MODEL_NAME.test(node.trim()) && isSafeModelId(node)) out.add(node.trim());
+    const text = node.trim();
+    if (inModelSection && CONFIG_MODEL_NAME.test(text) && isSafeModelId(text)) out.add(text);
+    else if (inModelSection && /^[[{]/.test(text) && text.length <= 256 * 1024) {
+      let inner = null;
+      try { inner = JSON.parse(text); } catch { inner = null; }
+      if (inner && typeof inner === 'object') collectModelNames(inner, true, out, depth + 1);
+    }
     return;
   }
   if (Array.isArray(node)) { for (const item of node.slice(0, 200)) collectModelNames(item, inModelSection, out, depth + 1); return; }
@@ -77,21 +155,23 @@ function collectModelNames(node, inModelSection, out, depth = 0) {
   }
 }
 
+// authoritative=true：模型来自 CodeAgent 自己的账号清单（enterpriseModelOptionsCache），界面只列这些。
 function configuredModels(configDir, fsModule = fs) {
-  if (!configDir) return { models: [], defaultModel: '' };
+  if (!configDir) return { models: [], defaultModel: '', authoritative: false };
   const names = new Set();
   let defaultModel = '';
+  let enterprise = null;
   for (const file of ['settings.json', '.cac.json']) {
     try {
-      const full = path.join(configDir, file);
-      if (fsModule.statSync(full).size > CONFIG_MAX_BYTES) continue;
-      const data = JSON.parse(fsModule.readFileSync(full, 'utf8').replace(/^﻿/, ''));
-      if (file === 'settings.json' && isSafeModelId(data && data.model)) defaultModel = String(data.model).trim();
-      collectModelNames(data, false, names);
-    } catch { /* 没有或读不懂就跳过 */ }
+      const result = readConfigFile(path.join(configDir, file), fsModule);
+      if (file === 'settings.json' && result.defaultModel) defaultModel = result.defaultModel;
+      if (result.enterprise) enterprise = result.enterprise;
+      for (const name of result.names) names.add(name);
+    } catch { /* 没有或读不了就跳过 */ }
   }
+  if (enterprise) return { models: enterprise, defaultModel, authoritative: true };
   if (defaultModel) names.add(defaultModel);
-  return { models: [...names], defaultModel };
+  return { models: [...names], defaultModel, authoritative: false };
 }
 
 function modelLabel(value) {
@@ -166,13 +246,62 @@ function recordObserved(dataDir, value, now = Date.now()) {
   return true;
 }
 
+// ---------------------------------------------------------------- 上下文占比
+// 2026-10-13 公司版：输入框旁的上下文圆环一直不显示。Claude 的占比来自状态栏回调，CodeAgent 会话没有接状态栏
+// （Hub 不改同事 CodeAgent 配置里的状态栏）。改为每轮回答后从原生记录里这一轮的用量算：
+// 已用 = 输入 + 缓存写入 + 缓存读取 + 输出 token；上限取账号清单里该模型的 contextWindow，
+// 按「会话当前模型 → 回答实际模型」的顺序找；清单里都没有时按 200K 估（windowSource=estimated）。
+const DEFAULT_CONTEXT_WINDOW = 200000;
+
+function contextWindowFor(configDir, modelIds = [], fsModule = fs) {
+  let windows = {};
+  if (configDir) { try { windows = readConfigFile(path.join(configDir, '.cac.json'), fsModule).windows || {}; } catch { windows = {}; } }
+  for (const id of modelIds) {
+    const key = clean(id).toLowerCase();
+    if (key && windows[key]) return { window: windows[key], source: 'account' };
+  }
+  return { window: DEFAULT_CONTEXT_WINDOW, source: 'estimated' };
+}
+
+function contextFromUsage(usage, window) {
+  if (!usage || typeof usage !== 'object' || !(window > 0)) return null;
+  const n = key => (Number.isFinite(Number(usage[key])) && Number(usage[key]) > 0 ? Number(usage[key]) : 0);
+  const used = n('input_tokens') + n('cache_creation_input_tokens') + n('cache_read_input_tokens') + n('output_tokens');
+  if (!(used > 0)) return null;
+  return { contextUsed: used, contextEffectiveMax: window, contextPct: Math.round(used / window * 1000) / 10 };
+}
+
+// ---------------------------------------------------------------- 模型证据日志（本机）
+// 2026-10-13 公司真机：选了 MiniMax 仍显示 GLM，会话里却没留下「请求了谁、命令里带了谁、实际回答用了谁」，
+// 只能请同事手工跑排查脚本。这里把这三件事各记一行到 Hub 数据目录 logs/codeagent-model.log，
+// 只记会话号前 8 位与模型名，不记提示词和路径；超过 256 KB 时轮转一份。
+const MODEL_LOG_MAX = 256 * 1024;
+
+function appendModelLog(dataDir, fields, now = new Date()) {
+  if (!dataDir || !fields || typeof fields !== 'object') return false;
+  try {
+    const dir = path.join(dataDir, 'logs');
+    const file = path.join(dir, 'codeagent-model.log');
+    fs.mkdirSync(dir, { recursive: true });
+    try { if (fs.statSync(file).size > MODEL_LOG_MAX) fs.renameSync(file, file + '.1'); } catch { /* 还没有文件 */ }
+    const parts = Object.entries(fields)
+      .filter(([, value]) => value !== undefined && value !== null && value !== '')
+      .map(([key, value]) => `${key}=${String(value).replace(/[\r\n\t]/g, ' ').slice(0, 120)}`);
+    fs.appendFileSync(file, `${now.toISOString()} ${parts.join(' ')}\n`, 'utf8');
+    return true;
+  } catch { return false; }
+}
+
 // 新建会话和模型菜单用的列表：已知的在前，本机 CodeAgent 配置里的其次，回答里见过的其他模型在后。
+// 有账号清单时只列清单里的模型（不再塞内置的两个：没有 MiniMax 权限的同事不该看到它）；
+// 没有清单时沿用内置 + 配置里找到的名字。回答里实际见过的模型都附在最后。
 function modelOptions(dataDir, { configDir = null, fsModule = fs } = {}) {
-  const options = KNOWN.map(option => ({ ...option, source: 'hub' }));
   const configured = configuredModels(configDir, fsModule);
+  const options = configured.authoritative ? [] : KNOWN.map(option => ({ ...option, source: 'hub' }));
   for (const id of configured.models) {
     if (options.some(option => option.id.toLowerCase() === id.toLowerCase())) continue;
-    options.push({ id, label: modelLabel(id), source: 'configured', description: `${id} · 本机 CodeAgent 配置里有这个模型` });
+    options.push({ id, label: modelLabel(id), source: configured.authoritative ? 'account' : 'configured',
+      description: configured.authoritative ? `${id} · 本机 CodeAgent 账号可用的模型` : `${id} · 本机 CodeAgent 配置里有这个模型` });
   }
   for (const entry of dataDir ? readObserved(dataDir) : []) {
     if (options.some(option => option.id.toLowerCase() === entry.id.toLowerCase())) continue;
@@ -192,7 +321,12 @@ module.exports = {
   observeModel,
   mismatchNotice,
   configuredModels,
+  scanModelNamesInText,
   readObserved,
   recordObserved,
+  appendModelLog,
   modelOptions,
+  contextWindowFor,
+  contextFromUsage,
+  DEFAULT_CONTEXT_WINDOW,
 };

@@ -1,5 +1,5 @@
 /* A preview reserves the same layout slot as a pinned rail, never overlays sessions. */
-:root:has(.app-container.rail-preview) { --hub-rail-slot:var(--display-rail-width,44px); }
+:root.hub-app.hub-rail-preview { --hub-rail-slot:var(--display-rail-width,44px); }
 :root body #rail-edge-trigger {
   position:absolute; top:var(--hw-top,58px); bottom:var(--hub-footer-height); left:0;
   width:8px; padding:0; border:0; background:transparent; z-index:1090;

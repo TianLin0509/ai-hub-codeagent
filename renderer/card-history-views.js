@@ -3,6 +3,18 @@
 const identity = session => JSON.stringify([session?.id, session?.kind, session?.runtimeBackend,
   session?.codexSid, session?.ccSessionId, session?.transcriptPath]);
 
+// A new session receives its native ID/path after the first local message is
+// already visible. Filling an unknown field binds that same conversation; it
+// must not detach its cards. Replacing/removing a known binding, changing Hub
+// session, provider or backend still invalidates the cached view.
+function continuesHistory(previous, next) {
+  if (!previous) return false;
+  if (previous === next) return true;
+  const before = JSON.parse(previous), after = JSON.parse(next);
+  return before.every((value, index) => value === after[index]
+    || (index >= 3 && (value == null || value === '')));
+}
+
 // Only detached, fully hydrated views are retained. No persisted HTML and no
 // provider calls: the normal transcript refresh remains the source of truth.
 function createCardHistoryViews({document, getTurns, setTurns, clearSignatures,
@@ -36,14 +48,17 @@ function createCardHistoryViews({document, getTurns, setTurns, clearSignatures,
     active = null;
   }
   return {
-    ready(session) { return !!(active?.hydrated && active.key === identity(session)); },
+    ready(session) { return !!(active?.hydrated && continuesHistory(active.key, identity(session))); },
     activate(session) {
       const key = identity(session);
-      if (active?.key === key) return {changed: false, hydrated: active.hydrated};
+      if (active && continuesHistory(active.key, key)) {
+        active.key = key;
+        return {changed: false, hydrated: active.hydrated};
+      }
       suspend();
       const element = container(), entry = entries.get(session.id);
       entries.delete(session.id);
-      const restore = entry?.key === key && now() - entry.savedAt < 5 * 60_000;
+      const restore = entry && continuesHistory(entry.key, key) && now() - entry.savedAt < 5 * 60_000;
       element.replaceChildren(...(restore ? [entry.fragment] : []));
       setTurns(restore ? entry.turns : new Map());
       clearSignatures();

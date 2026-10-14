@@ -58,9 +58,9 @@
 .sidebar-header .btn-options { width: 32px; height: 34px; border-radius: var(--radius-md); }
 
 .new-session-menu {
-  width: min(940px, 94vw);
-  max-width: min(940px, 94vw);
-  max-height: min(88vh, 820px);
+  width: min(1040px, 94vw);
+  max-width: min(1040px, 94vw);
+  max-height: min(92vh, 840px);
   border-color: var(--border-mid) !important;
   border-radius: var(--radius-xl) !important;
   background: var(--surface-sunken) !important;
@@ -90,7 +90,7 @@
   min-height: 0;
   flex: 1 1 auto;
   display: grid;
-  grid-template-columns: 198px minmax(0, 1fr);
+  grid-template-columns: 178px minmax(0, 1fr);
 }
 .launch-center-intents {
   min-height: 0;
@@ -344,6 +344,63 @@
   .launch-center-group-host .mcm-embedded .mcm-slots { grid-template-columns: 1fr; }
   .launch-center-panel-footer { align-items: stretch; flex-direction: column; }
   .launch-center-panel-footer button { width: 100%; }
+}
+
+/* Launch configuration uses one label/control rhythm, regardless of provider.
+   The save action belongs to the whole section, never inside a field label. */
+.new-session-menu .session-create-body { padding-top: 6px; padding-bottom: 20px; }
+.new-session-menu .menu-group-label { font-size: 11px; font-weight: 650; letter-spacing: .02em; padding-top: 16px; }
+.new-session-menu .session-kind-grid { gap: 8px; }
+.new-session-menu .new-session-option { min-height: 42px; padding: 9px 12px; font-size: 12px; }
+.session-config-section { margin: 22px 20px 4px; padding: 16px; border: 1px solid var(--border-subtle); border-radius: var(--radius-md); background: var(--surface-canvas); }
+.session-config-section[hidden] { display: none; }
+.session-config-heading { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin-bottom: 16px; }
+.session-config-heading > div { min-width: 0; display: flex; flex-direction: column; gap: 5px; }
+.session-config-heading strong { color: var(--fg-strong); font-size: 13px; font-weight: 650; }
+.session-config-heading span { color: var(--fg-muted); font-size: 11px; line-height: 1.5; }
+.session-config-heading .tuning-default-btn { flex-shrink: 0; min-height: 30px; padding: 5px 10px; border: 1px solid var(--brand-tint-border); background: var(--brand-tint); color: var(--brand-text); font-family: inherit; font-size: 11px; letter-spacing: 0; }
+.session-config-heading .tuning-default-btn:disabled { border-color: var(--border-subtle); background: transparent; color: var(--fg-muted); }
+.session-config-section .session-tuning-grid { padding: 0; gap: 14px 12px; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; }
+.session-config-section .session-tuning-grid[data-kind='codex'] { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+.session-tuning-grid[data-kind='codex'] > .session-tuning-field { grid-column: span 2; }
+.session-tuning-grid[data-kind='codex'] > :is(#new-session-account-field,.session-model-field) { grid-column: span 3; }
+.session-tuning-grid[data-kind='codex'][data-account='false'] > .session-model-field { grid-column: 1 / -1; }
+.session-config-section .session-tuning-field { gap: 6px; }
+.session-config-section .session-tuning-field > span { min-height: 16px; line-height: 16px; font-size: 11px; letter-spacing: 0; }
+.session-config-section .session-tuning-field select,
+.session-config-section .session-tuning-check { height: 38px; min-height: 38px; padding: 0 10px; font-family: inherit; font-size: 12px; border-color: var(--border-mid); border-radius: 6px; background: var(--surface-card); }
+.session-config-section select:focus-visible,
+.session-config-heading button:focus-visible,
+.session-tuning-details summary:focus-visible { outline: 2px solid var(--brand-text); outline-offset: 2px; }
+.session-config-section .session-tuning-note { margin: 10px 0 0; font-size: 11px; }
+.session-config-section #new-session-deepseek-route-field { margin-bottom: 12px; }
+.session-tuning-details { margin-top: 14px; border-top: 1px solid var(--border-subtle); padding-top: 10px; color: var(--fg-muted); font-size: 11px; line-height: 1.6; }
+.session-tuning-details[hidden] { display: none; }
+.session-tuning-details summary { cursor: pointer; width: fit-content; }
+.session-tuning-details .session-tuning-note { padding: 2px 0 0; background: transparent; line-height: 1.75; }
+.new-session-menu .session-workspace-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.new-session-menu .session-workspace-choice { min-width: 0; min-height: 86px; grid-template-columns: 20px minmax(0, 1fr); gap: 8px; padding: 12px 10px; }
+.new-session-menu .session-workspace-choice svg { width: 20px; height: 20px; }
+.new-session-menu .session-workspace-choice strong { font-size: 12px; line-height: 20px; }
+.new-session-menu .session-workspace-choice small { font-size: 11px; line-height: 1.6; }
+.new-session-menu .session-create-footer { min-height: 64px; gap: 16px; }
+.new-session-menu .session-create-footer > div { flex-shrink: 0; }
+@media (max-width: 900px) {
+  .launch-center-layout { grid-template-columns: 158px minmax(0, 1fr); }
+  .session-config-section { margin-inline: 16px; padding: 14px; }
+  .session-config-section .session-tuning-grid[data-kind='codex'] { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .session-tuning-grid[data-kind='codex'] > .session-tuning-field { grid-column: auto; }
+  .session-tuning-grid[data-kind='codex'] > :is(#new-session-account-field,.session-model-field) { grid-column: auto; }
+}
+@media (max-width: 720px) {
+  .launch-center-layout { grid-template-columns: 1fr; }
+  .new-session-menu .session-workspace-grid { grid-template-columns: 1fr; }
+  .new-session-menu .session-workspace-choice { min-height: 60px; }
+}
+@media (max-width: 460px) {
+  .session-config-heading { align-items: flex-start; flex-wrap: wrap; }
+  .session-config-section .session-tuning-grid,
+  .session-config-section .session-tuning-grid[data-kind='codex'] { grid-template-columns: 1fr; }
 }
 
 @media (prefers-reduced-motion: reduce) {

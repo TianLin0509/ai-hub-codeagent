@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="zh-CN" data-theme="codex">
+<html lang="zh-CN" data-theme="codex" class="hub-app hub-rail-unpinned">
 <head>
   <meta charset="UTF-8">
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; img-src 'self' file: data:; connect-src 'self' http://127.0.0.1:* http://localhost:*; frame-src 'self' http://127.0.0.1:* http://localhost:*;">
@@ -68,6 +68,7 @@
   <link rel="stylesheet" href="styles/navigation-hover.css">
   <link rel="stylesheet" href="styles/preview-immersive.css">
   <link rel="stylesheet" href="styles/session-immersive.css">
+<link rel="stylesheet" href="styles/zoom-label.css">
   <link rel="stylesheet" href="styles/controls.css" id="controls-layer">
 </head>
 <body>
@@ -181,19 +182,22 @@
                       <button class="new-session-option" data-kind="gemini" aria-pressed="false"><span class="ai-logo logo-gemini"></span>Antigravity CLI</button>
                       <button class="new-session-option" data-kind="powershell" aria-pressed="false"><span class="ai-logo logo-powershell"></span>PowerShell</button>
                     </div>
-                    <div class="menu-group-label" id="new-session-tuning-label">模型 / 速度 / MCP</div>
+                    <section class="session-config-section" id="new-session-config-section" aria-labelledby="new-session-tuning-label">
+                    <div class="session-config-heading"><div><strong id="new-session-tuning-label">启动配置</strong><span id="new-session-default-status" role="status">新建会话将沿用这组配置</span></div><button type="button" id="new-session-model-default" class="tuning-default-btn" hidden></button></div>
                     <label class="session-tuning-field" id="new-session-deepseek-route-field" hidden><span>DeepSeek 接入 · Claude Code</span><select id="new-session-deepseek-route" aria-describedby="new-session-deepseek-route-note"><option value="tokenplan">Token Plan 套餐</option><option value="api">DeepSeek 官方 API</option></select></label>
                     <div class="session-tuning-note" id="new-session-deepseek-route-note" role="status" hidden></div>
                     <div class="session-tuning-grid" id="new-session-tuning">
-                      <label class="session-tuning-field" id="new-session-account-field" for="new-session-account" hidden><span>Codex 账号 · 全局</span><select id="new-session-account" aria-describedby="new-session-account-note"></select></label>
-                      <label class="session-tuning-field" for="new-session-model"><span class="session-tuning-label-row">模型<button type="button" id="new-session-model-default" class="tuning-default-btn" hidden></button></span><select id="new-session-model"></select></label>
+                      <label class="session-tuning-field" id="new-session-account-field" for="new-session-account" hidden><span>本次会话账号</span><select id="new-session-account" aria-describedby="new-session-account-note" title="本次使用所选账号；将整组设为默认后，下次新建自动沿用。全局账号可在账号页切换。"></select></label>
+                      <label class="session-tuning-field session-model-field" for="new-session-model"><span>模型</span><select id="new-session-model"></select></label>
                       <label class="session-tuning-field" id="new-session-effort-field" for="new-session-effort"><span id="new-session-effort-label">思考强度</span><select id="new-session-effort"></select></label>
-                      <label class="session-tuning-field" id="new-session-mcp-field" for="new-session-mcp" hidden><span>MCP 加载</span><select id="new-session-mcp"></select></label>
-                      <div class="session-tuning-field session-tuning-toggle" id="new-session-fast-field" hidden><span>快速模式</span><label class="session-tuning-check" for="new-session-fast"><input type="checkbox" id="new-session-fast" checked><span id="new-session-fast-hint">fast · 默认开</span></label></div>
-                      <label class="session-tuning-field" id="new-session-codex-tier-field" for="new-session-codex-tier" hidden><span>速度通道 (service_tier)</span><select id="new-session-codex-tier"></select></label>
+                      <label class="session-tuning-field" id="new-session-codex-tier-field" for="new-session-codex-tier" hidden><span>速度通道</span><select id="new-session-codex-tier"></select></label>
+                      <label class="session-tuning-field" id="new-session-mcp-field" for="new-session-mcp" hidden><span>MCP 工具</span><select id="new-session-mcp"></select></label>
+                      <div class="session-tuning-field session-tuning-toggle" id="new-session-fast-field" hidden><span>快速模式</span><label class="session-tuning-check" for="new-session-fast"><input type="checkbox" id="new-session-fast"><span id="new-session-fast-hint">启用 Fast</span></label></div>
                     </div>
-                    <div class="session-tuning-note" id="new-session-tuning-note" hidden></div>
+                    <div class="session-tuning-note" id="new-session-tuning-warning" role="status" hidden></div>
                     <div class="session-tuning-note" id="new-session-account-note" role="status" hidden></div>
+                    <details class="session-tuning-details" id="new-session-tuning-details" hidden><summary>配置说明</summary><div class="session-tuning-note" id="new-session-tuning-note" hidden></div></details>
+                    </section>
                     <div class="menu-group-label">工作目录</div>
                     <div class="session-workspace-grid" role="radiogroup" aria-label="选择工作目录方式">
                       <button type="button" class="session-workspace-choice selected" data-workspace-mode="default" role="radio" aria-checked="true"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/><path d="M9 13h6"/></svg><span><strong>默认工作目录</strong><small>直接开在工作根，跨会话文件互相可见</small></span></button>
@@ -225,6 +229,7 @@
                       <button type="button" class="launch-center-resume-option" data-resume-kind="gemini-resume"><span class="ai-logo logo-gemini"></span><span class="launch-center-resume-copy"><strong>Antigravity</strong><small>继续最近一次原生会话</small></span><span class="hint">最近一次</span></button>
                       <button type="button" class="launch-center-resume-option" data-resume-kind="deepseek-resume"><span class="ai-logo logo-deepseek"></span><span class="launch-center-resume-copy"><strong>DeepSeek</strong><small>恢复兼容 Claude CLI 的历史</small></span><span class="hint">PTY picker</span></button>
                       <button type="button" class="launch-center-resume-option" data-resume-kind="kimi-resume"><span class="ai-logo logo-kimi"></span><span class="launch-center-resume-copy"><strong>Kimi</strong><small>恢复 Kimi Code 历史会话</small></span><span class="hint">PTY picker</span></button>
+                      <button type="button" class="launch-center-resume-option" data-resume-kind="codeagent-resume"><span class="ai-logo logo-codeagent"></span><span class="launch-center-resume-copy"><strong>CodeAgent</strong><small>列出所有目录的 CodeAgent 历史，在原目录接着聊</small></span><span class="hint">全部目录</span></button>
                     </div>
                     <div class="launch-center-resume-note">Hub 内已休眠的会话仍可直接从左侧列表唤醒；这里负责提供方原生历史，不会创建重复入口。</div>
                     <div class="launch-center-error" id="launch-center-error" role="alert" hidden></div>
@@ -258,6 +263,7 @@
       </section>
       <div class="context-menu" id="context-menu" style="display:none">
         <button class="context-menu-item" data-action="pin">置顶</button>
+        <button class="context-menu-item" data-action="reference" title="复制聊天记录引用，可粘贴到其他会话">引用会话</button>
         <button class="context-menu-item" data-action="restart">重启</button>
         <button class="context-menu-item" data-action="join-group">加入群聊…</button>
         <button class="context-menu-item" data-action="fork-meeting">分支群聊</button>
@@ -496,7 +502,7 @@
     <div class="modal-overlay" id="resume-modal" style="display:none">
       <div class="modal">
         <div class="modal-header">
-          <span class="modal-title">Resume past Claude session</span>
+          <span class="modal-title" id="resume-modal-title">Resume past Claude session</span>
           <input type="text" id="resume-filter" class="modal-filter" placeholder="Filter by cwd / preview…">
           <button class="modal-close" id="resume-modal-close" title="Close (Esc)">✕</button>
         </div>
@@ -524,7 +530,8 @@
               <button type="button" class="session-search-chip active" data-provider="all" aria-pressed="true"><span class="provider-dot provider-all"></span><span>全部</span><b>0</b></button>
               <button type="button" class="session-search-chip" data-provider="claude" aria-pressed="false"><span class="provider-dot provider-claude"></span><span>Claude</span><b>0</b></button>
               <button type="button" class="session-search-chip" data-provider="codex" aria-pressed="false"><span class="provider-dot provider-codex"></span><span>Codex</span><b>0</b></button>
-              <button type="button" class="session-search-chip" data-provider="other" aria-pressed="false" title="Codex、Claude 之外的模型会话；群聊单独筛选"><span class="provider-dot provider-other"></span><span>其他</span><b>0</b></button>
+              <button type="button" class="session-search-chip" data-provider="codeagent" aria-pressed="false" hidden><span class="provider-dot provider-codeagent"></span><span>CodeAgent</span><b>0</b></button>
+              <button type="button" class="session-search-chip" data-provider="other" aria-pressed="false" title="Codex、Claude、CodeAgent 之外的模型会话；群聊单独筛选"><span class="provider-dot provider-other"></span><span>其他</span><b>0</b></button>
               <button type="button" class="session-search-chip" data-provider="meeting" aria-pressed="false"><span class="provider-dot provider-meeting"></span><span>群聊</span><b>0</b></button>
             </div>
               <div class="session-search-toolbar">

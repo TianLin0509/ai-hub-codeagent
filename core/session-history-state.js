@@ -31,8 +31,12 @@ function isFreshSession(session, { allowMissingTranscript = false } = {}) {
 // Claude does not create a fork's own JSONL until its first prompt. A parent
 // identity is context, not proof that the child has already produced history.
 // Never hide a missing file that was previously bound or a submitted turn.
-function isUnsubmittedBranch(session) {
-  return !!session?.branchSourceSessionId && !session.transcriptPath
+// allowBoundTranscript: the CLI's SessionStart hook reports the fork's future
+// transcript path before the file exists (Claude / CodeAgent `--fork-session`,
+// 2026-10-13 company stand-in). Callers pass it only after checking the file is
+// really absent; a branch that has run a turn is still never hidden.
+function isUnsubmittedBranch(session, { allowBoundTranscript = false } = {}) {
+  return !!session?.branchSourceSessionId && (allowBoundTranscript || !session.transcriptPath)
     && !hasSubmittedPrompt(session) && !Number(session.lastCompletedAt);
 }
 

@@ -59,6 +59,7 @@ function toMaskedConfig(config) {
     codexApiModel: config.codexApiModel,
     // 新建会话面板要靠它决定预选哪个模型，不含敏感信息，原样透出。
     defaultModels: config.defaultModels || {},
+    launchDefaults: config.launchDefaults || {},
     notificationEnabled: notifications.enabled,
     notificationIncludePreview: notifications.includePreview,
     notificationNotifyGroupChats: notifications.notifyGroupChats,
@@ -400,6 +401,26 @@ function registerConfigIpc(ipcMain, deps) {
     saveConfig(merged);
     clearSessionManagerConfigCache();
     return { ok: true, defaultModels: (merged.models && merged.models.defaults) || {} };
+  });
+
+  // One read/validate/write saves the whole group without replacing unrelated settings.
+  ipcMain.handle('session:set-launch-defaults', (_e, payload = {}) => {
+    try {
+      const existing = readConfigJsonForUpdate();
+      const merged = require('../../core/launch-defaults').withLaunchDefaultsInJson(
+        existing, payload.kind, payload.selection, {
+          availableIds: Array.isArray(payload.available) ? payload.available : null,
+          profileIds: require('../../core/hub-config').normalizeCodexSubscriptionProfiles(
+            existing.providers?.codex?.subscription_profiles,
+          ).map(p => p.id),
+        },
+      );
+      saveConfig(merged);
+      clearSessionManagerConfigCache();
+      return { ok: true, defaultModels: merged.models.defaults, launchDefaults: merged.launch.defaults };
+    } catch (error) {
+      return { ok: false, error: error && error.message ? error.message : String(error) };
+    }
   });
 
   // 新建面板 / 建群弹窗里改「DeepSeek 接入」时记住选择；只写 providers.deepseek.route 一个字段。

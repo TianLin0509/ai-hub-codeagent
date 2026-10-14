@@ -12,10 +12,17 @@ function creationDefaults(kind, config = {}) {
   const model = require('./default-model-preference').resolveDefaultModel(kind, config);
   const opts = { model, effort: defaultEffortFor(kind), mcpProfile: DEFAULT_MCP_BY_KIND[kind] || 'none' };
   if (DEFAULT_CODEX_SPEED_BY_KIND[kind]) opts.codexSpeedTier = DEFAULT_CODEX_SPEED_BY_KIND[kind];
+  const saved = require('./launch-defaults').readLaunchDefaults(config)[kind] || {};
+  Object.assign(opts, saved);
   if (kind === 'codex') {
     const contextMax = require('./codex-context-window').defaultCodexContextWindow(model);
     if (typeof contextMax === 'number') opts.contextMax = contextMax;
-    if (config.codexSubscriptionProfile) opts.codexProfile = config.codexSubscriptionProfile;
+    const validSavedProfile = (config.codexSubscriptionProfiles || []).some(p => p.id === saved.codexProfile);
+    if (!validSavedProfile) {
+      delete opts.codexProfile;
+      if (config.codexSubscriptionProfile) opts.codexProfile = config.codexSubscriptionProfile;
+    }
+    if (validSavedProfile) opts.codexAccountScope = 'session';
   }
   return opts;
 }

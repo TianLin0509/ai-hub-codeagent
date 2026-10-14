@@ -8,7 +8,8 @@
  *
  * 这里只传一个路径：会话搜索索引本来就为每个会话维护一份只含对话的 md 聊天记录
  * （core/session-transcript-md.js，每轮提交/结束后自动重写），引用时把它的路径
- * 写进输入框，由目标 agent 自己按需去读。不新造导出格式，不经过剪贴板。
+ * 写进输入框，由目标 agent 自己按需去读。不新造导出格式。
+ * 侧栏右键「引用会话」复制同一格式到剪贴板，供用户切换会话后粘贴。
  *
  * 群聊也能引用（2026-10-03）：用群聊自己的权威记录（core/group-chat-transcript.js，
  * 内容来自成员的回答文件，与卡片一致），而不是搜索索引从对话里提取的那份。
@@ -31,6 +32,8 @@ const KIND_LABEL = {
   glm: 'GLM',
   gemini: 'Gemini',
   kimi: 'Kimi',
+  codeagent: 'CodeAgent',
+  'codeagent-resume': 'CodeAgent',
   meeting: '群聊',
 };
 

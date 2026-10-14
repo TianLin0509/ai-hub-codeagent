@@ -29,7 +29,7 @@ const SCAN_SKIP = new Set([
 const SCAN_MAX_DIRS = 4000;
 const SCAN_MAX_FILES = 500;
 const RECEIPT_LIMIT = 30;
-const { SKIP_PURPOSES: HUB_RULES_SKIP_PURPOSES, PREAMBLE: HUB_RULES_PREAMBLE } = require('./hub-rules');
+const { skipsHubRules, PREAMBLE: HUB_RULES_PREAMBLE } = require('./hub-rules');
 // Hub 附带块（规则、工作区规则、梦境索引）2026-10-13 起放在用户正文前面（用户要求），
 // 卡片按块拆开显示。更早的回执存的是 appendix（附在后面），同一提交编号重发时保持原位置。
 const withEnvelope = (record, prompt) => record.prefix != null ? record.prefix + prompt : prompt + record.appendix;
@@ -899,7 +899,7 @@ class HubMemoryService {
   // 每个原生会话送一次；规则换版或上下文被压缩后，下一条消息再送一次。
   async withHubRules(sid,prompt,kind,options,send) {
     const s=this.sessionManager.getSession(sid);
-    if(!this.hubRules || !s || HUB_RULES_SKIP_PURPOSES.has(s.purpose) || String(prompt).trimStart().startsWith('/') || !isAiKind(String(kind).replace(/-resume$/,'')))return send(prompt);
+    if(!this.hubRules || !s || skipsHubRules(s.purpose) || String(prompt).trimStart().startsWith('/') || !isAiKind(String(kind).replace(/-resume$/,'')))return send(prompt);
     const receiptFile=path.join(this.root,'context',hash(sid+':hub-rules')+'.json');
     const history=readJSON(receiptFile,[]),submissionId=options.clientSubmissionId||options.submissionReceipt?.clientSubmissionId;
     const id='hubrules-'+(submissionId||randomUUID());
@@ -932,7 +932,7 @@ class HubMemoryService {
   async withWorkspaceRules(sid,prompt,kind,options,send) {
     const s=this.sessionManager.getSession(sid);
     // 写作群成员（purpose=writing）不追加共享工作区规则：产物命名之类的工程规则会把 AI 腔带进文章
-    if(!s?.cwd || s.purpose==='memory-dream' || s.purpose==='writing' || String(prompt).trimStart().startsWith('/') || !isAiKind(String(kind).replace(/-resume$/,'')))return send(prompt);
+    if(!s?.cwd || s.purpose==='memory-dream' || require('./session-scenes').isCleanPurpose(s.purpose) || String(prompt).trimStart().startsWith('/') || !isAiKind(String(kind).replace(/-resume$/,'')))return send(prompt);
     const receiptFile=path.join(this.root,'context',hash(sid+':workspace')+'.json');
     const history=readJSON(receiptFile,[]),submissionId=options.clientSubmissionId||options.submissionReceipt?.clientSubmissionId;
     const id='workspace-'+(submissionId||randomUUID());

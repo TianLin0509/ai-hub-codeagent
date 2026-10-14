@@ -16,12 +16,21 @@ function installSessionFirstNavigation(doc = globalThis.document) {
   let pinned = true, preview = false, inside = false, suppressed = false, returningFocus = false, closeTimer = null;
   try { pinned = storage?.getItem(key) !== 'false'; } catch {}
   const clearClose = () => { win.clearTimeout(closeTimer); closeTimer = null; };
+  const root = doc.documentElement;
   const render = () => {
     const open = pinned || preview;
     const wasOpen = !app.classList.contains('rail-hidden');
     app.classList.toggle('rail-pinned', pinned);
     app.classList.toggle('rail-preview', !pinned && preview);
     app.classList.toggle('rail-hidden', !open);
+    // The rail-slot rules read these mirrors on <html>. Asking
+    // `:root:has(.app-container:not(.rail-pinned))` instead made the browser
+    // restyle the root for every node inserted anywhere: ~400 times per session
+    // switch (2026-10-14).
+    root.classList.add('hub-app');
+    root.classList.toggle('hub-rail-unpinned', !pinned);
+    root.classList.toggle('hub-rail-preview', !pinned && preview);
+    root.classList.toggle('hub-rail-hidden', !open);
     rail.setAttribute('aria-hidden', String(!open));
     rail.inert = !open;
     pin.setAttribute('aria-pressed', String(pinned));

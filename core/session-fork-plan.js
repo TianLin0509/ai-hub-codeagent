@@ -45,7 +45,7 @@ function planSessionFork({ source, siblingPool = [], meeting = null, rendererTit
     return {
       ok: false,
       error: 'unsupported-kind',
-      message: '仅支持 Claude Code、DeepSeek、Codex 和 Antigravity 会话创建分支（Kimi CLI 无 fork 能力；旧 Gemini CLI 历史也不能分支）',
+      message: '仅支持 Claude Code、DeepSeek、Codex、CodeAgent 和 Antigravity 会话创建分支（Kimi CLI 无 fork 能力；旧 Gemini CLI 历史也不能分支）',
     };
   }
   const identity = nativeSessionIdentity(source);

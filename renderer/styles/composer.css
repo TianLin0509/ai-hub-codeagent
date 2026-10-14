@@ -136,6 +136,30 @@
 .composer-one-click-start:hover { color: var(--fg-primary); background: var(--surface-hover); }
 .composer-one-click-start:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
 
+/* 场景按钮与弹层（renderer/composer-scene.js） */
+.composer-scene { font-size: 12.5px; color: var(--fg-muted); white-space: nowrap; cursor: pointer; }
+.composer-scene[aria-expanded='true'] { color: var(--brand-text); border-color: var(--brand); }
+.composer-scene-popover { position: absolute; left: 10px; bottom: 44px; z-index: 150; width: 340px; max-width: calc(100% - 20px);
+  padding: 8px; border: 1px solid var(--border-mid); border-radius: 8px; background: var(--surface-overlay); box-shadow: 0 6px 24px #0001;
+  font: 12.5px var(--font-sans); color: var(--fg-default); }
+.composer-scene-popover .cs-head { padding: 4px 8px 6px; color: var(--fg-muted); font-size: 12.5px; }
+.composer-scene-popover .cs-item { display: flex; gap: 8px; width: 100%; text-align: left; border: 0; border-radius: 6px; background: transparent;
+  color: inherit; padding: 7px 8px; cursor: pointer; font: inherit; }
+.composer-scene-popover .cs-item:hover { background: var(--surface-hover); }
+.composer-scene-popover .cs-item.on .cs-label { color: var(--brand-text); font-weight: 600; }
+.composer-scene-popover .cs-check { width: 12px; flex: none; color: var(--brand-text); }
+.composer-scene-popover .cs-main { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.composer-scene-popover .cs-desc { color: var(--fg-muted); font-size: 11.5px; }
+.composer-scene-popover .cs-kb { margin-left: 6px; font-size: 11px; color: var(--fg-muted); font-weight: 400; }
+.composer-scene-popover .cs-note { margin: 6px 8px 2px; padding-top: 7px; border-top: 1px solid var(--border-subtle); color: var(--fg-muted); font-size: 11.5px; line-height: 1.6; }
+.composer-scene-popover .cs-confirm { padding: 6px 8px; }
+.composer-scene-popover .cs-title { font-weight: 600; margin-bottom: 6px; }
+.composer-scene-popover .cs-confirm p { margin: 0 0 10px; color: var(--fg-muted); line-height: 1.65; }
+.composer-scene-popover .cs-actions { display: flex; gap: 8px; justify-content: flex-end; }
+.composer-scene-popover .cs-actions button { border: 1px solid var(--border-subtle); border-radius: 6px; padding: 5px 10px; background: transparent;
+  color: inherit; font: inherit; cursor: pointer; }
+.composer-scene-popover .cs-actions .cs-go { background: var(--brand); border-color: var(--brand); color: #fff; }
+
 .composer[data-state='working'] {
   box-shadow:
     inset 0 0 0 1px rgba(var(--rgb-brand), .55),

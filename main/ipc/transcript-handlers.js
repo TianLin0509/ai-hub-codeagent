@@ -315,15 +315,25 @@ async function parseProviderTranscript(args = {}, deps) {
         transcriptPath = findTranscriptByCCSessionId(session.ccSessionId);
       }
     }
+    const parseOpts = { limit: 50, fromTail: true, ...(opts && typeof opts === 'object' ? opts : {}) };
+    const record = session || (hubSessionId ? lookupSessionRecord(hubSessionId, deps)?.record : null);
     if (!transcriptPath) {
-      const record = session || (hubSessionId ? lookupSessionRecord(hubSessionId, deps)?.record : null);
+      // 还没发过消息的分支：卡片先显示分支之前的对话（来自源会话），而不是空白。
+      if (isUnsubmittedBranch(record)) {
+        return { turns: await withInheritedBranchTurns(args, deps, session, [], parseOpts, null), transcriptPath: null, error: null };
+      }
       return { turns: [], transcriptPath: null,
-        error: isFreshSession(record) || isUnsubmittedBranch(record) ? null : 'transcript not found' };
+        error: isFreshSession(record) ? null : 'transcript not found' };
     }
     if (hubSessionId && transcriptPath && session && session.transcriptPath !== transcriptPath) {
       updateSessionTranscriptBinding(hubSessionId, { transcriptPath });
     }
-    const parseOpts = { limit: 50, fromTail: true, ...(opts && typeof opts === 'object' ? opts : {}) };
+    // Claude / CodeAgent 的 `--fork-session` 启动时 hook 就报上了分支自己的记录路径，
+    // 但 CLI 第一轮才真正写这个文件。此前读它是 ENOENT，不是故障：先显示继承的源会话历史，
+    // 文件出现后下一次刷新自然读到它（2026-10-13 公司版 CodeAgent 分支实测）。
+    if (isUnsubmittedBranch(record, { allowBoundTranscript: true }) && !require('fs').existsSync(transcriptPath)) {
+      return { turns: await withInheritedBranchTurns(args, deps, session, [], parseOpts, transcriptPath), transcriptPath, error: null };
+    }
     const parseStartedAt = Date.now();
     // Claude 卡片与原生会话走同一套投影（claude-disk-transcript）：过程/结果分段、
     // 工具状态与耗时都对齐。旧 DeepSeek-Claude 兼容会话保持原解析器。

@@ -152,6 +152,7 @@ const { TranscriptParserService } = require('./core/transcript-parser-service.js
 const { CodexJsonlUsageService } = require('./main/usage/codex-jsonl-usage-service.js');
 const {
   claudeProjectRoots,
+  codeAgentProjectsRoot,
   findTranscriptByCCSessionId,
   healPersistedCwds,
   projectSlug,
@@ -181,6 +182,8 @@ function sessionSearchRoots(envName, defaults) {
 const sessionSearchService = new SessionSearchService({
   cachePath: path.join(getHubDataDir(), 'cache', 'session-search-v2.json'),
   claudeRoots: sessionSearchRoots('HUB_SESSION_SEARCH_CLAUDE_ROOTS', claudeProjectRoots()),
+  // 公司 CodeAgent 的记录目录：该目录下的记录在「昨日之我」里标为 CodeAgent，恢复时用 CodeAgent。
+  codeagentRoots: [codeAgentProjectsRoot()].filter(Boolean),
   codexRoots: sessionSearchRoots('HUB_SESSION_SEARCH_CODEX_ROOTS', [DEFAULT_CODEX_SESSIONS_ROOT]),
   // 2026-08-28：补上 Kimi 与 Gemini。此前只有 claude/codex/meeting 三个适配器，
   // Kimi 的 45 个会话、Gemini 的 21 个会话正文一条都进不了索引。
@@ -549,14 +552,39 @@ sessionManager.on('native-agent-lifecycle', event => {
 
 // CodeAgent：回答里的真实模型才算数（请求的模型可能因为没有权限而没生效），见 core/codeagent-models.js。
 // Stop hook 那一刻才开始盯的记录拿不到 model（尾巴从文件末尾读起），这时从记录末尾补读最后一条回答的 model。
-async function observeCodeAgentModel(hubSessionId, ev, transcriptPath) {
+// 2026-10-13 公司真机：会话答了几十轮，Hub 一次实际模型都没记下（回合结束事件没走到这里）。
+// 所以 CodeAgent 的 Stop hook 也直接来这里读一次（via=stop-hook）；两条路先后到达时，第二次发现没有变化就不做事。
+async function observeCodeAgentModel(hubSessionId, ev, transcriptPath, source = 'turn-complete') {
   try {
     const codeAgentModels = require('./core/codeagent-models');
     let modelId = ev.modelId || null;
+    let usage = ev.usage && typeof ev.usage === 'object' ? ev.usage : null;
     const file = ev.transcriptPath || transcriptPath || sessionManager.getSession(hubSessionId)?.transcriptPath;
-    if (!modelId && file) modelId = (await require('./core/read-last-assistant').readLastAssistantMessage(file))?.model || null;
-    const session = sessionManager.getSession(hubSessionId);
+    if ((!modelId || !usage) && file) {
+      const last = await require('./core/read-last-assistant').readLastAssistantMessage(file);
+      modelId = modelId || last?.model || null;
+      usage = usage || last?.usage || null;
+    }
+    let session = sessionManager.getSession(hubSessionId);
+    // 上下文占比（输入框旁的圆环）：CodeAgent 没有状态栏回调，按这一轮的用量算，见 core/codeagent-models.js。
+    if (session && usage) {
+      const configDir = session.codeagentConfigDir || require('./core/codeagent-config').resolveCodeAgentConfig(process.env).configDir;
+      const { window } = codeAgentModels.contextWindowFor(configDir, [session.currentModel?.id, modelId]);
+      const context = codeAgentModels.contextFromUsage(usage, window);
+      if (context && (context.contextUsed !== session.contextUsed || context.contextEffectiveMax !== session.contextEffectiveMax)) {
+        const withContext = sessionManager.updateSessionMeta(hubSessionId, context);
+        if (withContext) { session = withContext; sessionStore.markDirty(hubSessionId, withContext); }
+        sendToRenderer('status-event', { sessionId: hubSessionId, ...context });
+      }
+    }
     const observed = session && modelId ? codeAgentModels.observeModel(session, modelId) : null;
+    if (observed || !modelId) {
+      codeAgentModels.appendModelLog(getHubDataDir(), {
+        event: 'observe', via: source, session: String(hubSessionId || '').slice(0, 8),
+        current: session?.currentModel?.id, actual: modelId || '(none)', transcript: file ? 'yes' : 'no',
+        switched: observed?.fields?.currentModel?.id,
+      });
+    }
     if (!observed) return;
     const updated = sessionManager.updateSessionMeta(hubSessionId, observed.fields);
     if (updated) {
@@ -1919,6 +1947,7 @@ if (require('./core/distribution').featureEnabled('assistant')) try {
       sessionManager.writeToSession(id, String(s.kind || '').replace(/-resume$/, '') === 'qwen' ? '\x03' : '\x1b');
       return { via: 'pty' };
     },
+    onPhonePrompt: event => sendToRenderer('session:phone-prompt', event),
     readTerminalScreen: id => {
       const entry = sessionManager.sessions?.get?.(id);
       const text = sessionManager.getSessionBuffer(id);
@@ -2592,6 +2621,7 @@ const hookServer = http.createServer((req, res) => {
         }
         if (!isSubagentContext && event === 'stop' && parsed.transcriptPath) {
           void transcriptTap.notifyClaudeStop(parsed.sessionId, parsed.transcriptPath, { turnId: parsed.turnId || null });
+          if (isCodeAgentKind(hookTargetSession.kind)) void observeCodeAgentModel(parsed.sessionId, {}, parsed.transcriptPath, 'stop-hook');
         }
         if (!isSubagentContext && event === 'stop-failure') {
           transcriptTap.notifyClaudeError(parsed.sessionId, {
@@ -3040,6 +3070,8 @@ try {
 } catch (e) {
   console.warn('[hub-rules] 规则页初始化失败：', e && e.message);
 }
+// 会话场景（2026-10-13）：「规则 → 场景」页与输入框的「场景」按钮。
+require('./main/ipc/session-scenes-handlers').registerSessionScenesIpc(ipcMain,{dataDir:getHubDataDir(),shell});
 // 一键更新（2026-10-13，公司版）：只有发行目标写了下载源才开启；主仓库没有这个入口。
 {
   const distribution = require('./core/distribution');

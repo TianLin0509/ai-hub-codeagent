@@ -9,7 +9,8 @@
   },
   "rulesChannel": "company",
   "kinds": [
-    "codeagent"
+    "codeagent",
+    "powershell"
   ],
   "productName": "AI HUB-Huawei",
   "editionBadge": "内测先锋版",
@@ -31,16 +32,19 @@
     "releasePage": "https://github.com/TianLin0509/ai-hub-codeagent/releases"
   },
   "releaseNotes": [
-    "新图标：红色小机器人加铭牌，任务栏上一眼分得出",
-    "CodeAgent 会话可以直接切换模型：选模型后接着原会话重开，对话记录保留",
-    "模型列表读取本机 CodeAgent 配置（GLM、MiniMax、Qwen、DeepSeek 等，按各人权限）",
-    "界面按回答实际用的模型显示；请求的模型没生效时会提示原因",
-    "GLM / DeepSeek / MiniMax / Qwen 各有自己的头像和侧栏图标",
-    "新版本只弹窗提醒一次，之后在「设置」上显示红点",
-    "去掉右下角用不上的「国内正常 / 异常」"
+    "新图标：米白小机器人加字样，颜色不再刺眼",
+    "卡片里你的头像完整显示，不再被裁成圆形",
+    "启动中心的模型列表按 CodeAgent 给你账号的模型清单显示，有几个列几个（有 DeepSeek 权限就列 DeepSeek）；不再混进 GLM-5.2-WX、Qwen 这类分档配置里的名字",
+    "账号页的网页能打开了：专属浏览器跟随系统网络设置（走公司代理），之前被强制直连所以打不开",
+    "输入框旁显示上下文剩余比例（按每轮回答的用量和模型上下文上限计算）",
+    "启动中心加回 PowerShell：新建会话里可以直接开一个 PowerShell 终端",
+    "恢复会话可以看所有目录：启动中心 →「恢复会话」→ CodeAgent，列出所有目录的历史，点一条在原目录接着聊",
+    "每轮回答结束都会核对实际用的模型；选的模型、启动命令里的模型和实际模型记在数据目录 logs\\codeagent-model.log，方便排查",
+    "点侧栏切换会话、点群聊成员、点「后台」更顺：卡片后面看不见的终端不再一直重画，切换时少做大量重复的样式与排版计算（模拟低配电脑实测：切换首帧 153→96 毫秒，点群聊成员 163→113 毫秒）；回到群聊时双屏成员的阅读位置不再错位",
+    "按住 Ctrl 滚动鼠标滚轮即可缩放，和浏览器一样：卡片、群聊、沉浸阅读放大缩小阅读字号，预览窗口（含网页预览、全屏沉浸）缩放预览，后台终端调终端字号；网页预览不再被放大两遍"
   ],
-  "version": "1.0.2",
-  "upstreamVersion": "1.6.453",
-  "upstreamCommit": "f673aecb154b66e1da991547067b5da0dc29843e",
+  "version": "1.0.3",
+  "upstreamVersion": "1.6.471",
+  "upstreamCommit": "7b8ed0c33e1d31d00c78e7988141748a7ff9ca9a",
   "upstreamDirty": false
 }

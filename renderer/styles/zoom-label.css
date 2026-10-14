@@ -1,0 +1,16 @@
+/* Ctrl + 滚轮缩放时的百分比提示（renderer/ctrl-wheel-zoom.js），像浏览器那样短暂出现后淡出。 */
+.hub-zoom-label {
+  position: fixed;
+  /* 高于预览沉浸层（2147483000），全屏阅读时也看得见 */
+  z-index: 2147483600;
+  transform: translateX(-50%);
+  padding: 4px 12px;
+  border-radius: 999px;
+  background: rgba(32, 38, 48, 0.86);
+  color: #fff;
+  font: 500 12.5px/1.5 var(--font-ui, "Microsoft YaHei", system-ui, sans-serif);
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.18s ease;
+}
+.hub-zoom-label.visible { opacity: 1; }

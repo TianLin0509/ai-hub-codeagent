@@ -15,7 +15,14 @@
 .msg-overlay .turn-card[data-chat-style='message'] .turn-avatar.av-logo { background: transparent; }
 .msg-overlay .turn-card[data-chat-style='message'] .turn-avatar.av-logo img { width: 100%; height: 100%; object-fit: contain; }
 .turn-avatar.av-character img { border-radius: 50%; }
-.turn-avatar.av-user img { width: 30px; height: 30px; }
+/* 用户头像就是程序图标：完整缩进头像框，不裁成圆形、不套底色（2026-10-13：公司版图标带字，
+   原来 30px 的图塞进 28px 的圆角框，四边被裁）。选择器带上卡片层级，盖过 card-view 与消息样式的圆形框。 */
+.turn-avatar.av-user,
+.msg-overlay .turn-card .turn-avatar.av-user,
+.msg-overlay .turn-card[data-chat-style='message'] .turn-avatar.av-user { background: transparent; border-radius: 0; overflow: visible; }
+.turn-avatar.av-user img,
+.msg-overlay .turn-card .turn-avatar.av-user img,
+.msg-overlay .turn-card[data-chat-style='message'] .turn-avatar.av-user img { width: 100%; height: 100%; object-fit: contain; border-radius: 0; }
 .chat-process-warning { color: var(--status-danger); }
 .msg-overlay .turn-card[data-chat-style='message'] .turn-content {
   flex: 0 1 auto; width: fit-content; max-width: calc(100% - 52px); min-width: 0;
