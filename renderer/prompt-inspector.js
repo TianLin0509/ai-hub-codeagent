@@ -27,6 +27,7 @@
     'user-global': '全局',
     'project': '项目',
     'local': '私有未入库',
+    'rules': '规则目录',
   };
 
   const MEM_STATE = {

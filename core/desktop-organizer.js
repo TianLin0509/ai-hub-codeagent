@@ -9,6 +9,25 @@ const storageRoots = require('./storage-roots');
 const { copyThenRemove } = require('./cross-volume-move');
 const run = promisify(execFile);
 const launcher = name => /\.(lnk|url|bat|cmd)$/i.test(name);
+// 一键收纳按类型分文件夹（2026-10-14 用户：不要逐项打勾，自动归纳、一键收纳）。
+const CATEGORIES = [
+  ['文档', /\.(docx?|txt|md|rtf|odt|wps)$/i],
+  ['表格', /\.(xlsx?|xlsm|csv|et)$/i],
+  ['演示', /\.(pptx?|dps|key)$/i],
+  ['PDF', /\.pdf$/i],
+  ['图片', /\.(png|jpe?g|gif|bmp|webp|svg|heic|ico|tiff?)$/i],
+  ['音视频', /\.(mp4|mov|avi|mkv|wmv|flv|mp3|wav|m4a|flac|aac)$/i],
+  ['压缩包', /\.(zip|rar|7z|tar|gz|tgz|bz2|xz)$/i],
+  ['安装包', /\.(exe|msi)$/i],
+  ['代码', /\.(py|js|ts|json|ps1|sh|c|cpp|h|java|m|ipynb|html?|css|ya?ml|xml|log)$/i],
+];
+function categoryOf(name, isDirectory) {
+  if (launcher(name)) return '快捷方式';
+  if (isDirectory) return '文件夹';
+  return (CATEGORIES.find(([, pattern]) => pattern.test(name)) || ['其他'])[0];
+}
+const MODES = { 'keep-launchers': item => item.kind !== '启动入口', all: () => true };
+const localStamp = (date = new Date()) => { const p = n => String(n).padStart(2, '0'); return `${date.getFullYear()}-${p(date.getMonth() + 1)}-${p(date.getDate())}_${p(date.getHours())}${p(date.getMinutes())}${p(date.getSeconds())}`; };
 const inside = (root, value) => { const rel = path.relative(root, value); return rel !== '' && !rel.startsWith('..') && !path.isAbsolute(rel); };
 async function exists(file) { try { await fs.lstat(file); return true; } catch (e) { if (e.code === 'ENOENT') return false; throw e; } }
 async function windowsDesktopEntries() {
@@ -34,16 +53,20 @@ function createDesktopOrganizer({ home = os.homedir(), testRoot, artifactsRoot }
   async function scan() {
     const rows = await entries();
     const id = randomUUID();
-    const batch = new Date().toISOString().replace(/[:.]/g, '-') + '-' + id;
+    // 归档里一眼看得懂的批次名：本地时间 + 短编号（仍以年份开头，撤销按此找记录）。
+    const batch = `${localStamp()}_${id.slice(0, 8)}`;
     const items = [], retained = [];
     for (const row of rows) {
       const source = path.join(row.root, row.name), stat = await fs.lstat(source);
       if (row.hidden || row.link || stat.isSymbolicLink() || row.name.startsWith('.')) { retained.push(row.name); continue; }
       const isLauncher = launcher(row.name);
+      const category = categoryOf(row.name, stat.isDirectory());
+      // 公共桌面（所有用户共用）的项目单独放一层，和自己桌面上的同名文件不冲突。
+      const publicDesktop = desktopRoots && desktopRoots.length > 1 && row.root.toLowerCase() !== String(desktopRoots[0]).toLowerCase();
       const target = row.name === 'claude-artifacts' && stat.isDirectory()
         ? path.join(artifacts, '历史桌面产物', batch, row.name)
-        : path.join(archive, batch, isLauncher ? '启动入口' : '桌面资料', path.basename(row.root), row.name);
-      items.push({ key: randomUUID(), name: row.name, source, target, kind: isLauncher ? '启动入口' : stat.isDirectory() ? '文件夹' : '文件', selected: !isLauncher,
+        : path.join(archive, batch, category, ...(publicDesktop ? ['公共桌面'] : []), row.name);
+      items.push({ key: randomUUID(), name: row.name, source, target, category, kind: isLauncher ? '启动入口' : stat.isDirectory() ? '文件夹' : '文件', selected: !isLauncher,
         fingerprint: [stat.dev, stat.ino, stat.size, stat.mtimeMs].join(':') });
     }
     plan = { ok: true, id, batch, archive, artifacts, items, retained };
@@ -80,8 +103,14 @@ function createDesktopOrganizer({ home = os.homedir(), testRoot, artifactsRoot }
       catch (e) { if (e.code !== 'EXDEV') throw e; await copyThenRemove(source, target); }
     } else throw new Error('此项目不是普通文件或文件夹');
   }
-  async function execute({ id, keys } = {}) {
+  async function execute({ id, keys, mode } = {}) {
     if (!plan || id !== plan.id) throw new Error('预览已过期，请重新扫描');
+    // 一键收纳：按模式选（保留快捷方式 / 全部收走），不需要逐项勾选。
+    if (mode !== undefined) {
+      if (!MODES[mode]) throw new Error('未知的收纳方式');
+      keys = plan.items.filter(MODES[mode]).map(item => item.key);
+      if (!keys.length) throw new Error('桌面上没有需要收纳的项目');
+    }
     if (!Array.isArray(keys) || !keys.length) throw new Error('请选择需要收走的项目');
     const chosen = new Set(keys), snapshot = plan;
     if (keys.some(key => !snapshot.items.some(item => item.key === key))) throw new Error('清单不匹配，请重新扫描');
@@ -103,10 +132,13 @@ function createDesktopOrganizer({ home = os.homedir(), testRoot, artifactsRoot }
   }
   async function undo() {
     return lock(async () => {
-      const files = (await fs.readdir(archive)).filter(name => /^\d{4}-.*\.json$/.test(name)).sort().reverse();
+      // 按记录里的创建时间找最近一次（批次名只精确到秒，同一秒内的两次不能靠文件名排序）。
+      const files = (await fs.readdir(archive)).filter(name => /^\d{4}-.*\.json$/.test(name));
+      const receipts = [];
+      for (const name of files) receipts.push({ name, data: JSON.parse(await fs.readFile(path.join(archive, name), 'utf8')) });
+      receipts.sort((a, b) => String(b.data.createdAt || '').localeCompare(String(a.data.createdAt || '')) || b.name.localeCompare(a.name));
       let receipt, file;
-      for (const name of files) {
-        const candidate = JSON.parse(await fs.readFile(path.join(archive, name), 'utf8'));
+      for (const { name, data: candidate } of receipts) {
         if (candidate.rows.some(row => row.status === 'moved' || row.status === 'pending')) { receipt = candidate; file = path.join(archive, name); break; }
       }
       if (!receipt) throw new Error('没有可以撤销的整理记录');
@@ -128,4 +160,4 @@ function createDesktopOrganizer({ home = os.homedir(), testRoot, artifactsRoot }
   }
   return { scan, execute, undo, archive, artifacts };
 }
-module.exports = { createDesktopOrganizer, inside };
+module.exports = { createDesktopOrganizer, inside, categoryOf };

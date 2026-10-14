@@ -53,7 +53,8 @@ function registerHubRestartIpc(ipcMain, deps) {
       // 2026-09-26：PTY 成为默认后，Claude / Codex 也走这里。只放行老式 CLI 会让每个正在干活的
       // PTY 会话重启后都报「缺少执行状态」而不续作（真机：Codex 计划 before=working → error）。
       // 续作提示自己要求先核对上一步的实际结果，已完成就只报告，不会重复执行。
-      const ptyAgent=session?.agentRuntime === 'pty' && ['claude','codex'].includes(base);
+      // 2026-10-14：Claude 家族（含 CodeAgent、DeepSeek on Claude Code）同一套 PTY + hook 确认，一起放行。
+      const ptyAgent=session?.agentRuntime === 'pty' && (base === 'codex' || require('../../core/ai-kinds').isClaudeFamily(base));
       if (!ptyAgent && !['kimi','gemini','deepseek'].includes(base)) throw new Error('此提供方缺少执行状态，请核对后继续');
       return {completed:false};
     }

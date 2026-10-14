@@ -3,6 +3,8 @@ const { isCodexCliKind, isClaudeFamily, isCodeAgentKind } = require('./ai-kinds'
 function modelCommandType(kind, prompt) {
   if (isCodexCliKind(kind) && /^\s*\/model\s*$/i.test(prompt)) return 'codex-picker';
   // Code Agent 的 /model 是自己的选择界面，确认文案与 Claude 不同，不当成 Claude 的行内切换。
+  // 不带参数的 /model 打开菜单，由 core/codeagent-model-picker.js 接着选（带参数的写法公司真机不生效）。
+  if (isCodeAgentKind(kind) && /^\s*\/model\s*$/i.test(prompt)) return 'codeagent-picker';
   if (isClaudeFamily(kind) && !isCodeAgentKind(kind) && /^\s*\/model\s+\S+\s*$/i.test(prompt)) return 'claude-inline';
   if (/^gemini(?:-resume)?$/.test(String(kind || '')) && /^\s*\/model\s+\S+\s*$/i.test(prompt)) return 'agy-inline';
   return null;
@@ -10,6 +12,7 @@ function modelCommandType(kind, prompt) {
 function modelCommandAcknowledged(type, screen, freshOutput) {
   // Only output produced after this Enter counts: an earlier switch leaves the same text on screen.
   if (type === 'agy-inline') return /Model set to\s+\S/i.test(freshOutput);
+  if (type === 'codeagent-picker') return !!require('./codeagent-model-picker').parsePicker(String(screen || '').split('\n'));
   if (type === 'codex-picker') return /Select Model and Effort/i.test(screen)
     && /^\s*[›>]?\s*\d+\.\s+(?:gpt-|o\d|deepseek-v4-|deepseek-flash\b)/im.test(screen);
   return type === 'claude-inline' && (/(?:set model to|model changed|model switched|now using)/i.test(freshOutput)

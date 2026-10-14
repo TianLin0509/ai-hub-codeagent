@@ -401,6 +401,11 @@ async function waitCliReady(sid, kind, maxMs = 60000) {
 //   只会把"打完字立刻发出去"变成有时要等几十秒。群聊派发默认仍为 true。
 const promptSubmissionQueues = new Map();
 async function sendToPty(sid, prompt, kind, options = {}) {
+  // CodeAgent 新会话启动后先在 /model 菜单里选好模型（core/codeagent-model-picker.js），再发第一条，
+  // 否则第一轮还是 CLI 的默认模型。选模型自己发的 /model 带 codeagentModelPick，不等自己。
+  // 没有在选模型时不能多等一拍：下面「同步进入第一次提交」的约定要求同一拍里就登记（关会话能取消它）。
+  const picker = require('./codeagent-model-picker');
+  if (!options.codeagentModelPick && picker.isPicking(sid)) await picker.waitForPick(sid);
   // Serialize submission, not the model's answer. Workflow dispatch and user
   // interjections share this boundary so their paste chunks cannot interleave.
   const previous=promptSubmissionQueues.get(sid);

@@ -8,7 +8,7 @@ const normalize=x=>String(x).replace(/^\uFEFF/,'').replace(/<!--[\s\S]*?-->/g,''
 function parents(cwd){const dirs=[];for(let p=path.resolve(cwd);;p=path.dirname(p)){dirs.unshift(p);if(path.dirname(p)===p)break;}return dirs;}
 function read(file){try{const s=fs.statSync(file);if(!s.isFile()||s.size>32768)return null;const content=fs.readFileSync(file,'utf8');return content.trim()?{path:file,content,digest:digest(content)}:null;}catch{return null;}}
 function json(file){try{return JSON.parse(fs.readFileSync(file,'utf8').replace(/^\uFEFF/,''));}catch(e){if(e.code==='ENOENT')return {};return null;}}
-function captureNativeRuleCoverage({kind,cwd,env={},claudeSettingsFile,settingSources}) {
+function captureNativeRuleCoverage({kind,cwd,env={},claudeSettingsFile,settingSources,codeagentConfigDir}) {
   const dirs=parents(cwd);let chosen=[],rows=[];
   const add=(dir,names,first=false)=>{for(const name of names){const row=read(path.join(dir,name));if(row){rows.push(row);if(first)break;}}};
   if(kind==='codex'||kind==='deepseek'){
@@ -45,6 +45,13 @@ function captureNativeRuleCoverage({kind,cwd,env={},claudeSettingsFile,settingSo
     let start=dirs.length-1;
     for(let i=dirs.length-1;i>=0;i--)if(fs.existsSync(path.join(dirs[i],'.git'))){start=i;break;}
     for(const dir of dirs.slice(start))add(dir,kind==='kimi'?['AGENTS.md']:['AGENTS.md','CLAUDE.md','AGENTS.local.md','CLAUDE.local.md']);
+  } else if(kind==='codeagent'){
+    // 2026-10-14 company probe: every ancestor AGENTS.md is read with or without git
+    // (not .cac/AGENTS.md, not CLAUDE.md). Unknown exclude settings keep this conservative.
+    const home=codeagentConfigDir||path.join(env.USERPROFILE||env.HOME||'','.cac');
+    const configs=[json(path.join(home,'settings.json')),...dirs.flatMap(d=>[json(path.join(d,'.cac/settings.json')),json(path.join(d,'.cac/settings.local.json'))])];
+    if(configs.some(c=>!c||Object.keys(c).some(k=>/Excludes$/.test(k))))return [];
+    for(const dir of dirs)add(dir,['AGENTS.md']);
   } else if(kind==='glm'){
     for(const dir of [...dirs].reverse()){
       const row=read(path.join(dir,'AGENTS.md'));if(row){rows.push(row);break;}

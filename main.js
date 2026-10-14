@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, clipboard, dialog, nativeImage, screen, shell, Menu } = require('electron');
+const { app, BrowserWindow, ipcMain, clipboard, dialog, nativeImage, screen, shell, Menu, crashReporter, protocol, net } = require('electron');
 const path = require('path');
 const { fileURLToPath } = require('url');
 const fs = require('fs');
@@ -238,6 +238,12 @@ function traceStartup(msg) {
 // because the env var is only set by test harnesses.
 if (process.env.CLAUDE_HUB_DATA_DIR) {
   app.setPath('userData', path.join(process.env.CLAUDE_HUB_DATA_DIR, 'electron-userdata'));
+}
+// 崩溃转储只留在本机（<userData>/Crashpad/reports，不上传），界面或子进程崩溃后能看到崩在哪
+// （2026-10-14 公司真机界面进程崩溃时没有任何转储）。AI_HUB_CRASH_DUMPS=0 可关掉。
+if (String(process.env.AI_HUB_CRASH_DUMPS || '').trim() !== '0') {
+  try { crashReporter.start({ uploadToServer: false, compress: true }); }
+  catch (error) { console.warn('[crash] crashReporter start failed:', error && error.message); }
 }
 const HIDDEN_E2E_WINDOW_REQUESTED = process.env.CLAUDE_HUB_E2E === '1'
   && process.env.CLAUDE_HUB_E2E_WINDOW_MODE === 'hidden';
@@ -1107,6 +1113,7 @@ ipcMain.handle('hub:new-instance', () => launchHubInstance({
   isPackaged: HUB_IS_PACKAGED,
 }));
 
+let hangStackOptIn = null;
 function createWindow() {
   // Load the icon as a NativeImage so we can pass it to BrowserWindow AND
   // re-apply via setIcon — on Windows the constructor `icon` alone sometimes
@@ -1155,13 +1162,28 @@ function createWindow() {
   });
   mainWindow._hubNativeTitleBar = nativeTitleBar;
   // 窗口在屏幕上就一直出帧 + 窗口事件日志（公司真机「点后台冻住、半分钟后黑屏」，见该模块注释）。
+  let windowEventLog = null;
   try {
     const keepRendering = require('./core/window-keep-rendering.js');
-    keepRendering.installWindowKeepRendering(mainWindow, {
+    windowEventLog = keepRendering.installWindowKeepRendering(mainWindow, {
       app, ipcMain, dataDir: getHubDataDir(),
       enabled: keepRendering.shouldKeepRendering({ community: require('./core/distribution').community }),
-    });
+    })?.log || null;
   } catch (error) { console.warn('[window] keep-rendering setup failed:', error && error.message); }
+  // 界面进程崩溃（公司真机：内存吃满后 crashed -36861）后自动重新载入界面，会话都在主进程里不受影响；
+  // 卡住时记下界面正在跑的代码和内存（见该模块注释）。
+  try {
+    const win = mainWindow;
+    require('./core/renderer-crash-recovery.js').installRendererCrashRecovery(win, {
+      app, ipcMain,
+      log: windowEventLog || ((event, detail) => console.warn('[window]', event, JSON.stringify(detail))),
+      reload: ({ reason }) => { hangStackOptIn?.arm(); return win.loadFile(path.join(__dirname, 'renderer', 'index.html'), { query: { recovered: String(reason || 'crashed') } }); },
+      hangStacks: !!hangStackOptIn,
+      // 卡死自救的秒数：AI_HUB_STALL_RESCUE_SEC=0 关掉，其余数字按秒改。
+      ...(String(process.env.AI_HUB_STALL_RESCUE_SEC || '').trim() !== '' && Number.isFinite(Number(process.env.AI_HUB_STALL_RESCUE_SEC))
+        ? { rescueStallMs: Math.max(0, Number(process.env.AI_HUB_STALL_RESCUE_SEC)) * 1000 } : {}),
+    });
+  } catch (error) { console.warn('[window] crash recovery setup failed:', error && error.message); }
   require('./main/ipc/preview-immersive-handlers.js').bindPreviewImmersiveWindow(mainWindow);
   // 工具栏要知道窗口是不是最大化：Windows 最大化一个隐藏标题栏的窗口时，
   // 窗口会比屏幕大出一圈边框，顶部那几像素会被切掉。渲染层拿这个状态决定
@@ -2440,6 +2462,7 @@ const hookServer = http.createServer((req, res) => {
       const navigatedAway = !currentUrl.startsWith('file:') || !currentUrl.includes('/renderer/index.html');
       if (navigatedAway) {
         console.warn('[escape-home] main webContents has been navigated to', currentUrl, '→ loadFile back to index.html');
+        hangStackOptIn?.arm();
         mainWindow.loadFile(path.join(__dirname, 'renderer', 'index.html'));
         res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
         res.end(JSON.stringify({ ok: true, pid: process.pid, recovered: 'loadFile', from: currentUrl }));
@@ -3581,6 +3604,12 @@ app.whenReady().then(async () => {
   traceStartup('gemini mcp install start');
   ensureGeminiMcpInstalled();
   traceStartup('gemini mcp install done');
+  try {
+    hangStackOptIn = require('./core/renderer-crash-recovery.js').installHangStackOptIn({
+      protocol, net, indexPath: path.join(__dirname, 'renderer', 'index.html'),
+    });
+    hangStackOptIn?.arm();
+  } catch (error) { console.warn('[window] hang-stack opt-in failed:', error && error.message); }
   traceStartup('createWindow start');
   createWindow();
   traceStartup('createWindow done');

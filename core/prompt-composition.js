@@ -43,7 +43,9 @@ function buildComposition({ turn = {}, kind = '', systemRules = null, assembly =
     const truncated = seg.textOmitted || seg.textTruncated;
     startup.push(part({ id: `file:${seg.id}`, title: seg.label, path: seg.path, text: seg.textOmitted ? null : seg.text,
       bytes: seg.bytes, truncated, unavailable: !!seg.textOmitted,
-      note: [seg.orderTruth === 'approx' ? '插入位置是近似的' : '', truncated ? `正文较长，这里只显示前 ${seg.textBytes || 0} / ${seg.bytes} 字节` : '']
+      evidence: seg.evidence || null,
+      note: [seg.evidence === 'inferred' ? '按 Claude Code 的规则推断 CodeAgent 会读，尚未在公司电脑上实测' : '',
+        seg.orderTruth === 'approx' ? '插入位置是近似的' : '', truncated ? `正文较长，这里只显示前 ${seg.textBytes || 0} / ${seg.bytes} 字节` : '']
         .filter(Boolean).join('；') || null }));
   }
   groups.push({ id: 'startup', title: '会话开头自动带上的规则与记忆',

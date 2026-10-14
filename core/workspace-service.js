@@ -183,12 +183,24 @@ class WorkspaceService {
 
   // 工作根是「可以直接在上面干活的根」还是「只能当组织根的根」？看标记文件。
   // 见文件头 WORK_ROOT_MARKER 处的决策说明。
+  //
+  // 例外：Hub 自己的默认工作根（~\Workspaces：没设 AI_HUB_WORKSPACE_ROOT、也不是隔离实例）
+  // 本来就是 Hub 建给新会话用的目录，不是用户整理过的聚合根，直接平铺。
+  // 2026-10-14 公司同事：新建会话选「默认工作目录」、界面显示 ~\Workspaces，会话却开在
+  // _scratch\inbox-<时间>-<随机> 里——新装的电脑上这个根从来没有标记，一直走旧的 scratch 退路。
+  // 聚合根守卫只对用户用 AI_HUB_WORKSPACE_ROOT 指定的根生效（那里才可能是 C:\Workspace 这类目录）。
   isFlatWorkRoot() {
+    if (this._isHubDefaultRoot()) return true;
     try {
       return this.fs.existsSync(this.path.join(this.getWorkspaceRoot(), WORK_ROOT_MARKER));
     } catch {
       return false;
     }
+  }
+
+  _isHubDefaultRoot() {
+    if (this.workspaceRoot || storageRoots.workspaceRoot()) return false;
+    try { return !this.isIsolatedHub(); } catch { return false; }
   }
 
   // 平铺模式下的默认工作区 = 工作根本身。

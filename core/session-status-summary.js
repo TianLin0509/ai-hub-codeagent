@@ -33,6 +33,8 @@ function sessionEffortLabel(session) {
     const current = acpThoughtOption(session)?.currentValue;
     return acpThoughtChoices(session).find(o => o.value === current)?.name || current || '';
   }
+  // CodeAgent 没传 --effort 时用的是它自己的默认档，Hub 不知道是哪档，不显示（不能套 Claude 的 max）。
+  if (kind === 'codeagent') return String(session && session.effort || '').trim().toLowerCase();
   if (!['claude', 'codex', 'deepseek', 'deepseek-claude'].includes(kind)) return '';
   return String(session && session.effort || 'max').trim().toLowerCase();
 }

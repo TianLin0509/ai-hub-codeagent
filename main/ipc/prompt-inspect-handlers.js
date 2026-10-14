@@ -121,7 +121,8 @@ function registerPromptInspectIpc(ipcMain, deps) {
     let assembly = null, assemblyError = null;
     if (!cwd) assemblyError = '这个会话没有记录工作目录';
     else {
-      try { assembly = buildAssembly(buildInspection({ cwd, kind })); }
+      // CodeAgent 的配置目录随会话记录（启动时交给 CLI 的那个），规则和记忆都按它找。
+      try { assembly = buildAssembly(buildInspection({ cwd, kind, codeagentConfigDir: session.codeagentConfigDir || null })); }
       catch (error) { assemblyError = (error && error.message) ? error.message : String(error); }
     }
     return { ok: true, data: { kind, cwd, systemRules, assembly, assemblyError } };

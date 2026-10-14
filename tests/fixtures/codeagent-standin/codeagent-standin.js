@@ -13,9 +13,13 @@ const DROP_FLAGS = new Set(['--disable-update', '--skip-safe-check']);
 const DROP_WITH_VALUE = new Set(['--session-id', '--settings']);
 const args = [];
 const input = process.argv.slice(2);
+// CODEAGENT_STANDIN_IGNORE_MODEL=1 reproduces the real CLI's interactive-mode bug (company probe, 2026-10-13):
+// `--model` only works with -p; an interactive session always starts on the configured default model.
+const ignoreModel = process.env.CODEAGENT_STANDIN_IGNORE_MODEL === '1' && !input.some(a => a === '-p' || a === '--print');
 for (let i = 0; i < input.length; i += 1) {
   if (DROP_FLAGS.has(input[i])) continue;
   if (DROP_WITH_VALUE.has(input[i])) { i += 1; continue; }
+  if (ignoreModel && input[i] === '--model') { i += 1; continue; }
   // The company models do not exist for Claude; run the cheapest Claude model instead.
   if (input[i] === '--model' && /^(?:GLM|MiniMax)/i.test(input[i + 1] || '')) {
     args.push('--model', process.env.CODEAGENT_STANDIN_MODEL || 'haiku'); i += 1; continue;

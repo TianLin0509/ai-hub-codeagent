@@ -27,6 +27,8 @@ function sanitizeMeetingSlot(slot = {}, fallbackIndex = null) {
   const claudeLike = kind === 'claude' || kind === 'deepseek-claude';
   if (claudeLike && CLAUDE_EFFORTS.has(effort)) safe.effort = effort;
   if ((kind === 'codex' || kind === 'deepseek') && CODEX_EFFORTS.has(effort)) safe.effort = effort;
+  // CodeAgent 只有 low/medium/high/max（core/codeagent-config.js）；之前建群时被丢掉，成员按 CLI 默认档启动。
+  if (kind === 'codeagent' && require('../../core/codeagent-config').EFFORTS.includes(effort)) safe.effort = effort;
 
   const mcpProfile = typeof slot.mcpProfile === 'string' ? slot.mcpProfile.trim().toLowerCase() : '';
   if (claudeLike && (CLAUDE_MCP_PROFILES.has(mcpProfile) || (kind === 'deepseek-claude' && mcpProfile === 'none'))) {

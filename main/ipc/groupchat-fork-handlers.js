@@ -26,7 +26,9 @@ const {
 
 // 群聊入口开放的 runtime。与 renderer/meeting-room.js 的 showAddSubMenu 一致：
 // 历史群聊里的 Kimi 成员继续可读可跑，只是不再从这里新增；Antigravity 2026-10-12 起重新开放。
-const GROUP_FORKABLE_KINDS = new Set(['claude', 'codex', 'deepseek', 'qwen', 'deepseek-acp', 'glm', 'gemini']);
+// 2026-10-14 公司版反馈「加入群聊」不能用：CodeAgent（公司版唯一的 AI）与 DeepSeek on Claude Code 漏在名单外。
+// 两者都是 Claude 家族，分支走 --resume <源> --fork-session（core/session-fork-plan.js、buildCodeAgentPtyLaunch）。
+const GROUP_FORKABLE_KINDS = new Set(['claude', 'codex', 'deepseek', 'qwen', 'deepseek-acp', 'glm', 'gemini', 'deepseek-claude', 'codeagent']);
 
 function baseKind(kind) {
   return String(kind || '').replace(/-resume$/, '');
@@ -91,7 +93,7 @@ function registerGroupChatForkIpc(ipcMain, deps) {
       return {
         ok: false,
         error: 'unsupported-kind',
-        message: `群聊暂不支持 ${session.kind} 成员（可用：Claude / Codex / DeepSeek / Qwen / GLM）`,
+        message: `群聊暂不支持 ${session.kind} 成员（可用：Claude / Codex / DeepSeek / Qwen / GLM / Antigravity / CodeAgent）`,
       };
     }
     if (!supportsForkSession(session)) {

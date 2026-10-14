@@ -51,7 +51,8 @@ function createAppUpdateController({ app, config, dataDir, currentVersion, sendT
       if (!silent) emit({ phase: 'checking', error: null });
       const fetchFn = resolveFetch(fetchImpl);
       const results = await checkManifests({ sources, fetchImpl: fetchFn, validate: validateManifest });
-      const checks = results.map(r => ({ id: r.id, name: r.name, ok: r.ok, version: r.ok ? r.manifest.version : null, reason: r.reason || null }));
+      const checks = results.map(r => ({ id: r.id, name: r.name, ok: r.ok, version: r.ok ? r.manifest.version : null, reason: r.reason || null,
+        ...(r.blocked ? { blocked: true, url: r.url } : {}) }));
       const best = results.filter(r => r.ok).sort((a, b) => compareVersions(b.manifest.version, a.manifest.version))[0];
       if (!best) return emit({ phase: silent ? 'idle' : 'error', checks, checkedAt: new Date().toISOString(),
         error: '所有更新源都连不上，暂时查不到新版本', silentFailure: silent });

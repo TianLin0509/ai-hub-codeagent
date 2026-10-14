@@ -67,7 +67,7 @@
   border-radius: 0;
   background: transparent;
   color: var(--fg-strong);
-  font-size: var(--card-content-font-size, 15px);
+  font-size: calc(var(--card-content-font-size, 15px) * var(--main-zoom, 1));
   line-height: 1.78;
 }
 .msg-overlay .turn-body > :first-child { margin-top: 0; }

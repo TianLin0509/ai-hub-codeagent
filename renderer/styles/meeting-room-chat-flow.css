@@ -512,7 +512,7 @@
 }
 .mr-gc-md {
   font-family: var(--card-content-font-family, "Segoe UI", "Microsoft YaHei UI", sans-serif);
-  font-size: var(--card-content-font-size, 15px);
+  font-size: calc(var(--card-content-font-size, 15px) * var(--main-zoom, 1));
   line-height: 1.74;
   color: inherit;
   overflow-wrap: anywhere;

@@ -211,8 +211,8 @@ const MODEL_SWITCH_STRATEGY_BY_KIND = Object.freeze({
   glm: 'acp-native',
   // agy 1.3.3: `/model <id>` switches in place and prints "Model set to <label>".
   gemini: 'agy-inline',
-  // 公司 CodeAgent：用新模型接着原会话重开（--resume <会话> --model <新模型>，2026-10-13 公司真机验证）。
-  codeagent: 'codeagent-restart',
+  // 公司 CodeAgent：在它自己的 /model 菜单里选（交互模式不认 --model，2026-10-13 公司真机三轮排查）。
+  codeagent: 'codeagent-picker',
 });
 
 function modelSwitchStrategy(kind) {

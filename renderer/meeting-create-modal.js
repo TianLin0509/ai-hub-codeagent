@@ -50,7 +50,8 @@ let _creating = false;
 let _presentation = { embedded: false, onCreated: null };
 // AI 编排模式：成员 1 当编排员，用户预先选定工作成员，编排员安排其分工与参与阶段。
 let _orchestrationOn = false;
-const ORCHESTRATOR_KINDS = ['claude', 'codex'];
+// 编排员靠 MCP 工具指挥成员：Claude 家族用 --mcp-config，Codex 用 config 覆盖。CodeAgent 同 Claude（2026-10-14 公司版加入）。
+const ORCHESTRATOR_KINDS = ['claude', 'codex', 'codeagent'];
 
 function _paintWorkspace(workspace) {
   if (workspace) _meetingWorkspace = workspace;
@@ -647,7 +648,7 @@ async function _onCreate() {
     const scene = sceneInput ? sceneInput.value : 'general';
     const orchestration = _orchestrationPayload();
     if (orchestration && slots.length < 2) throw new Error('编排群至少需要编排员和一位工作成员；请先选择成员');
-    if (orchestration && !ORCHESTRATOR_KINDS.includes(slots[0].kind)) throw new Error('编排员（成员 1）请选 Claude 或 Codex');
+    if (orchestration && !ORCHESTRATOR_KINDS.includes(slots[0].kind)) throw new Error('编排员（成员 1）请选 Claude、Codex 或 CodeAgent');
     if (!orchestration && scene === 'dev' && slots.length < 2) throw new Error('开发群聊至少需要两位成员；单人开发请使用普通会话的“一键开工”。');
     // createMeeting 的 scene 实际取自 mode（过 MEETING_MODES 白名单），scene 字段只是透传
     const mode = (scene === 'research' || scene === 'dev') ? scene : 'general';

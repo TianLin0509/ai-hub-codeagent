@@ -508,8 +508,47 @@ function registerSessionIpc(ipcMain, deps) {
       return { options: require('../../core/codeagent-config').localModelOptions(getHubDataDir()) };
     } catch (error) { return { options: [], error: error.message }; }
   });
-  // CodeAgent 会话内换模型（2026-10-13 公司探测：`--resume <会话> --model <新模型>` 能接着原会话换模型）。
-  // 走现成的「按新模型重启」：关掉当前 CLI，用原会话号 + 新模型重开，对话记录保留。回答中不切，免得打断。
+  // CodeAgent 换模型：在它自己的 /model 菜单里选（core/codeagent-model-picker.js）。交互模式不认 --model，
+  // 以前「带 --model 重开」在公司真机上不生效（2026-10-14 同事反馈选了 MiniMax 仍是 GLM）。
+  const codeagentPicker = require('../../core/codeagent-model-picker');
+  const codeagentModels = require('../../core/codeagent-models');
+  async function runCodeAgentPick(sessionId, modelId, reason) {
+    const session = sessionManager.getSession(sessionId);
+    if (!session) return { ok: false, message: '会话已经关闭' };
+    const { getHubDataDir } = require('../../core/data-dir');
+    let result;
+    try {
+      result = await codeagentPicker.pickModel({ manager: sessionManager, sid: sessionId, kind: session.kind, modelId,
+        configDir: session.codeagentConfigDir || null, sendToPty: require('../../core/group-chat-watcher').sendToPty });
+    } catch (error) { result = { ok: false, message: error && error.message ? error.message : String(error) }; }
+    codeagentModels.appendModelLog(getHubDataDir(), { event: 'pick', session: String(sessionId).slice(0, 8), reason, model: modelId,
+      ok: result.ok, mode: result.mode, confirmed: result.confirmed, restored: (result.restored || []).join('+'), error: result.ok ? '' : result.message });
+    if (!result.ok && Array.isArray(result.screen)) {
+      try {
+        const file = require('path').join(getHubDataDir(), 'logs', 'codeagent-model-picker-last.txt');
+        require('fs').mkdirSync(require('path').dirname(file), { recursive: true });
+        require('fs').writeFileSync(file, `${new Date().toISOString()} ${reason} ${modelId}：${result.message}\n\n${result.screen.join('\n')}\n`, 'utf8');
+      } catch { /* 只是排查用的附件 */ }
+    }
+    if (result.ok) {
+      const updated = sessionManager.updateSessionMeta(sessionId, { currentModel: { id: modelId, displayName: codeagentModels.modelLabel(modelId) }, codeagentRequestedModel: undefined });
+      if (updated) sendToRenderer('session-updated', { session: updated });
+    }
+    return result;
+  }
+  if (typeof sessionManager.on === 'function') sessionManager.on('codeagent-model-pick', ({ sessionId, modelId, reason } = {}) => {
+    if (!sessionId || !modelId) return;
+    // 同步登记：随后到达的第一条消息会等这一步做完（group-chat-watcher 的 sendToPty）。
+    codeagentPicker.schedulePick(sessionId, async () => {
+      const result = await runCodeAgentPick(sessionId, modelId, reason);
+      if (!result.ok) {
+        sendToRenderer('session-notice', { sessionId, level: 'warning',
+          message: `没能在 CodeAgent 里切到 ${codeagentModels.modelLabel(modelId)}：${result.message}。这个会话先用 CodeAgent 的默认模型；`
+            + '可以点输入框下方的模型再选一次，或者点「后台」在终端里输入 /model 手动选。' });
+      }
+      return result;
+    });
+  });
   ipcMain.handle('codeagent:switch-model', async (_e, payload = {}) => {
     const sessionId = typeof payload.sessionId === 'string' ? payload.sessionId : '';
     const session = sessionId ? sessionManager.getSession(sessionId) : null;
@@ -520,13 +559,11 @@ function registerSessionIpc(ipcMain, deps) {
     const modelId = models.normalizeModel(requested);
     if (!requested || modelId.toLowerCase() !== requested.toLowerCase()) return { ok: false, error: 'invalid-model', message: `模型名不能用：${requested}` };
     if (session.status === 'running') return { ok: false, error: 'busy', message: '当前回答仍在运行，请结束后再切换' };
-    const result = await restartSession(sessionId, { model: modelId });
-    if (!result || result.ok === false) return result || { ok: false, error: 'restart-failed', message: 'CodeAgent 没能用新模型重开' };
-    const currentModel = { id: modelId, displayName: models.modelLabel(modelId) };
-    // 新的明确选择：清掉「上次请求没生效」的记录，等下一条回答再核对实际模型。
-    const updated = sessionManager.updateSessionMeta(sessionId, { currentModel, codeagentRequestedModel: undefined });
-    if (updated) sendToRenderer('session-updated', { session: updated });
-    return { ok: true, model: currentModel };
+    if (codeagentPicker.isPicking(sessionId)) return { ok: false, error: 'busy', message: '正在切换模型，请稍候' };
+    const result = await codeagentPicker.schedulePick(sessionId, () => runCodeAgentPick(sessionId, modelId, 'switch'));
+    if (!result || !result.ok) return { ok: false, error: 'pick-failed', message: (result && result.message) || 'CodeAgent 没能切换模型' };
+    // 回执：菜单关掉了；看到「Set model to …」时 confirmed=true。下一条回答再核对实际模型。
+    return { ok: true, model: { id: modelId, displayName: models.modelLabel(modelId) }, mode: result.mode, confirmed: !!result.confirmed };
   });
   ipcMain.handle('codeagent:available', () => {
     try { return { installed: require('../../core/codeagent-config').isCodeAgentInstalled() }; }

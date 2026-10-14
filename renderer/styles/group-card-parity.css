@@ -30,7 +30,7 @@
 .mr-gc-messages .mr-gc-msg[data-journal-key] .mr-gc-bubble {
   padding:12px 16px; margin:0; border:1px solid var(--border-subtle); border-radius:18px;
   background:var(--surface-raised); box-shadow:0 2px 8px rgba(39,67,105,.035);
-  color:var(--fg-default); line-height:1.75; font-size:var(--card-content-font-size,15px);
+  color:var(--fg-default); line-height:1.75; font-size:calc(var(--card-content-font-size, 15px) * var(--main-zoom, 1));
 }
 .mr-gc-messages .mr-gc-msg.mine .mr-gc-bubble { background:var(--brand-tint); border-color:transparent; box-shadow:none; }
 .mr-gc-messages .mr-gc-msg .mr-gc-bubble::before,

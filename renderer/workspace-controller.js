@@ -1239,7 +1239,8 @@
   // AI_HUB_WORKSPACE_ROOT is visible before the session is created.
   function targetPathPreview() {
     if (workspaceMode === 'existing') return existingWorkspace ? existingWorkspace.path : '';
-    if (workspaceMode === 'default') return workspaceRoot || '默认工作目录';
+    // 工作根不能直接用（指定的根没挂 .aiwork-root）时主进程会退回建临时目录，这里照实显示。
+    if (workspaceMode === 'default' && (flatWorkRoot || !scratchRoot)) return workspaceRoot || '默认工作目录';
     return scratchRoot ? path.join(scratchRoot, 'inbox-…') : '新建临时 workspace';
   }
 

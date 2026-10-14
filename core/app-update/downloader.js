@@ -42,6 +42,9 @@ function reasonOf(error) {
 }
 
 const fail = reason => Object.assign(new Error(reason), { reason });
+// 收到的是代理的拦截网页：公司代理第一次访问某个网址时先出确认页，用户在浏览器里点「允许」后就放行
+// （2026-10-14 用户）。标上 blocked，界面据此给出网址让用户自己去放行。
+const blockedFail = reason => Object.assign(new Error(reason), { reason, blocked: true });
 
 // 带「连接超时」：拿到响应头之前最多等 CONNECT_TIMEOUT_MS。
 async function openResponse(fetchImpl, url, signal, timeoutMs) {
@@ -68,12 +71,12 @@ async function checkManifests({ sources, fetchImpl, validate, timeoutMs = MANIFE
       const { response } = await openResponse(fetchImpl, source.manifest, null, timeoutMs);
       if (!response.ok) throw fail(response.status === 404 ? '源上还没有版本清单（HTTP 404）' : `服务器返回 HTTP ${response.status}`);
       const text = await response.text();
-      if (looksLikeWebPage(response.headers && response.headers.get && response.headers.get('content-type'), Buffer.from(text.slice(0, 256)))) throw fail(`收到的是网页（${fmtBytes(Buffer.byteLength(text))}）而不是版本清单，可能被公司代理拦截`);
+      if (looksLikeWebPage(response.headers && response.headers.get && response.headers.get('content-type'), Buffer.from(text.slice(0, 256)))) throw blockedFail(`收到的是网页（${fmtBytes(Buffer.byteLength(text))}）而不是版本清单，可能被公司代理拦截`);
       let manifest;
       try { manifest = validate(JSON.parse(text)); } catch (error) { throw fail(`版本清单无效：${error.message}`); }
       return { id: source.id, name: source.name, ok: true, manifest, ms: Date.now() - startedAt };
     } catch (error) {
-      return { id: source.id, name: source.name, ok: false, reason: reasonOf(error), ms: Date.now() - startedAt };
+      return { id: source.id, name: source.name, ok: false, reason: reasonOf(error), blocked: !!error.blocked, url: source.manifest, ms: Date.now() - startedAt };
     }
   }));
   return results;
@@ -97,9 +100,8 @@ async function downloadOne({ source, url, expect, dest, fetchImpl, signal, onPro
     if (Number.isFinite(declared) && declared > 0 && declared !== expect.bytes && (declared < 64 * 1024 || looksLikeWebPage(contentType, null))) {
       // 不读完也知道不对：大小差得多且像网页，多半是代理返回的拦截页。顺手读一点内容判断。
       const text = Buffer.from(await response.arrayBuffer());
-      throw fail(looksLikeWebPage(contentType, text)
-        ? `收到 ${fmtBytes(text.length)} 的网页而不是更新包，可能被公司代理拦截`
-        : `文件大小不对：应为 ${fmtBytes(expect.bytes)}，服务器给的是 ${fmtBytes(declared)}`);
+      if (looksLikeWebPage(contentType, text)) throw blockedFail(`收到 ${fmtBytes(text.length)} 的网页而不是更新包，可能被公司代理拦截`);
+      throw fail(`文件大小不对：应为 ${fmtBytes(expect.bytes)}，服务器给的是 ${fmtBytes(declared)}`);
     }
     if (!response.body || typeof response.body.getReader !== 'function') throw fail('服务器没有返回文件内容');
     const reader = response.body.getReader();
@@ -135,7 +137,7 @@ async function downloadOne({ source, url, expect, dest, fetchImpl, signal, onPro
   }
   try {
     if (received !== expect.bytes) {
-      if (received < 64 * 1024 && looksLikeWebPage(contentType, head)) throw fail(`收到 ${fmtBytes(received)} 的网页而不是更新包，可能被公司代理拦截`);
+      if (received < 64 * 1024 && looksLikeWebPage(contentType, head)) throw blockedFail(`收到 ${fmtBytes(received)} 的网页而不是更新包，可能被公司代理拦截`);
       throw fail(`文件不完整：应为 ${fmtBytes(expect.bytes)}，只收到 ${fmtBytes(received)}`);
     }
     if (hash.digest('hex') !== expect.sha256) throw fail('文件校验不一致（内容在传输中被改动或源上的文件不对）');
@@ -163,7 +165,7 @@ async function downloadWithFallback({ sources, version, expect, dest, fetchImpl,
       onAttempt && onAttempt(attempts.map(a => ({ ...a })));
       return { ok: true, source: { id: source.id, name: source.name }, attempts };
     } catch (error) {
-      Object.assign(attempt, { status: signal && signal.aborted ? 'cancelled' : 'failed', reason: reasonOf(error), ms: Date.now() - attempt.startedAt });
+      Object.assign(attempt, { status: signal && signal.aborted ? 'cancelled' : 'failed', reason: reasonOf(error), blocked: !!error.blocked, ms: Date.now() - attempt.startedAt });
       onAttempt && onAttempt(attempts.map(a => ({ ...a })));
       if (signal && signal.aborted) break;
     }

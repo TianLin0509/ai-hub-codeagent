@@ -33,6 +33,11 @@
   .au-notes li { margin: 2px 0; }
   .au-section { font-size: 12px; font-weight: 600; color: var(--fg-muted, #6b7080); margin: 10px 0 6px; }
   .au-progress { height: 8px; border-radius: 99px; background: var(--surface-sunken, #eeedf4); overflow: hidden; }
+  .au-allow { margin: 10px 0 4px; padding: 10px 12px; border-radius: 10px; background: var(--surface-sunken, #f6f5fa); font-size: 12.5px; }
+  .au-allow b { display: block; font-size: 13px; margin-bottom: 4px; }
+  .au-allow ol { margin: 0 0 6px; padding-left: 18px; }
+  .au-allow-url { display: block; padding: 6px 8px; border-radius: 6px; background: var(--surface, #fff); font-family: Consolas, monospace; font-size: 12px; word-break: break-all; user-select: text; }
+  .au-allow-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 8px; }
   .au-progress i { display: block; height: 100%; width: 0; background: var(--brand, #8b5cf6); border-radius: 99px; transition: width .2s; }
   .au-progress-meta { display: flex; justify-content: space-between; font-size: 12px; color: var(--fg-muted, #6b7080); margin: 6px 0 10px; }
   .au-sources { list-style: none; margin: 0; padding: 0; border: 1px solid var(--border-subtle, #e3e1ea); border-radius: 10px; }
@@ -87,6 +92,26 @@
       + `<span class="au-st">${c.ok ? `可用，最新 v${esc(c.version)}` : `连不上：${esc(c.reason)}`}</span></li>`).join('');
   }
 
+  // 被公司代理拦截的源：给出网址，用户在浏览器里打开、点「允许」放行后回来重新检查（2026-10-14 用户：阿里云点一下允许就通）。
+  function blockedSources() {
+    const seen = new Map();
+    for (const row of [...(state.checks || []), ...(state.attempts || [])]) {
+      if (row && row.blocked && /^https?:\/\//i.test(String(row.url || ''))) seen.set(row.id, { name: row.name, url: row.url, file: !(state.checks || []).includes(row) });
+    }
+    return [...seen.values()];
+  }
+
+  function allowBox() {
+    const rows = blockedSources();
+    if (!rows.length) return '';
+    return rows.map(r => `<div class="au-allow" data-allow-source="${esc(r.name)}"><b>「${esc(r.name)}」被公司网络拦截了，可以手动放行</b>`
+      + `<ol><li>点「打开网页放行」，会用浏览器打开下面这个网址；</li><li>在打开的网页上点「允许」${r.file ? '（之后浏览器若开始下载文件，取消即可）' : ''}；</li><li>回到这里点「重新检查」。</li></ol>`
+      + `<code class="au-allow-url">${esc(r.url)}</code>`
+      + `<div class="au-allow-actions"><button class="au-btn" data-au="allow-open" data-url="${esc(r.url)}">打开网页放行</button>`
+      + `<button class="au-btn" data-au="allow-copy" data-url="${esc(r.url)}">复制网址</button>`
+      + `<button class="au-btn${state.phase === 'error' ? '' : ' primary'}" data-au="retry">重新检查</button></div></div>`).join('');
+  }
+
   function render() {
     if (!dialog || !state) return;
     const s = state, latest = s.latest, plan = s.plan;
@@ -99,11 +124,11 @@
       body += '<div class="au-msg info">正在向各个更新源查询最新版本…</div>';
       foot = '<button class="au-btn" data-au="close">关闭</button>';
     } else if (s.phase === 'none') {
-      body += `<div class="au-msg ok">已是最新版本 v${esc(s.current)}。</div><div class="au-section">更新源</div><ul class="au-sources">${checkRows()}</ul>`;
+      body += `<div class="au-msg ok">已是最新版本 v${esc(s.current)}。</div><div class="au-section">更新源</div><ul class="au-sources">${checkRows()}</ul>${allowBox()}`;
       foot = '<button class="au-btn" data-au="close">好的</button>';
     } else if (s.phase === 'available') {
       if (latest && latest.notes && latest.notes.length) body += `<div class="au-section">本次更新</div><ul class="au-notes">${latest.notes.map(n => `<li>${esc(n)}</li>`).join('')}</ul>`;
-      body += `<div class="au-section">更新源（按顺序尝试，失败自动换下一个）</div><ul class="au-sources">${(s.attempts && s.attempts.length) ? sourceRows() : checkRows()}</ul>`;
+      body += `<div class="au-section">更新源（按顺序尝试，失败自动换下一个）</div><ul class="au-sources">${(s.attempts && s.attempts.length) ? sourceRows() : checkRows()}</ul>${allowBox()}`;
       foot = '<button class="au-btn" data-au="close">稍后</button><button class="au-btn primary" data-au="download">下载更新</button>';
     } else if (s.phase === 'downloading') {
       const p = s.progress || {}, pct = p.total ? Math.min(100, p.received / p.total * 100) : 0;
@@ -123,6 +148,7 @@
       body += `<div class="au-msg bad">${esc(s.error || '更新失败')}</div>`;
       if (s.attempts && s.attempts.length) body += `<div class="au-section">各下载源的结果</div><ul class="au-sources">${sourceRows()}</ul>`;
       else if (s.checks && s.checks.length) body += `<div class="au-section">更新源</div><ul class="au-sources">${checkRows()}</ul>`;
+      body += allowBox();
       foot = `${s.releasePage ? '<button class="au-btn" data-au="manual">打开发布页手动下载</button>' : ''}<button class="au-btn" data-au="close">关闭</button><button class="au-btn primary" data-au="retry">重试</button>`;
     } else {
       body += '<div class="au-msg info">点「检查更新」查询最新版本。</div>';
@@ -159,6 +185,14 @@
       else if (action === 'cancel') await ipcRenderer.invoke('app-update:cancel');
       else if (action === 'apply') await ipcRenderer.invoke('app-update:apply');
       else if (action === 'manual' && state?.releasePage) shell.openExternal(state.releasePage);
+      else if (action === 'allow-open' || action === 'allow-copy') {
+        const button = event.target.closest('[data-au]');
+        const url = button.dataset.url || '';
+        // 只放行界面上列出的被拦截网址，不打开别的。
+        if (!blockedSources().some(r => r.url === url)) return;
+        if (action === 'allow-open') shell.openExternal(url);
+        else { require('electron').clipboard.writeText(url); button.textContent = '已复制'; }
+      }
     } catch (error) {
       state = { ...state, phase: 'error', error: error.message };
       render();
@@ -196,6 +230,24 @@
     if (item) {
       item.textContent = version ? `⬆️ 有新版本 v${version}` : '⬆️ 检查更新';
       item.classList.toggle('update-has-unread', unread);
+    }
+  }
+
+  // 左上角「内测先锋版」标签（2026-10-14 用户）：查到新版本时换成「有新版本 vX」加绿色呼吸圆点，点它打开更新窗。
+  // 下载中 / 已就绪由标题栏的进度小标签提示，标签恢复原样。
+  function renderBadge() {
+    const badge = document.getElementById('hub-edition-badge');
+    if (!badge) return;
+    const version = state && state.phase === 'available' ? pendingVersion() : '';
+    badge.classList.toggle('has-update', !!version);
+    badge.textContent = version ? `有新版本 v${version}` : (distribution.editionBadge || badge.textContent);
+    if (version) { badge.title = '点击查看并更新'; badge.setAttribute('role', 'button'); badge.tabIndex = 0; }
+    else { badge.removeAttribute('title'); badge.removeAttribute('role'); badge.removeAttribute('tabindex'); }
+    if (!badge.dataset.updateBound) {
+      badge.dataset.updateBound = '1';
+      const open = () => { if (!badge.classList.contains('has-update')) return; const v = pendingVersion(); if (v) { writeKey(SEEN_KEY, v); renderUnread(); } openDialog(); };
+      badge.addEventListener('click', open);
+      badge.addEventListener('keydown', event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); open(); } });
     }
   }
 
@@ -238,7 +290,7 @@
     menu.appendChild(item);
   }
 
-  const update = next => { state = next; render(); renderPill(); renderUnread(); maybePromptOnce(); };
+  const update = next => { state = next; render(); renderPill(); renderBadge(); renderUnread(); maybePromptOnce(); };
   ipcRenderer.on('app-update:state', (_e, next) => update(next));
   addMenuEntry();
   ipcRenderer.invoke('app-update:get-state').then(initial => {

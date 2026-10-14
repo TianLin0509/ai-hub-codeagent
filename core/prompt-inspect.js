@@ -25,6 +25,10 @@
 //       记忆检查与桶名塌缩检查对 kimi 无意义，buildHealth 已按 kind 跳过
 //
 // 记忆桶 = ~/.claude/projects/<slug(realpath(cwd))>/memory，slug 规则见 projectSlug()。
+//
+//   公司 Code Agent（Claude Code 的改版，见 discoverCodeAgentChain）
+//     - 配置目录 .claude → .cac（默认 ~/.cac），规则文件名 CLAUDE.md → AGENTS.md
+//     - 只有「cwd 里的 AGENTS.md 会读」经过真机实测，其余位置按 Claude Code 规则平移，标为推断
 
 const crypto = require('crypto');
 const fs = require('fs');
@@ -142,6 +146,62 @@ function discoverClaudeChain(cwd) {
     pushFile(path.join(dir, 'CLAUDE.local.md'), 'local');
   }
   return { realCwd: real, junctionResolved: path.resolve(real).toLowerCase() !== path.resolve(cwd).toLowerCase(), entries };
+}
+
+// ---------- CodeAgent 侧 ----------
+// 公司 Code Agent 是 Claude Code 的改版：配置目录 .claude → .cac（CODEAGENT3_CONFIG_DIR，默认 ~/.cac），
+// 项目里的配置目录也叫 .cac（信任框原文「load the contents of the .cac directory under the project」），
+// 规则文件名换成 AGENTS.md。
+// 2026-10-14 公司真机探测（CLI 1.2615.02.01，每处放不同暗号、两次模型调用、有无 git 结果相同）：
+//   会读：<配置目录>/AGENTS.md（用户级）、上层目录的 AGENTS.md、cwd 的 AGENTS.md（含 @文件 导入）、
+//         cwd 的 AGENTS.local.md、cwd 的 .cac/rules/*.md、自动记忆 <配置目录>/projects/<slug>/memory/MEMORY.md
+//         （slug 与 Claude 同一算法，实测吻合）；
+//   不读：任何 CLAUDE.md、.cac/AGENTS.md（cwd 和上层都不读）、记忆单条文件（只读索引，正文按需打开）。
+// 只有上层目录的 AGENTS.local.md 没测过，仍标 verified:false，界面上写「推断」。
+function defaultCodeAgentConfigDir() {
+  try { return require('./codeagent-config').resolveCodeAgentConfig(process.env).configDir; }
+  catch { return path.join(homeDir(), '.cac'); }
+}
+
+function discoverCodeAgentChain(cwd, configDir = defaultCodeAgentConfigDir()) {
+  const real = realPath(cwd);
+  const cwdKey = path.resolve(real).toLowerCase();
+  const entries = [];
+  const seen = new Set();
+  const pushFile = (file, source, verified, label) => {
+    const key = path.resolve(file).toLowerCase();
+    if (seen.has(key)) return;
+    const bytes = statSize(file);
+    if (bytes < 0) return;
+    seen.add(key);
+    entries.push({ path: file, source, bytes, verified, label, imports: expandImports(readText(file), path.dirname(file)) });
+  };
+  pushFile(path.join(configDir, 'AGENTS.md'), 'user-global', true, 'AGENTS.md（用户级，所有目录生效）');
+  for (const dir of ancestorsOutsideIn(real)) {
+    const atCwd = path.resolve(dir).toLowerCase() === cwdKey;
+    // 面板上同名文件要能一眼分清是哪一层的。
+    const where = atCwd ? '工作目录' : `上层目录 ${path.basename(dir) || dir}`;
+    pushFile(path.join(dir, 'AGENTS.md'), 'project', true, `AGENTS.md（${where}）`);
+    pushFile(path.join(dir, 'AGENTS.local.md'), 'local', atCwd, `AGENTS.local.md（${where}）`);
+  }
+  const rulesDir = path.join(real, '.cac', 'rules');
+  let ruleNames = [];
+  try { ruleNames = fs.readdirSync(rulesDir).filter(n => n.toLowerCase().endsWith('.md')).sort(); } catch { ruleNames = []; }
+  for (const name of ruleNames) pushFile(path.join(rulesDir, name), 'rules', true, `.cac/rules/${name}（工作目录）`);
+  return { configDir, realCwd: real, entries };
+}
+
+function inspectCodeAgentMemory(cwd, configDir = defaultCodeAgentConfigDir()) {
+  const slug = projectSlug(realPath(cwd));
+  const memoryDir = path.join(configDir, 'projects', slug, 'memory');
+  const indexPath = path.join(memoryDir, 'MEMORY.md');
+  let files = 0;
+  try { files = fs.readdirSync(memoryDir).filter(n => n.toLowerCase().endsWith('.md')).length; } catch { files = 0; }
+  return { slug, memoryDir, indexPath, indexBytes: Math.max(0, statSize(indexPath)), files };
+}
+
+function isCodeAgentKind(kind) {
+  return /^codeagent(?:-resume)?$/.test(String(kind || ''));
 }
 
 // Claude 的项目规则只写在 CLAUDE.md / CLAUDE.local.md 里时，Codex / Kimi 从不读取。
@@ -442,6 +502,19 @@ function buildHealth(insp) {
     // 与桶名塌缩检查对 kimi 都是假警告，按 kind 跳过。
   }
 
+  if (isCodeAgentKind(insp.kind) && insp.codeagent) {
+    const ca = insp.codeagent;
+    const verified = ca.entries.filter(e => e.verified).length;
+    push(ca.entries.length ? 'ok' : 'warn', `AGENTS.md ${ca.entries.length} 份`,
+      ca.entries.length
+        ? `共 ${ca.entries.reduce((s, e) => s + e.bytes, 0)} 字节，其中 ${verified} 份的位置经公司电脑实测会读`
+          + (verified < ca.entries.length ? '，其余为推断。' : '。') + 'CodeAgent 不读 CLAUDE.md 和 .cac/AGENTS.md。'
+        : '工作目录和上层目录都没有 AGENTS.md，用户级 ' + path.join(ca.configDir, 'AGENTS.md') + ' 也没有。');
+    const mem = insp.codeagentMemory;
+    if (mem && mem.indexBytes > 0) push('ok', `自动记忆 ${mem.files} 条`, `索引 ${mem.indexBytes} 字节：${mem.indexPath}。会话开头只带索引，单条记忆按需打开。`);
+    else push('warn', '这个目录还没有自动记忆', `按推断的位置 ${mem ? mem.indexPath : ''} 没有找到 MEMORY.md。记忆按工作目录分开存，每次换新目录都从空记忆开始。`);
+  }
+
   // 记忆桶是 Claude Code 独有机制；DeepSeek 已迁移到 Codex runtime。
   // 2026-07-29 三方审查：原守卫写的是 `kind !== 'kimi'`，只挡住了 kimi，**codex 照跑**——
   // 而 buildInspection 给 codex 传的 configDirName 是 '.claude'，于是 Codex 会话的面板上
@@ -483,17 +556,24 @@ function buildInspection(opts = {}) {
   const slugCollapsed = /--{2,}|-{3,}/.test(memory.slug);
 
   const insp = { cwd, kind, claude, codex, kimi, orphanAgents, memory, slugCollapsed };
+  if (isCodeAgentKind(kind)) {
+    const configDir = opts.codeagentConfigDir || defaultCodeAgentConfigDir();
+    insp.codeagent = discoverCodeAgentChain(cwd, configDir);
+    insp.codeagentMemory = inspectCodeAgentMemory(cwd, configDir);
+  }
   insp.health = buildHealth(insp);
 
-  const ruleBytes = usesCodexRules(kind)
+  const ruleBytes = insp.codeagent
+    ? insp.codeagent.entries.reduce((s, e) => s + e.bytes, 0)
+    : usesCodexRules(kind)
     ? codex.entries.reduce((s, e) => s + e.bytes, 0)
     : kind === 'kimi'
       ? kimi.entries.reduce((s, e) => s + e.bytes, 0)
       : claude.entries.reduce((s, e) => s + e.bytes, 0);
   insp.totals = {
     ruleBytes,
-    memoryIndexBytes: usesClaudeMemory(kind) ? memory.indexBytes : 0,
-    memoryFiles: usesClaudeMemory(kind) ? memory.files : 0,
+    memoryIndexBytes: usesClaudeMemory(kind) ? memory.indexBytes : insp.codeagentMemory ? insp.codeagentMemory.indexBytes : 0,
+    memoryFiles: usesClaudeMemory(kind) ? memory.files : insp.codeagentMemory ? insp.codeagentMemory.files : 0,
     // 粗估：混合中英按 3.2 字节/token，仅用于量级参考
     approxRuleTokens: Math.round(ruleBytes / 3.2),
   };
@@ -597,6 +677,17 @@ function collectRawSources(insp) {
       bytes: e.bytes, exists: true, injected: (insp && insp.kind) === 'kimi',
     });
   });
+  const codeagent = (insp && insp.codeagent) || null;
+  if (codeagent) {
+    codeagent.entries.forEach((e, i) => out.push({
+      id: `codeagent:${i}`, group: 'codeagent', kind: 'agents-md',
+      path: e.path, label: path.basename(e.path), source: e.source,
+      bytes: e.bytes, exists: true, injected: true, verified: e.verified,
+    }));
+    const cm = insp.codeagentMemory;
+    if (cm) out.push({ id: 'codeagent:memory', group: 'memory', kind: 'memory-index', path: cm.indexPath, label: 'MEMORY.md',
+      source: 'memory', bytes: cm.indexBytes, exists: statSize(cm.indexPath) >= 0, injected: cm.indexBytes > 0, verified: true });
+  }
   const mem = (insp && insp.memory) || {};
   if (claudeMemoryApplies && mem.indexPath) {
     const size = statSize(mem.indexPath);
@@ -700,7 +791,20 @@ function buildAssembly(insp, opts = {}) {
   const maxTotal = Math.max(1, Number(opts.maxTotalBytes) || ASM_MAX_TOTAL_BYTES);
 
   const picked = [];
-  if (isCodex) {
+  const codeagent = (insp && insp.codeagent) || null;
+  if (codeagent) {
+    codeagent.entries.forEach((e, i) => {
+      picked.push({ id: `codeagent:${i}`, path: e.path, label: e.label || path.basename(e.path), role: e.source,
+        orderTruth: 'measured', evidence: e.verified ? 'verified' : 'inferred' });
+      (e.imports || []).forEach((im, j) => {
+        if (im.effective) picked.push({ id: `codeagent-import:${i}:${j}`, path: im.resolved, label: `@${im.spec}`,
+          role: 'import', parent: e.path, orderTruth: 'approx', evidence: e.verified ? 'verified' : 'inferred' });
+      });
+    });
+    const cm = insp.codeagentMemory;
+    if (cm && cm.indexBytes > 0) picked.push({ id: 'codeagent:memory', path: cm.indexPath, label: 'MEMORY.md（自动记忆）',
+      role: 'memory-index', orderTruth: 'approx', evidence: 'verified' });
+  } else if (isCodex) {
     (((insp && insp.codex) || {}).entries || []).forEach((e, i) => picked.push({
       id: `codex:${i}`, path: e.path, label: path.basename(e.path), role: e.source, orderTruth: 'measured',
     }));
@@ -721,7 +825,7 @@ function buildAssembly(insp, opts = {}) {
     });
   }
   const mem = (insp && insp.memory) || {};
-  if (claudeMemoryApplies && mem.indexPath && statSize(mem.indexPath) > 0) {
+  if (!codeagent && claudeMemoryApplies && mem.indexPath && statSize(mem.indexPath) > 0) {
     picked.push({ id: 'memory:index', path: mem.indexPath, label: 'MEMORY.md', role: 'memory-index', orderTruth: 'approx' });
   }
 
@@ -790,7 +894,7 @@ function buildAssembly(insp, opts = {}) {
 
   const complete = segments.every(s => s.missing || (!s.textTruncated && !s.textOmitted));
   return {
-    kind: isCodex ? asmKind : isKimi ? 'kimi' : 'claude',
+    kind: codeagent ? 'codeagent' : isCodex ? asmKind : isKimi ? 'kimi' : 'claude',
     cwd: (insp && insp.cwd) || null,
     segments,
     segmentCount: segments.filter(s => !s.missing && !s.duplicateOf).length,
@@ -810,6 +914,8 @@ module.exports = {
   discoverClaudeChain,
   discoverCodexChain,
   discoverKimiChain,
+  discoverCodeAgentChain,
+  inspectCodeAgentMemory,
   findOrphanAgentsMd,
   findUnmirroredClaudeRules,
   readCodexRootMarkers,

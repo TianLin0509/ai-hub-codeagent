@@ -1141,6 +1141,8 @@ function scheduleSessionListRender() {
     try { ipcRenderer.send('hub:page-window-event', { event, view: typeof currentView === 'string' ? currentView : null, sessions: typeof sessions !== 'undefined' ? sessions.size : null, ...extra }); } catch {}
   };
   document.addEventListener('visibilitychange', () => report('visibility', { state: document.visibilityState }));
+  // 心跳：主进程据此判断界面线程是不是卡住了，卡住就记下正在跑的代码（core/renderer-crash-recovery.js）。
+  setInterval(() => { try { ipcRenderer.send('hub:renderer-heartbeat', document.visibilityState); } catch {} }, 1000);
   let pendingSince = 0;
   let stalled = false;
   setInterval(() => {
@@ -9785,6 +9787,9 @@ sessionImmersive = require('./session-immersive').createSessionImmersiveControll
   traceRendererStartup('renderSessionList done');
   ipcRenderer.send('renderer-sidebar-ready');
   traceRendererStartup('renderer-sidebar-ready sent');
+  // 界面进程崩溃后由主进程自动重新载入（core/renderer-crash-recovery.js），告诉用户刚才发生了什么。
+  const recoveredFrom = new URLSearchParams(location.search).get('recovered');
+  if (recoveredFrom) showToast(recoveredFrom === 'stall' ? '界面卡住太久没有响应，已自动重新载入；在跑的会话不受影响' : '界面刚才崩溃，已自动重新载入；在跑的会话不受影响', 'info');
 
   ipcRenderer.invoke('get-hub-config-raw').then((cfg) => {
     if (!cfg) return;

@@ -154,6 +154,56 @@ function assertNoClaudeLogin(dir) {
   }
 }
 
+// DeepSeek 会话固定走 bypass，不进 auto 模式（2026-10-13/14 两次实测出事）：
+//   - 2.1.296：独立目录没有 permissions.defaultMode，会话落进 auto，每次工具调用多一次分类器请求（走 Token Plan 计费）；
+//   - 2.1.299：每个新会话弹「Make auto mode your default permission mode?」，光标默认在 Yes，
+//     任何一次回车都会把 defaultMode 改成 auto；主 Claude 的状态里已答过（hasSeenAutoDefaultNudge），独立目录没有。
+// disableAutoMode 从源头关掉 auto（分类器、Shift+Tab 进 auto、改默认的询问都没有）；nudge 标记是第二道保险。
+// 两个文件都只在能解析时改、值已对就不写、tmp + rename 原子写；不凭空创建 .claude.json。
+function ensurePermissionDefaults(dir, { fsImpl = fs, logger = console } = {}) {
+  const { renameWithRetrySync } = require('./claude-project-trust.js');
+  const result = { settings: 'unchanged', state: 'unchanged' };
+  const update = (file, apply, { create = false } = {}) => {
+    const target = path.join(dir, file);
+    let raw = null;
+    try { raw = fsImpl.readFileSync(target, 'utf8'); } catch {}
+    if (raw === null && !create) return 'missing';
+    let data = {};
+    if (raw !== null) {
+      try { data = JSON.parse(raw.replace(/^﻿/, '')); } catch { return 'unparsable'; }
+      if (!data || typeof data !== 'object' || Array.isArray(data)) return 'unexpected';
+    }
+    if (!apply(data)) return 'unchanged';
+    const tmp = `${target}.hub-${process.pid}-${Date.now()}.tmp`;
+    fsImpl.mkdirSync(dir, { recursive: true });
+    try {
+      fsImpl.writeFileSync(tmp, JSON.stringify(data, null, 2) + '\n', 'utf8');
+      renameWithRetrySync(tmp, target, { fsImpl });
+    } finally {
+      try { if (fsImpl.existsSync(tmp)) fsImpl.unlinkSync(tmp); } catch {}
+    }
+    return 'written';
+  };
+  try {
+    result.settings = update('settings.json', settings => {
+      const permissions = settings.permissions && typeof settings.permissions === 'object' && !Array.isArray(settings.permissions)
+        ? settings.permissions : {};
+      if (permissions.defaultMode === 'bypassPermissions' && permissions.disableAutoMode === 'disable') return false;
+      settings.permissions = { ...permissions, defaultMode: 'bypassPermissions', disableAutoMode: 'disable' };
+      return true;
+    }, { create: true });
+    result.state = update('.claude.json', state => {
+      if (state.hasSeenAutoDefaultNudge === true) return false;
+      state.hasSeenAutoDefaultNudge = true;
+      return true;
+    });
+  } catch (error) {
+    logger.warn?.('[deepseek-claude] permission defaults not pinned:', error && error.message);
+    result.error = error && error.message;
+  }
+  return result;
+}
+
 const CLAUDE_MODEL_ENV_KEYS = Object.freeze([
   'ANTHROPIC_MODEL',
   'ANTHROPIC_DEFAULT_OPUS_MODEL',
@@ -212,5 +262,6 @@ module.exports = {
   configDir,
   claudeLoginEvidence,
   assertNoClaudeLogin,
+  ensurePermissionDefaults,
   applyLaunchEnv,
 };

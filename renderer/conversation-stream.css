@@ -7,7 +7,7 @@
 .msg-overlay .turn-card .turn-who { font-size: 13px; font-weight: 600; }
 .msg-overlay .turn-card .turn-meta { font-size: 11px; color: var(--conversation-muted); }
 .msg-overlay .turn-card .turn-avatar { width: 28px; height: 28px; flex-basis: 28px; }
-.msg-overlay .turn-card .turn-body { padding: 4px 0 8px; border: 0; border-radius: 0; background: transparent; box-shadow: none; line-height: 1.8; font-size: 15px; overflow-wrap: anywhere; }
+.msg-overlay .turn-card .turn-body { padding: 4px 0 8px; border: 0; border-radius: 0; background: transparent; box-shadow: none; line-height: 1.8; font-size: calc(var(--card-content-font-size, 15px) * var(--main-zoom, 1)); overflow-wrap: anywhere; }
 .msg-overlay .turn-card.user { flex-direction: row; margin-top: 24px; }
 .msg-overlay .turn-card.user > .turn-avatar,
 .mr-gc-messages .mr-gc-msg.mine > .mr-gc-avatar-user { display: none; }
@@ -47,7 +47,7 @@
 .mr-header-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .mr-header-right { flex-wrap: wrap; max-width: 100%; }
 .mr-header-secondary-actions { flex-wrap: wrap; }
-.conversation-entry { padding: 12px 0 16px; border-bottom: 1px solid rgba(137,154,180,.1); overflow-wrap: anywhere; font-size: 15px; }
+.conversation-entry { padding: 12px 0 16px; border-bottom: 1px solid rgba(137,154,180,.1); overflow-wrap: anywhere; font-size: calc(var(--card-content-font-size, 15px) * var(--main-zoom, 1)); }
 .conversation-entry + .conversation-entry { margin-top: 8px; }
 .conversation-entry-head { display: flex; align-items: center; gap: 12px; margin-bottom: 8px; color: var(--conversation-muted); font-size: 11px; }
 .conversation-message-copy { margin-left: auto; padding: 2px 6px; border: 0; background: transparent; color: var(--conversation-muted); font: inherit; cursor: pointer; }
@@ -78,7 +78,7 @@
   position: relative; padding: 5px 0; margin: 0; border: 0;
   width: 100%; max-width: 100%; box-sizing: border-box;
   border-bottom: 1px solid var(--border-subtle, rgba(137,154,180,.13));
-  font-size: var(--card-content-font-size, 15px); line-height: 1.55;
+  font-size: calc(var(--card-content-font-size, 15px) * var(--main-zoom, 1)); line-height: 1.55;
   background: transparent; border-radius: 0;
 }
 .conversation-progress-time {

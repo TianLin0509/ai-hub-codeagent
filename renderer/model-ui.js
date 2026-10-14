@@ -331,8 +331,8 @@ function createModelUiController({
       menu.appendChild(settings);
     } else if (strategy === 'acp-native') {
       menuNote(menu,'阿里云套餐模型 · 选择后由原生 Harness 确认，再更新显示。');
-    } else if (strategy === 'codeagent-restart') {
-      menuNote(menu, '本机 CodeAgent 可用的模型 · 选择后用新模型接着这个会话重开 CodeAgent（约 10 秒），对话记录保留；回答进行中不能切换。');
+    } else if (strategy === 'codeagent-picker') {
+      menuNote(menu, '本机 CodeAgent 可用的模型 · 选择后 Hub 在 CodeAgent 的 /model 菜单里替你选中，几秒内生效，对话不中断；回答进行中不能切换。');
     } else if (strategy === 'agy-inline') {
       menuNote(menu, '当前 Google 账号的 Antigravity 模型 · 在 CLI 内原地切换，收到“Model set to”回执后更新显示。');
     } else if (strategy === 'codex-picker') {
@@ -626,16 +626,16 @@ function createModelUiController({
     let commandScreen;
     try {
       commandScreen = await beginCommandScreen(sessionId, session);
-      if (strategy === 'codeagent-restart') {
+      if (strategy === 'codeagent-picker') {
         if (isSessionBusy(session)) throw new Error('当前回答仍在运行，请结束后再切换');
         const result = await ipcRenderer.invoke('codeagent:switch-model', { sessionId, modelId: option.id });
-        if (!result || result.ok !== true) throw new Error(result && result.message || 'CodeAgent 没能用新模型重开');
+        if (!result || result.ok !== true) throw new Error(result && result.message || 'CodeAgent 没能切换模型');
         const current = sessions.get(sessionId) || session;
         current.currentModel = { ...result.model };
         delete session._modelSwitchPending;
         delete current._modelSwitchPending;
         updateActiveModelChip();
-        renderModelPicker(menu, badgeEl, sessionId, { text: `✓ 已换成 ${result.model.displayName}：CodeAgent 已用新模型接着这个会话重开，对话记录都在`, state: 'success' });
+        renderModelPicker(menu, badgeEl, sessionId, { text: `✓ 已在 CodeAgent 里换成 ${result.model.displayName}，下一条回答起生效（回答后会核对实际模型）`, state: 'success' });
         await sleep(900);
         if (openModelPicker && openModelPicker.el === menu) closeModelPicker();
         return { ok: true, model: current.currentModel };

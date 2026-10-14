@@ -18,7 +18,8 @@ const { AssistantBridge } = require('../../core/hub-assistant/bridge');
 const PURPOSE = 'hub-orchestrator';
 const MCP_NAME = 'hub_orchestrator';
 const TOOL_NAMES = ['orch_status', 'orch_propose_plan', 'orch_start_workflow', 'orch_control_workflow', 'orch_ask_member', 'orch_restart_member', 'orch_grant_budget', 'orch_report'];
-const MEMBER_KINDS = ['claude', 'codex'];
+// CodeAgent 与 Claude 同走 --mcp-config（2026-10-14 公司版加入）；工具按 Hub 会话号认人，不依赖 --session-id。
+const MEMBER_KINDS = ['claude', 'codex', 'codeagent'];
 const TICK_MS = 3000;
 const SAVE_TIME_EVERY_MS = 30000;
 const QUIET_AFTER_USER_MS = 5000;
@@ -31,8 +32,12 @@ function createOrchestrationService(deps) {
     meetingManager, sessionManager, getHubDataDir, getDispatcher, getDeliveryEngine,
     ensureMemberReady = async () => {}, restartSession = null,
     getMembers = m => getDispatcher().groupMembersForMeeting(m, { includeDormant: true }),
-    sendToRenderer = () => {}, logger = console, now = () => Date.now(), nodeExecutable = 'node',
+    sendToRenderer = () => {}, logger = console, now = () => Date.now(),
+    // 工具进程用 Hub 自己的程序当 Node 跑（同群聊投研工具）：安装版的脚本在 app.asar 里，单独的 node 读不了，
+    // 公司电脑也不一定装了 Node（2026-10-14 公司版编排员工具一启动就断开）。
+    nodeExecutable = process.versions.electron ? process.execPath : 'node',
   } = deps;
+  const runAsNode = !!process.versions.electron && nodeExecutable === process.execPath ? { ELECTRON_RUN_AS_NODE: '1' } : {};
   const ledgers = new Map();
   const inflight = new Map();          // meetingId → { ids, at }
   const lastUserAt = new Map();
@@ -127,14 +132,14 @@ function createOrchestrationService(deps) {
   function mcpEntry(sessionId) {
     return {
       name: MCP_NAME, command: nodeExecutable, args: [path.resolve(__dirname, '../../scripts/orchestrator-mcp.js')],
-      env: { HUB_ORCH_ENDPOINT_FILE: endpointFile, HUB_ORCH_SESSION_ID: sessionId },
+      env: { ...runAsNode, HUB_ORCH_ENDPOINT_FILE: endpointFile, HUB_ORCH_SESSION_ID: sessionId },
       toolApprovalModes: Object.fromEntries(TOOL_NAMES.map(name => [name, 'approve'])),
       toolOutputTokenLimits: { orch_status: 20000 },
     };
   }
   function launchOptions(kind, sessionId = randomUUID()) {
     const base = String(kind || '').replace(/-resume$/, '');
-    if (!MEMBER_KINDS.includes(base)) throw new Error('编排员目前支持 Claude 或 Codex');
+    if (!MEMBER_KINDS.includes(base)) throw new Error('编排员目前支持 Claude、Codex 或 CodeAgent');
     const entry = mcpEntry(sessionId);
     if (base === 'codex') return { id: sessionId, purpose: PURPOSE, mcpProfile: 'lean', codexMcpEntries: [entry] };
     const dir = path.join(dataDir(), 'orchestration');
