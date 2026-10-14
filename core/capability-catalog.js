@@ -31,7 +31,10 @@ function tomlFlags(text) {
   return out;
 }
 
-function collectCapabilities({ homeDir, dataDir, projects = [] }) {
+// CodeAgent 插件清单所在的目录名没在真机上见过：Claude 的写法优先，再试改名后的两种。
+const CODEAGENT_PLUGIN_FOLDERS = ['.claude-plugin', '.cac-plugin', '.codeagent-plugin'];
+
+function collectCapabilities({ homeDir, dataDir, projects = [], codeagentConfigDir = null }) {
   const rows = new Map(), warnings = [], scanned = new Set();
   const warn = (file, e) => { if (!['ENOENT', 'ENOTDIR'].includes(e.code)) warnings.push(`${file}：${e.message}`); };
   const text = file => { try { if (fs.statSync(file).size > 2 * 1024 * 1024) throw Error('文件超过 2 MB，未读取'); return fs.readFileSync(file, 'utf8').replace(/^\uFEFF/, ''); } catch (e) { warn(file, e); return null; } };
@@ -43,7 +46,7 @@ function collectCapabilities({ homeDir, dataDir, projects = [] }) {
     name = name.slice(0, 250);
     const id = `${type}:${name}`;
     const row = rows.get(id) || { id, type, name, description: String(description || '').slice(0, 2000), sources: [] };
-    if ((!row.description || /^(Codex|Claude) 插件$/.test(row.description)) && description) row.description = String(description).slice(0, 2000);
+    if ((!row.description || /^(Codex|Claude|CodeAgent) 插件$/.test(row.description)) && description) row.description = String(description).slice(0, 2000);
     if (!row.sources.some(s => s.path === source.path && s.agent === source.agent && s.scope === source.scope)) row.sources.push(source);
     rows.set(id, row);
   }
@@ -84,7 +87,8 @@ function collectCapabilities({ homeDir, dataDir, projects = [] }) {
     return d;
   }
   function pluginContents(root, name, agent, enabled) {
-    const file=path.join(root,agent==='claude'?'.claude-plugin':'.codex-plugin','plugin.json');
+    const folders=agent==='claude'?['.claude-plugin']:agent==='codeagent'?CODEAGENT_PLUGIN_FOLDERS:['.codex-plugin'];
+    const file=folders.map(f=>path.join(root,f,'plugin.json')).find(f=>fs.existsSync(f)) || path.join(root,folders[0],'plugin.json');
     const manifest=json(file), extra={plugin:name,enabled};
     const inside=p=>{const rel=path.relative(real(root),real(p));return !rel.startsWith('..')&&!path.isAbsolute(rel);};
     const locations=(v,fallback)=>[...new Set([...(fallback?[fallback]:[]),...(Array.isArray(v)?v:typeof v==='string'?[v]:[])])]
@@ -168,18 +172,69 @@ function collectCapabilities({ homeDir, dataDir, projects = [] }) {
       add('plugin',name,manifest.description,{agent:'claude',scope:'user',path:entry.installPath,enabled:enabled[name]===true,version:entry.version});
     }
   }
+  // CodeAgent（公司版唯一的 AI，Claude Code 的改版）：配置目录 .cac。位置来自 2026-10-13 公司真机探测：
+  //   技能 <配置目录>/skills；MCP 在 <配置目录>/.cac.json 顶层 mcpServers（项目级在 projects[cwd].mcpServers，
+  //   另认项目里的 .mcp.json）；插件开关在 settings.json 的 enabledPlugins（"<插件>@aimarket": true），
+  //   下载在 <配置目录>/plugins。插件目录的内部结构没见过，按 Claude 的写法找，找不到也照样列出开关。
+  const caDir = codeagentConfigDir || home('.cac');
+  const caJsonFile = path.join(caDir,'.cac.json');
+  const ca = fs.existsSync(caDir) ? json(caJsonFile) : {};
+  if (fs.existsSync(caDir)) {
+    scanSkills(path.join(caDir,'skills'),['codeagent'],'user');
+    // 从 AI Marketplace 装的技能可能再套一层（<市场>/<技能>/SKILL.md）。
+    for (const entry of entries(path.join(caDir,'skills'))) {
+      const dir=path.join(caDir,'skills',entry.name);
+      if ((entry.isDirectory() || entry.isSymbolicLink()) && !fs.existsSync(path.join(dir,'SKILL.md'))) scanSkills(dir,['codeagent'],'user');
+    }
+    mcpEntries({mcpServers:ca.mcpServers || {}},caJsonFile,'codeagent','user');
+    codeagentPlugins(caDir);
+  }
+  function codeagentPlugins(dir) {
+    const settingsFile=path.join(dir,'settings.json'), settings=json(settingsFile);
+    const enabled=settings.enabledPlugins && typeof settings.enabledPlugins==='object' && !Array.isArray(settings.enabledPlugins) ? settings.enabledPlugins : {};
+    const installed=json(path.join(dir,'plugins','installed_plugins.json')).plugins || {};
+    const looksLikePlugin=p=>CODEAGENT_PLUGIN_FOLDERS.some(f=>fs.existsSync(path.join(p,f,'plugin.json'))) || fs.existsSync(path.join(p,'skills')) || fs.existsSync(path.join(p,'.mcp.json'));
+    const locate=name=>{
+      const at=name.lastIndexOf('@');
+      if(at<=0)return null;
+      const plugin=name.slice(0,at), market=name.slice(at+1);
+      for(const base of [path.join(dir,'plugins','cache',market,plugin),path.join(dir,'plugins',market,plugin)]) {
+        if(!fs.existsSync(base))continue;
+        if(looksLikePlugin(base))return {root:base,version:null};
+        const versions=entries(base).filter(e=>e.isDirectory()).sort((a,b)=>b.name.localeCompare(a.name,undefined,{numeric:true}));
+        const hit=versions.find(v=>looksLikePlugin(path.join(base,v.name))) || versions[0];
+        if(hit)return {root:path.join(base,hit.name),version:hit.name};
+      }
+      return null;
+    };
+    for (const name of new Set([...Object.keys(enabled),...Object.keys(installed)])) {
+      const installs=Array.isArray(installed[name]) ? installed[name] : [];
+      const entry=installs.find(s=>s.scope==='user') || installs[0];
+      const recorded=typeof entry?.installPath==='string' ? entry.installPath : null;
+      const found=recorded && fs.existsSync(recorded) ? {root:recorded,version:entry.version || null} : locate(name);
+      const on=enabled[name]===true;
+      // 只有安装记录写了路径、路径却不在时才算「安装待核对」；没找到下载目录不代表没装（目录结构是推断的）。
+      const source={agent:'codeagent',scope:'user',path:found?.root || settingsFile,enabled:on,missing:!!recorded && !found,version:found?.version || null};
+      const manifest=found ? pluginContents(found.root,name,'codeagent',on) : {};
+      add('plugin',name,manifest.description || 'CodeAgent 插件',source);
+    }
+  }
   // Scope discovery to open sessions supplied by Main, never crawl the home/workspace.
   for (const project of projects) {
     const {cwd,kind,profileHome} = project;
     if (!cwd || !ALL_AI_KINDS.includes(kind)) continue;
     const scope = `project:${cwd}`;
-    const own = {claude:'.claude',codex:'.agents',deepseek:'.agents',kimi:'.kimi-code',gemini:'.agents',qwen:'.qwen'}[kind];
+    const own = {claude:'.claude',codex:'.agents',deepseek:'.agents',kimi:'.kimi-code',gemini:'.agents',qwen:'.qwen',codeagent:'.cac'}[kind];
     if (own) scanSkills(path.join(cwd,own,'skills'),[kind],scope);
     if (sharedAgents.includes(kind)) scanSkills(path.join(cwd,'.agents','skills'),[kind],scope);
     if (kind==='claude') {
       jsonMcp(path.join(cwd,'.mcp.json'),kind,scope);
       const p = Object.entries(claude.projects || {}).find(([p])=>path.resolve(p).toLowerCase()===path.resolve(cwd).toLowerCase())?.[1];
       for (const [name,c] of Object.entries(p?.mcpServers || {})) add('mcp',name,'项目 MCP 服务器',{agent:kind,scope,path:home('.claude.json'),enabled:c.disabled!==true});
+    } else if (kind==='codeagent') {
+      jsonMcp(path.join(cwd,'.mcp.json'),kind,scope);
+      const p = Object.entries(ca.projects || {}).find(([p])=>path.resolve(p).toLowerCase()===path.resolve(cwd).toLowerCase())?.[1];
+      for (const [name,c] of Object.entries(p?.mcpServers || {})) add('mcp',name,'项目 MCP 服务器',{agent:kind,scope,path:caJsonFile,enabled:!!c && c.disabled!==true});
     } else if (kind==='kimi') jsonMcp(path.join(cwd,'.kimi-code','mcp.json'),kind,scope);
     else if (kind==='gemini') jsonMcp(path.join(cwd,own,'mcp_config.json'),kind,scope);
     else if (kind==='qwen') jsonMcp(path.join(cwd,own,'settings.json'),kind,scope);

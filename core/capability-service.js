@@ -11,6 +11,16 @@ class CapabilityService {
     Object.assign(this,{sessionManager,dataDir,homeDir});
     this.cache=null; this.pending=null; this.catalogGeneration=0;
   }
+  // CodeAgent 的配置目录跟启动 CLI 用的同一个（CODEAGENT3_CONFIG_DIR 或 Hub 设置，默认 ~/.cac）。
+  // 没有另外指定时跟着本服务的 home 走（隔离实例和测试用 CLAUDE_HUB_HOME_DIR，不读真实 ~/.cac）。
+  codeagentConfigDir() {
+    const fallback=path.join(this.homeDir,'.cac');
+    try {
+      const env=process.env, dir=require('./codeagent-config').resolveCodeAgentConfig(env).configDir;
+      const implicit=path.join(env.USERPROFILE || env.HOME || os.homedir(),'.cac');
+      return path.resolve(dir).toLowerCase()===path.resolve(implicit).toLowerCase() ? fallback : dir;
+    } catch { return fallback; }
+  }
   sessions() {
     return this.sessionManager.getAllSessions().map(s=>({id:s.id,title:s.title || s.name || s.id,kind:s.kind,
       backend:s.runtimeBackend || 'pty',profile:s.mcpProfile || '未记录',cwd:s.cwd}));
@@ -59,7 +69,7 @@ class CapabilityService {
     this.pendingKey=key;
     const generation=this.catalogGeneration;this.pendingGeneration=generation;
     this.pending=new Promise((resolve,reject)=>{
-      const worker=new Worker(path.join(__dirname,'capability-catalog.js'),{workerData:{homeDir:this.homeDir,dataDir:this.dataDir,projects}});
+      const worker=new Worker(path.join(__dirname,'capability-catalog.js'),{workerData:{homeDir:this.homeDir,dataDir:this.dataDir,projects,codeagentConfigDir:this.codeagentConfigDir()}});
       const timer=setTimeout(()=>{void worker.terminate();reject(Error('能力目录扫描超时，请刷新重试'));},15000);
       let settled=false;
       const done=(err,data)=>{if(settled)return;settled=true;clearTimeout(timer);err?reject(err):resolve(data);};

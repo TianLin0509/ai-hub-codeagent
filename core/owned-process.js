@@ -36,7 +36,9 @@ function startedAt(pid) {
   const birth = probeStartedAt(pid);
   // 探测失败（NaN / 抛错）不进缓存：把一次失败记住只会让后面的判断跟着错。
   if (Number.isFinite(birth) && birth > 0) {
-    births.set(pid, { birth, at: now });
+    // 按探测完成的时刻计有效期：电脑忙时一次探测本身就可能超过 3 秒（合并闸门实测 3.9 秒），
+    // 按开始时刻记的话存进去就已过期，下一次照样要再 spawn 一次。
+    births.set(pid, { birth, at: Date.now() });
     if (births.size > 64) {
       for (const [key, value] of births) if (now - value.at >= BIRTH_TTL_MS) births.delete(key);
       // 3 秒内问过 64 个不同 PID 只可能是哪里出了别的问题；宁可丢掉缓存重新探，

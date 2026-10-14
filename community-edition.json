@@ -32,17 +32,12 @@
     "releasePage": "https://github.com/TianLin0509/ai-hub-codeagent/releases"
   },
   "releaseNotes": [
-    "界面崩溃或卡死会自己恢复：界面进程崩溃约 1 秒后自动重新载入，卡住 30 秒没有响应时自动重启界面，在跑的会话都不受影响；出事时的内存和正在运行的代码记在数据目录 logs\\window-events.log，反馈问题时一并带上",
-    "选的模型真正生效：启动时选的模型、会话中途在输入框下方换模型，Hub 都会在 CodeAgent 自己的 /model 菜单里替你选中，对话不中断，也不改动 CodeAgent 的默认模型",
-    "选「默认工作目录」真正在 Workspaces 里打开，不再落进随机临时目录；同一目录里的会话共享 CodeAgent 的自动记忆",
-    "「发送内容」列出 CodeAgent 在会话开头读到的规则（各级 AGENTS.md、AGENTS.local.md、.cac\\rules）和自动记忆 MEMORY.md；CodeAgent 已经自己读到的工作区规则，Hub 不再随消息重复附带",
-    "CodeAgent 可以加入群聊、从会话新建群聊，也可以当编排员",
-    "桌面一键收纳：按文档、表格、图片、安装包等类型自动归档，可选保留快捷方式；修好「图标排列」在公司电脑上报错",
-    "发现新版本时，左上角的「内测先锋版」变成绿色的「有新版本 vX」，点一下就能更新；公司代理拦截更新源时，更新窗口会给出放行网址和「打开网页放行」按钮",
-    "按住 Ctrl 滚动鼠标滚轮时，卡片正文真正跟着变大变小（上一版只有提示在变）"
+    "刚装好时不和你抢电脑：「昨日之我」第一次把电脑上的历史记录全部读一遍建索引，改为在键盘鼠标闲置 3 分钟后再开始；你自己打开「昨日之我」搜索时仍然立即开始",
+    "建索引的进度和完成时间记进数据目录 logs\\window-events.log，界面再卡顿时能直接看出当时是不是在建索引，反馈问题时请一并带上",
+    "资源页能看到 CodeAgent 的技能、MCP 服务和插件（上一版显示 0 个）"
   ],
-  "version": "1.0.4",
-  "upstreamVersion": "1.6.482",
-  "upstreamCommit": "3209781f1c60ec7e8e82cb80b126b39cea50b28d",
+  "version": "1.0.5",
+  "upstreamVersion": "1.6.485",
+  "upstreamCommit": "fb91c82744da74886e9b1f1250f49384e8483890",
   "upstreamDirty": false
 }

@@ -63,6 +63,30 @@ class SessionSearchService {
       index: { sessions: 0, documents: 0, terms: 0, providers: {}, storage: 'sqlite-child-process' },
     };
     this._stats = { submitted: 0, completed: 0, workerRestarts: 0, failures: 0 };
+    // 2026-10-14：公司新装电脑「先卡后黑屏」都出在刚装好的头几个小时，第一次全量建索引是当时唯一的
+    // 大块后台活。主进程在第一次建好之前把后台同步（会话说完一轮、记录文件变化触发的那些）先压住，
+    // 等电脑空闲再放开（releaseBackground）；用户自己打开昨日之我搜索仍然立即开始。
+    this._backgroundHeld = options.holdBackground === true && this._prewarmEnabled;
+    // 索引没建好期间阶段变化、以及第一次建好时回调一次，主进程写进 window-events.log，
+    // 出事时能直接对上当时是不是正在建索引。
+    this._onStatusChange = typeof options.onStatusChange === 'function' ? options.onStatusChange : null;
+  }
+
+  _setStatus(next) {
+    const prev = this._status;
+    this._status = next;
+    if (!this._onStatusChange) return;
+    const progressed = prev.ready !== next.ready || (!next.ready && (prev.phase !== next.phase || !!prev.refreshing !== !!next.refreshing));
+    if (!progressed) return;
+    try { this._onStatusChange(next, prev); } catch {}
+  }
+
+  get backgroundHeld() { return this._backgroundHeld; }
+
+  releaseBackground() {
+    if (!this._backgroundHeld) return;
+    this._backgroundHeld = false;
+    if (!this._closed && this._queuedSnapshot && !this._queueTimer && !this._maintenanceBusy) this._scheduleQueueFlush(400);
   }
 
   _armRequestTimeout(id, pending) {
@@ -127,12 +151,12 @@ class SessionSearchService {
 
   _handleMessage(message) {
     if (message && message.type === 'status') {
-      this._status = { ...this._status, ...(message.status || {}) };
+      this._setStatus({ ...this._status, ...(message.status || {}) });
       this._touchPendingRequests();
       return;
     }
     if (message && message.type === 'fatal') {
-      this._status = { ...this._status, refreshing: false, lastError: message.error || '搜索子进程异常退出' };
+      this._setStatus({ ...this._status, refreshing: false, lastError: message.error || '搜索子进程异常退出' });
       return;
     }
     const pending = message && this._pending.get(message.id);
@@ -145,9 +169,9 @@ class SessionSearchService {
     }
     this._stats.completed += 1;
     if (message.result && (pending.type === 'status' || pending.type === 'refresh')) {
-      this._status = { ...this._status, ...message.result };
+      this._setStatus({ ...this._status, ...message.result });
     } else if (pending.type === 'search' && message.result && message.result.status) {
-      this._status = { ...this._status, ...message.result.status };
+      this._setStatus({ ...this._status, ...message.result.status });
     }
     pending.resolve(message.result);
   }
@@ -161,7 +185,7 @@ class SessionSearchService {
     }
     this._child = null;
     this._stats.failures += 1;
-    this._status = { ...this._status, ready: false, refreshing: false, phase: 'child_error', lastError: error.message };
+    this._setStatus({ ...this._status, ready: false, refreshing: false, phase: 'child_error', lastError: error.message });
     for (const pending of this._pending.values()) {
       clearTimeout(pending.timer);
       pending.reject(error);
@@ -212,7 +236,7 @@ class SessionSearchService {
     if(this._closed) return;
     this._queuedSnapshot = snapshot;
     this._queuedSources.add(String(source || 'reconcile'));
-    if(this._queueTimer || this._maintenanceBusy) return;
+    if(this._backgroundHeld || this._queueTimer || this._maintenanceBusy) return;
     this._scheduleQueueFlush(400);
   }
 
@@ -234,12 +258,12 @@ class SessionSearchService {
       retry=status?.phase==='waiting_writer';
     } catch(error) {
       retry=true;
-      this._status={...this._status,phase:this._status.ready?'ready_with_errors':'error',refreshing:false,lastError:error.message};
+      this._setStatus({...this._status,phase:this._status.ready?'ready_with_errors':'error',refreshing:false,lastError:error.message});
       console.warn('[session-search] background sync failed:',error.message);
     } finally {
       this._maintenanceBusy=false;
       if(retry && !this._queuedSnapshot) this._queuedSnapshot=queued;
-      if(!this._closed && this._queuedSnapshot) this._scheduleQueueFlush(retry?2000:400);
+      if(!this._closed && !this._backgroundHeld && this._queuedSnapshot) this._scheduleQueueFlush(retry?2000:400);
     }
   }
 

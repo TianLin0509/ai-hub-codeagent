@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, clipboard, dialog, nativeImage, screen, shell, Menu, crashReporter, protocol, net } = require('electron');
+const { app, BrowserWindow, ipcMain, clipboard, dialog, nativeImage, screen, shell, Menu, crashReporter, protocol, net, powerMonitor } = require('electron');
 const path = require('path');
 const { fileURLToPath } = require('url');
 const fs = require('fs');
@@ -179,7 +179,21 @@ function sessionSearchRoots(envName, defaults) {
     ? configured.split(path.delimiter).map(value => value.trim()).filter(Boolean)
     : defaults;
 }
+// 第一次全量建索引等电脑空闲再做，阶段变化写进 window-events.log（见 core/session-search-first-build.js）。
+const searchFirstBuild = require('./core/session-search-first-build.js');
+// 隔离测试 Hub 默认不等（搜索类 e2e 打开预热后要立即建索引），显式设了秒数才等。
+const searchFirstBuildIdleSec = isIsolatedHub() && String(process.env.HUB_SESSION_SEARCH_FIRST_BUILD_IDLE_SEC ?? '').trim() === ''
+  ? 0 : searchFirstBuild.idleSecondsSetting();
+const searchEventLog = require('./core/window-keep-rendering.js').createWindowEventLog(path.join(getHubDataDir(), 'logs', 'window-events.log'), { logger: {} });
 const sessionSearchService = new SessionSearchService({
+  // 只在会自动预热的 Hub 上生效（隔离测试 Hub 本来就不预热）。
+  holdBackground: searchFirstBuildIdleSec > 0 && !searchFirstBuild.firstBuildDone(getHubDataDir()),
+  onStatusChange: status => {
+    searchEventLog('search-index', searchFirstBuild.statusLogDetail(status));
+    if (!status.ready || searchFirstBuild.firstBuildDone(getHubDataDir())) return;
+    searchFirstBuild.markFirstBuildDone(getHubDataDir(), searchFirstBuild.statusLogDetail(status));
+    sessionSearchService.releaseBackground();
+  },
   cachePath: path.join(getHubDataDir(), 'cache', 'session-search-v2.json'),
   claudeRoots: sessionSearchRoots('HUB_SESSION_SEARCH_CLAUDE_ROOTS', claudeProjectRoots()),
   // 公司 CodeAgent 的记录目录：该目录下的记录在「昨日之我」里标为 CodeAgent，恢复时用 CodeAgent。
@@ -1170,7 +1184,7 @@ function createWindow() {
       enabled: keepRendering.shouldKeepRendering({ community: require('./core/distribution').community }),
     })?.log || null;
   } catch (error) { console.warn('[window] keep-rendering setup failed:', error && error.message); }
-  // 界面进程崩溃（公司真机：内存吃满后 crashed -36861）后自动重新载入界面，会话都在主进程里不受影响；
+  // 界面进程崩溃（公司真机 crashed -36861，原因待崩溃转储区分）后自动重新载入界面，会话都在主进程里不受影响；
   // 卡住时记下界面正在跑的代码和内存（见该模块注释）。
   try {
     const win = mainWindow;
@@ -2252,8 +2266,22 @@ async function waitForSearchIdle() {
     await delayMs(Math.min(SEARCH_IDLE_GAP_MS - quietFor, 5_000, Math.max(0, deadline - Date.now())));
   }
 }
+// 第一次全量建索引之前先等电脑键鼠闲置（见 core/session-search-first-build.js）；建好过就直接返回。
+async function waitForSearchFirstBuildIdle() {
+  if (!sessionSearchService.backgroundHeld) return;
+  searchEventLog('search-index-wait-idle', { idleSec: searchFirstBuildIdleSec });
+  const waited = await searchFirstBuild.waitForUserIdle({
+    getIdleSeconds: () => powerMonitor.getSystemIdleTime(),
+    idleSec: searchFirstBuildIdleSec,
+    delay: delayMs,
+    shouldStop: () => !sessionSearchService.backgroundHeld,
+  });
+  searchEventLog('search-index-first-build-start', { waitedSec: Math.round(waited.waitedMs / 1000), idleSec: waited.idleSec, ...(waited.stopped ? { by: 'user-search' } : {}) });
+  sessionSearchService.releaseBackground();
+}
 const sessionSearchPrewarmTimer = setTimeout(() => {
   void (async () => {
+    await waitForSearchFirstBuildIdle();
     await waitForSearchIdle();
     sessionSearchService.startMaintenance(buildSessionSearchSnapshot);
     const lockPath = path.join(getHubDataDir(), 'cache', 'session-search-prewarm.lock');
