@@ -435,11 +435,16 @@ function buildClaudePtyLaunch(id, kind, opts, cwd, env, cv) {
 //   - 它不认 --settings：群聊插件隔离、fast、CLI 主题这些靠 overlay 的设置都不传；hook 写在配置目录。
 //   - 必须带 --disable-update（否则弹阻塞的升级框）与 --skip-safe-check（信任框）。
 //   - 没有 Claude 的模型目录与 fast 档；思考档只有 low/medium/high/max。
+// 家里联动替家里读公司代码的会话（purpose=company-bridge）：在启动参数上落实只读——
+// 禁用命令行与改写类工具、不加载任何 MCP；恢复、原地重拉都按 purpose 重新带上，不依赖提示词。
+const CODEAGENT_READONLY_DISALLOWED = Object.freeze(['Bash', 'BashOutput', 'KillShell', 'Edit', 'MultiEdit', 'Write', 'NotebookEdit']);
+function codeAgentReadOnly(opts) { return opts && opts.purpose === 'company-bridge'; }
 function buildCodeAgentPtyLaunch(id, kind, opts, cwd, env, config) {
   const { normalizeCodeAgentModel, EFFORTS, commandHead } = require('./codeagent-config');
   const hubDataDir = getHubDataDir();
-  const mcp = buildClaudeMeetingMcpArgs({ cwd, hubDataDir, mcpConfigFile: opts.mcpConfigFile,
-    mcpProfile: opts.mcpProfile || 'full' });
+  const readOnly = codeAgentReadOnly(opts);
+  const mcp = buildClaudeMeetingMcpArgs({ cwd, hubDataDir, mcpConfigFile: readOnly ? undefined : opts.mcpConfigFile,
+    mcpProfile: readOnly ? 'none' : (opts.mcpProfile || 'full') });
   const args = ['--disable-update', '--skip-safe-check', '--model', normalizeCodeAgentModel(opts.model)];
   if (EFFORTS.includes(opts.effort)) args.push('--effort', opts.effort);
   args.push('--permission-mode', CLAUDE_PERMISSION_MODES.has(opts.permissionMode) ? opts.permissionMode : 'bypassPermissions');
@@ -447,6 +452,7 @@ function buildCodeAgentPtyLaunch(id, kind, opts, cwd, env, config) {
   if (mcp.configPaths && mcp.configPaths.length) args.push('--mcp-config', ...mcp.configPaths);
   if (mcp.profile !== 'full') args.push('--strict-mcp-config');
   for (const dir of claudeNativeAddDirs(opts.addDirs)) args.push('--add-dir', dir);
+  if (readOnly && require('./company-bridge/strict').strictEnabled()) args.push('--disallowedTools', CODEAGENT_READONLY_DISALLOWED.join(','));
   const { findNativeClaudeHistory } = require('./claude-native-history');
   const historyEnv = { ...env, CLAUDE_CONFIG_DIR: config.configDir };
   const isUuid = value => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(value || ''));
@@ -1142,7 +1148,8 @@ function buildNativeCodexOptions(info, opts, env) {
   if (profile !== 'none' && (profile === 'wireless' || isWirelessWorkspace(info.cwd))) {
     WIRELESS_MCP_NAMES.forEach(name => allowed.add(name));
   }
-  const entries = profile === 'none' ? [] : require('./web-roundtable/integration').entries(opts.codexMcpEntries, profile, getHubDataDir());
+  const entries = [...(profile === 'none' ? [] : require('./web-roundtable/integration').entries(opts.codexMcpEntries, profile, getHubDataDir())),
+    ...(Array.isArray(opts.codexPinnedMcpEntries) ? opts.codexPinnedMcpEntries : [])];
   entries.forEach(entry => allowed.add(entry.name));
   const config = {...sharedConfig};
   if (require('./chatgpt-web-models').isChatgptWebModel(info.currentModel?.id)) {
@@ -1318,13 +1325,44 @@ class SessionManager extends EventEmitter {
     try {
       if (lease) require('./session-store').resumeSessionWrites(id);
       require('./community-provider').assertProviderAvailable(kind);
-      return this._createSession(kind, {...opts, id, hubUiTheme: this.presentationTheme});
+      return this._createSession(kind, this._withExtraMcp(kind, {...opts, id, hubUiTheme: this.presentationTheme}));
     }
     catch (error) {
       if (!this.sessions.has(id)) this._releaseOpenSession(id);
       else this.closeSession(id);
       throw error;
     }
+  }
+
+  // 额外挂载的 MCP（2026-10-15 家里联动「问公司」）：由 main.js 注册的提供者按会话决定挂不挂。
+  // Codex 走固定挂载（不受 MCP 档位影响）；Claude 把它并进 --mcp-config 的那份配置。
+  setExtraMcpProvider(provider) { this.extraMcpProvider = typeof provider === 'function' ? provider : null; }
+  _withExtraMcp(kind, opts) {
+    if (!this.extraMcpProvider) return opts;
+    let plan = null;
+    try { plan = this.extraMcpProvider({ kind, opts, id: opts.id }); } catch (error) { console.warn('[extra-mcp]', error.message); }
+    // 提供者返回 { mcp, env }：env 给会话里的命令行工具用（例如凭会话通行证调用 Hub 的本机接口）。
+    if (plan && plan.env && typeof plan.env === 'object') opts = { ...opts, extraEnv: { ...(opts.extraEnv || {}), ...plan.env } };
+    const entry = plan && plan.mcp;
+    if (!entry || !entry.name) return opts;
+    const base = String(kind || '').replace(/-resume$/, '');
+    if (isCodexCliKind(base)) {
+      return { ...opts, codexPinnedMcpEntries: [...(opts.codexPinnedMcpEntries || []).filter(e => e && e.name !== entry.name), entry] };
+    }
+    if (base === 'claude') {
+      let config = { mcpServers: {} };
+      if (typeof opts.mcpConfigFile === 'string' && opts.mcpConfigFile) {
+        try { const parsed = JSON.parse(fs.readFileSync(opts.mcpConfigFile, 'utf8')); if (parsed && typeof parsed === 'object') config = { ...parsed, mcpServers: { ...(parsed.mcpServers || {}) } }; } catch {}
+      }
+      config.mcpServers[entry.name] = { command: entry.command, args: entry.args || [], env: entry.env || {} };
+      const dir = path.join(getHubDataDir(), 'extra-mcp');
+      fs.mkdirSync(dir, { recursive: true });
+      const file = path.join(dir, `claude-${opts.id}.json`);
+      fs.writeFileSync(file + '.tmp', JSON.stringify(config), { mode: 0o600 });
+      fs.renameSync(file + '.tmp', file);
+      return { ...opts, mcpConfigFile: file };
+    }
+    return opts;
   }
 
   _createSession(kind = 'powershell', opts = {}) {
@@ -2051,6 +2089,9 @@ class SessionManager extends EventEmitter {
       codexMcpEntries: effectiveCodexMcpProfile !== 'none' && Array.isArray(opts.codexMcpEntries)
         ? opts.codexMcpEntries.map((entry) => ({ ...entry, env: { ...(entry.env || {}) } }))
         : [],
+      codexPinnedMcpEntries: Array.isArray(opts.codexPinnedMcpEntries)
+        ? opts.codexPinnedMcpEntries.map((entry) => ({ ...entry, env: { ...(entry.env || {}) } }))
+        : [],
       // Claude 群聊的 research / 通信 MCP 在 CLI 原地 relaunch 时也要继续存在。
       claudeMcpConfigFile: typeof opts.mcpConfigFile === 'string' ? opts.mcpConfigFile : null,
       pendingTimers,
@@ -2404,7 +2445,7 @@ class SessionManager extends EventEmitter {
         cmd += ` -c "model_instructions_file=${codexInstructionFile.replace(/\\/g, '\\\\')}"`;
       }
       const effectiveCodexMcpEntries = effectiveCodexMcpProfile === 'none' ? [] : opts.codexMcpEntries;
-      cmd += buildCodexEphemeralMcpArgs(effectiveCodexMcpEntries);
+      cmd += buildCodexEphemeralMcpArgs([...(effectiveCodexMcpEntries || []), ...(opts.codexPinnedMcpEntries || [])]);
       const allowedGroupMcpNames = [
         ...(effectiveCodexMcpProfile === 'none' ? [] : CODEX_MANAGED_MCP_NAMES),
         ...(Array.isArray(effectiveCodexMcpEntries) ? effectiveCodexMcpEntries.map(entry => entry && entry.name) : []),
@@ -3298,6 +3339,7 @@ class SessionManager extends EventEmitter {
       const launch = buildCodeAgentPtyLaunch(sessionId, 'codeagent', {
         model: modelId, effort: s.info && s.info.effort, mcpConfigFile: s.claudeMcpConfigFile,
         mcpProfile: s.info && s.info.mcpProfile, appendSystemPromptFile: relaunchRules ? relaunchRules.file : undefined,
+        purpose: s.info && s.info.purpose,
       }, s.info && s.info.cwd, s.pty.options?.env || process.env, config);
       Object.assign(s.info, { ccSessionId: undefined, transcriptPath: undefined, codeagentIdentityPending: true });
       cmd = launch.cmd;
@@ -3316,7 +3358,8 @@ class SessionManager extends EventEmitter {
       cmd = ` codex --dangerously-bypass-approvals-and-sandbox --model ${codexRelaunchModel}${codexReasoningArg}${this._sceneRelaunchFlags(s, 'codex')}`;
       const relaunchMcpProfile = resolveCodexMcpProfile(runtimeKind, s.info && s.info.mcpProfile);
       const relaunchMcpEntries = relaunchMcpProfile === 'none' ? [] : s.codexMcpEntries;
-      cmd += buildCodexEphemeralMcpArgs(relaunchMcpEntries);
+      // 固定挂载的 MCP（如「问公司」）不受档位影响，none 档也带上。
+      cmd += buildCodexEphemeralMcpArgs([...(relaunchMcpEntries || []), ...(s.codexPinnedMcpEntries || [])]);
       cmd += buildCodexMcpIsolationArgs(codexConfigDir, {
         meetingId,
         cwd: s.info && s.info.cwd,

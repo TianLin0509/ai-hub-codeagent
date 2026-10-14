@@ -42,6 +42,8 @@ module.exports = Object.freeze({
   // 发行目标可以关掉个别功能（target.json 的 features，例如公司版关掉助理）；未列出的功能一律开启。
   // 「规则」页的通用规则从哪个频道拉：公司版 target.json 写 company，其余都是 public。
   rulesChannel: (marker && marker.rulesChannel) || 'public',
+  // 发行目标名（公司版是 company）；主仓库为 null。
+  target: marker && marker.target ? String(marker.target) : null,
   featureEnabled: name => !(marker && marker.features && marker.features[name] === false),
   allowedKinds,
   kindAllowed,

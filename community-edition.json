@@ -5,7 +5,8 @@
   "features": {
     "assistant": false,
     "quotaBar": false,
-    "accounts": false
+    "accounts": false,
+    "homeLink": true
   },
   "rulesChannel": "company",
   "kinds": [
@@ -32,12 +33,12 @@
     "releasePage": "https://github.com/TianLin0509/ai-hub-codeagent/releases"
   },
   "releaseNotes": [
-    "刚装好时不和你抢电脑：「昨日之我」第一次把电脑上的历史记录全部读一遍建索引，改为在键盘鼠标闲置 3 分钟后再开始；你自己打开「昨日之我」搜索时仍然立即开始",
-    "建索引的进度和完成时间记进数据目录 logs\\window-events.log，界面再卡顿时能直接看出当时是不是在建索引，反馈问题时请一并带上",
-    "资源页能看到 CodeAgent 的技能、MCP 服务和插件（上一版显示 0 个）"
+    "设置菜单新增「🏠 家里联动」：和指定的另一台 AI Hub 配对后，这台电脑接收对方关于代码的提问，每个问题开一个只读的 CodeAgent 会话作答（禁用命令行与改写工具），回执只发文字说明；同一问题的追问续用同一个会话。没配对时不联网、不做任何事",
+    "家里联动遇到网络要求重新「允许访问」时会提示，点「打开放行页」允许后自动接上，期间收到的问题和要发的回执都不会丢",
+    "家里联动的弹窗里可以改：代码位置、给 CodeAgent 的说明、模型与思考深度、同时处理几个问题；每个 CodeAgent 会话都能在会话栏打开查看"
   ],
-  "version": "1.0.5",
-  "upstreamVersion": "1.6.485",
-  "upstreamCommit": "fb91c82744da74886e9b1f1250f49384e8483890",
+  "version": "1.0.6",
+  "upstreamVersion": "1.6.489",
+  "upstreamCommit": "677e7f4d3c23e76e5604dfa1cff6aeb22ac6df2a",
   "upstreamDirty": false
 }

@@ -1325,7 +1325,7 @@ async function selectMeeting(meetingId, opts = {}) {
   if (terminalPanelEl) terminalPanelEl.classList.remove('home-active');
   if (window.__xresearchHide) window.__xresearchHide(); // 2026-07-23 投研面板互斥
   if (window.__studyHide) window.__studyHide(); // 2026-09-01 学习面板互斥
-  if (window.__assistantHide) window.__assistantHide();
+  if (window.__assistantHide) window.__assistantHide(); window.__wirelessHide?.();
   if (window.__writingHide) window.__writingHide(); // 2026-09-30 写作面板互斥
   window.__rulesHide?.(); // 2026-10-12 规则面板互斥
   if (window.__ranHide) window.__ranHide(); // 2026-09-04 RAN 工作台面板互斥
@@ -1887,7 +1887,7 @@ const APP_TOOLBAR_VIEWS = [
 function getReadingSurface() {
   // Detached full-page tabs are above the session stage. Keep their mounted
   // controls and content instead of copying them into a fullscreen shell.
-  for (const id of ['assistant-page', 'account-page', 'hub-workspace', 'memo-panel', ...APP_TOOLBAR_VIEWS.map(v => v.id)]) {
+  for (const id of ['assistant-page', 'wireless-page', 'account-page', 'hub-workspace', 'memo-panel', ...APP_TOOLBAR_VIEWS.map(v => v.id)]) {
     const panel = document.getElementById(id);
     if (panelIsVisible(panel)) return panel;
   }
@@ -1911,6 +1911,7 @@ function panelIsVisible(el) {
 // 这四个动作全都是对「某一个会话」做的，主页上没有会话可做。
 function paintAppToolbarForView(label) {
   if (label !== '助理') window.__assistantHide?.();
+  if (label !== '无线') window.__wirelessHide?.();
   if (!toolbarCrumbEl || !toolbarActionsEl) return;
   toolbarCrumbEl.dataset.mode = 'view';
   toolbarCrumbEl.title = '';
@@ -2079,7 +2080,7 @@ function paintAppToolbarForSession(sessionId, session, cached) {
 }
 
 function currentAppToolbarView() {
-  for (const [id, label] of [['assistant-page', '助理'], ['account-page', '账号'], ['hub-workspace', '资源与回顾'], ['memo-panel', '速记']]) {
+  for (const [id, label] of [['assistant-page', '助理'], ['wireless-page', '无线'], ['account-page', '账号'], ['hub-workspace', '资源与回顾'], ['memo-panel', '速记']]) {
     if (panelIsVisible(document.getElementById(id))) return label;
   }
   for (const view of APP_TOOLBAR_VIEWS) {
@@ -2125,7 +2126,7 @@ if (typeof MutationObserver === 'function') {
   // These tabs mount outside app-body. Watch only their own visibility, never
   // streamed text or every descendant mutation.
   const watchReadingTabs = () => {
-    for (const id of ['assistant-page', 'account-page', 'hub-workspace', 'memo-panel']) {
+    for (const id of ['assistant-page', 'wireless-page', 'account-page', 'hub-workspace', 'memo-panel']) {
       const el = document.getElementById(id);
       if (el) _appToolbarObserver.observe(el, { attributes: true, attributeFilter: ['style', 'class', 'hidden'] });
     }
@@ -5747,7 +5748,7 @@ async function selectSession(id, opts = {}) {
   }
   if (window.__xresearchHide) window.__xresearchHide(); // 2026-07-23 投研面板互斥
   if (window.__studyHide) window.__studyHide(); // 2026-09-01 学习面板互斥
-  if (window.__assistantHide) window.__assistantHide();
+  if (window.__assistantHide) window.__assistantHide(); window.__wirelessHide?.();
   if (window.__writingHide) window.__writingHide(); // 2026-09-30 写作面板互斥
   window.__rulesHide?.(); // 2026-10-12 规则面板互斥
   if (window.__ranHide) window.__ranHide(); // 2026-09-04 RAN 工作台面板互斥
@@ -8587,7 +8588,7 @@ function escapeToHome() {
   window.hubWorkspaces?.close();
   if (window.__xresearchHide) window.__xresearchHide();
   if (window.__studyHide) window.__studyHide();
-  if (window.__assistantHide) window.__assistantHide();
+  if (window.__assistantHide) window.__assistantHide(); window.__wirelessHide?.();
   if (window.__writingHide) window.__writingHide(); // 2026-09-30 写作面板互斥
   window.__rulesHide?.(); // 2026-10-12 规则面板互斥
   if (window.__ranHide) window.__ranHide(); // 2026-09-04 RAN 工作台面板互斥
@@ -8666,6 +8667,17 @@ if (!require('../core/distribution').featureEnabled('assistant')) {
   if (assistantNav) assistantNav.style.display = 'none';
 }
 window.__assistantSync = session => assistantPanel.syncSession(session);
+// 家里联动（2026-10-15）：公司版的「家里联动」弹窗与家里的「公司联动」列表都用它按编号打开会话。
+async function openSessionById(sessionId) {
+  if (!sessions.has(sessionId)) {
+    const current = (await ipcRenderer.invoke('get-sessions')).find(item => item.id === sessionId);
+    if (!current) throw new Error('这个会话没在当前 Hub 打开：请在左侧会话栏的历史里找回');
+    sessions.set(sessionId, current); renderSessionList();
+  }
+  await selectSession(sessionId, { forceScrollBottom: true, splitBypass: true });
+}
+window.__hubOpenSession = openSessionById;
+window.__hubToast = message => showToast(message);
 const openConfigModal = configModal.open;
 const setCodexProfileForm = configModal.setCodexProfileForm;
 document.addEventListener('hub-config-saved', () => {
@@ -8846,6 +8858,12 @@ ipcRenderer.on('session-created', async (_e, { session }) => {
     scheduleSessionListRender();
     return;
   }
+  // 无线页的 wireless-sim 助理在后台为每个提案开会话、家里联动在公司 Hub 为每个问题开会话：不抢当前画面，用户从对应页面或会话栏打开。
+  if (session.purpose === 'wireless-proposal' || session.purpose === 'company-bridge') {
+    if (wasDormant && activeSessionId === session.id) await selectSession(session.id, { forceScrollBottom: pendingResume?.forceScrollBottom === true });
+    scheduleSessionListRender();
+    return;
+  }
   // 手机拍图在后台创建或唤醒；只在用户已经选中它时切入，保留其他会话的输入。
   if (session.purpose === 'hub-photo-assistant') {
     if (wasDormant && activeSessionId === session.id) {
@@ -8892,7 +8910,7 @@ ipcRenderer.on('session-created', async (_e, { session }) => {
   // 2026-09-02：session-created 会直接亮出终端面板，但此前只隐藏了群聊面板。
   // 主区是 flex 容器，学习面板若还开着就会和终端并排各占一半。
   if (window.__studyHide) window.__studyHide();
-  if (window.__assistantHide) window.__assistantHide();
+  if (window.__assistantHide) window.__assistantHide(); window.__wirelessHide?.();
   if (window.__writingHide) window.__writingHide(); // 2026-09-30 写作面板互斥
   window.__rulesHide?.(); // 2026-10-12 规则面板互斥
   if (window.__ranHide) window.__ranHide(); // 2026-09-04 RAN 工作台面板互斥
@@ -10199,7 +10217,7 @@ if (process && process.env && process.env.CLAUDE_HUB_E2E === '1') {
           currentView = 'card';
           _cardHistoryHydratedSid = sessionId;
           if (window.__studyHide) window.__studyHide();   // 同上：别和学习面板并排
-          if (window.__assistantHide) window.__assistantHide();
+          if (window.__assistantHide) window.__assistantHide(); window.__wirelessHide?.();
           if (window.__writingHide) window.__writingHide(); // 2026-09-30 写作面板互斥
           window.__rulesHide?.(); // 2026-10-12 规则面板互斥
           if (window.__ranHide) window.__ranHide(); // 2026-09-04 RAN 工作台面板互斥

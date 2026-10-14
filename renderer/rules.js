@@ -393,7 +393,7 @@
     if (visible) {
       const home = document.getElementById('btn-home');
       if (home) { home.classList.remove('active'); home.removeAttribute('aria-current'); }
-      window.__xresearchHide?.(); window.__studyHide?.(); window.__writingHide?.(); window.__ranHide?.(); window.__assistantHide?.();
+      window.__xresearchHide?.(); window.__studyHide?.(); window.__writingHide?.(); window.__ranHide?.(); window.__assistantHide?.(); window.__wirelessHide?.();
       for (const id of ['terminal-panel', 'meeting-room-panel']) { const el = document.getElementById(id); if (el) el.style.display = 'none'; }
       const accountPage = document.getElementById('account-page');
       if (accountPage && !accountPage.hidden) document.getElementById('btn-rail-accounts')?.click();

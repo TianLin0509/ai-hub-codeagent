@@ -2050,6 +2050,56 @@ if (require('./core/distribution').featureEnabled('assistant')) try {
   assistantService.startWatching();
   phoneService = require('./main/ipc/phone-handlers').registerPhoneIpc(ipcMain, assistantService, {dataDir:getHubDataDir(),electron:require('electron')});
 } catch (error) { console.error('[assistant] service unavailable:', error.message); }
+// 家里联动（2026-10-15）：家里 Hub 的 Agent 用「问公司」提问，公司 Hub 的 CodeAgent 只读代码作答，经加密任务通道往返。
+// 自用版是家里一端，公司版是公司一端，其余发行版不启用（core/company-bridge/role.js）。
+let companyBridgeService = null;
+try {
+  const bridgeRole = require('./core/company-bridge/role').bridgeRole();
+  const bridgeDeps = {
+    dataDir: getHubDataDir(),
+    noTimer: process.env.CLAUDE_HUB_BRIDGE_TIMER === '0',
+    createSession: (kind, opts) => sessionOperations.createSession({ kind, opts }),
+    sendPrompt: (sessionId, text, clientSubmissionId) => promptOperations.submitPrompt(null, { sessionId, text, clientSubmissionId, waitForCliReady: true }),
+    getSession: id => sessionManager.getSession(id),
+    getSessionMetadata: id => {
+      if (typeof id !== 'string' || !/^[a-zA-Z0-9_-]{1,160}$/.test(id)) return null;
+      const saved = require('./core/session-store').loadSessionFile(id, { strict: true });
+      return saved ? { ...saved, id: saved.hubId || id } : null;
+    },
+    resumeSession: async id => {
+      const meta = require('./core/session-store').loadSessionFile(id, { strict: true });
+      return meta ? resumeSession({ ...meta, hubId: id }) : null;
+    },
+    isAgentTurnActive: id => sessionManager.isAgentTurnActive(id),
+    onChanged: () => sendToRenderer('bridge:changed', {}),
+    onNotify: notice => {
+      sendToRenderer('bridge:notification', notice);
+      try { void desktopNotificationController?.show({ sessionId: notice.sessionId || 'company-bridge', title: notice.title, body: notice.text, kind: 'bridge' }); } catch (error) { console.warn('[company-bridge] notification', error.message); }
+    },
+  };
+  if (bridgeRole === 'company') {
+    const { CompanyBridge } = require('./core/company-bridge/company');
+    const live = new (require('./core/hub-assistant/live-history').LiveHistory)();
+    companyBridgeService = new CompanyBridge({ ...bridgeDeps,
+      fallbackCwd: os.homedir(),
+      isDirectory: p => { try { return fs.statSync(p).isDirectory(); } catch { return false; } },
+      // CodeAgent 的原生记录是 Claude 格式，按 Claude 读最终回答。
+      readFinals: meta => { const r = live.read({ ...meta, id: meta.id || meta.hubId, kind: 'claude' }); return r && r.available ? r.records : []; },
+      modelOptions: () => { try { return require('./core/codeagent-models').modelOptions(getHubDataDir(), { configDir: require('./core/codeagent-config').resolveCodeAgentConfig(process.env).configDir }); } catch { return []; } },
+    });
+    companyBridgeService.start();
+  }
+  if (companyBridgeService) {
+    require('./main/ipc/company-bridge-handlers').registerCompanyBridgeIpc(ipcMain, companyBridgeService, {
+      openGate: url => new Promise(resolve => {
+        // 放行页用默认会话打开：和任务通道的请求共用同一份网络状态，这里点过「允许访问」，后台请求就能通过。
+        const win = new BrowserWindow({ width: 1100, height: 780, title: '放行网络访问（点完关掉本窗口）', autoHideMenuBar: true, webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true } });
+        win.on('closed', () => resolve());
+        void win.loadURL(url).catch(() => {});
+      }),
+    });
+  }
+} catch (error) { console.error('[company-bridge] 家里联动未启动：', error.message); }
 // AI 编排模式（2026-10-04）：编排员通过 hub_orchestrator 工具驱动群聊与交付工作流。
 try {
   global.__orchestrationService = require('./main/orchestration/service').createOrchestrationService({
@@ -3728,6 +3778,8 @@ async function runFinalShutdownCleanup() {
   capture('terminal-output-batcher', () => terminalOutputBatcher.dispose({ flush: true }));
   capture('dev-workbench', () => devWorkbench?.dispose());
   capture('hub-assistant', () => assistantService?.close());
+  capture('wireless-assistant', () => wirelessService?.close());
+  capture('company-bridge', () => companyBridgeService?.close());
   capture('hub-orchestration', () => global.__orchestrationService?.stop());
   capture('hub-phone', () => phoneService?.close());
   clearTimeout(sessionSearchPrewarmTimer);
