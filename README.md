@@ -1,6 +1,6 @@
 # AI HUB-Huawei · 内测先锋版（CodeAgent）
 
-把公司内网的 **Code Agent CLI** 放进一个 Windows 桌面工作台：单独会话、多 AI 群聊、卡片视图、休眠恢复、历史检索、自动命名。这是 AI Hub 的公司版（产品名 AI HUB-Huawei，内测先锋版），当前 **v1.0.3**，同步自上游 **1.6.471**（具体提交见 `community-edition.json`）。
+把公司内网的 **Code Agent CLI** 放进一个 Windows 桌面工作台：单独会话、多 AI 群聊、卡片视图、休眠恢复、历史检索、自动命名。这是 AI Hub 的公司版（产品名 AI HUB-Huawei，内测先锋版），当前 **v1.0.3**，同步自上游 **1.6.472**（具体提交见 `community-edition.json`）。
 
 与公开社区版是同一套代码，区别只在默认行为面向公司内网：
 

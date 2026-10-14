@@ -44,7 +44,7 @@
     "按住 Ctrl 滚动鼠标滚轮即可缩放，和浏览器一样：卡片、群聊、沉浸阅读放大缩小阅读字号，预览窗口（含网页预览、全屏沉浸）缩放预览，后台终端调终端字号；网页预览不再被放大两遍"
   ],
   "version": "1.0.3",
-  "upstreamVersion": "1.6.471",
-  "upstreamCommit": "7b8ed0c33e1d31d00c78e7988141748a7ff9ca9a",
+  "upstreamVersion": "1.6.472",
+  "upstreamCommit": "e8b9a4e7f5387092980a60947be69ece02ad392c",
   "upstreamDirty": false
 }

@@ -109,7 +109,7 @@ async function main() {
       await until('document.querySelector("#new-session-submit")?.getBoundingClientRect().width > 0', 'new session form');
       const offered = await cdp.eval('[...document.querySelectorAll(".new-session-option[data-kind]")].map(b => b.dataset.kind)');
       assert.deepEqual(offered, kinds, 'launch center offers only the allowed kinds');
-      assert.equal(await cdp.eval(`!!document.querySelector('[data-launch-intent="resume"]')`), kinds.some(k => ['claude', 'codex', 'gemini', 'deepseek', 'kimi'].includes(k)));
+      assert.equal(await cdp.eval(`!!document.querySelector('[data-launch-intent="resume"]')`), kinds.some(k => ['claude', 'codex', 'gemini', 'deepseek', 'kimi', 'codeagent'].includes(k)), 'resume entry follows kinds that can resume (CodeAgent: global resume since 1.6.457)');
       if (marker.features && marker.features.quotaBar === false) assert.equal(await cdp.eval('!!document.getElementById("rail-usage")'), false, 'no quota strip');
       if (marker.features && marker.features.accounts === false) assert.equal(await cdp.eval('document.getElementById("btn-rail-accounts").getBoundingClientRect().width'), 0, 'accounts entry hidden');
       await click(`.new-session-option[data-kind="${kinds[0]}"]`);
