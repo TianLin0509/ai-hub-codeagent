@@ -1886,13 +1886,13 @@ class SessionManager extends EventEmitter {
       cwd: spawnCwd,
       env: sessionEnv,
       useConpty: true,
-      // conptyInheritCursor=true kills PTY output for headless sessions (no
-      // renderer xterm attached). TeamSessionManager sets noInheritCursor for
-      // background character sessions. Normal user sessions don't set it, so
-      // the default stays true for backward compatibility.
+      // With no renderer terminal, cursor inheritance stalls ConPTY at ESC[6n.
+      // CodeAgent cards/resumes also start without xterm; enforce this here so
+      // resume/restart paths need not remember a transient creation option.
+      // Keep other providers' existing noInheritCursor policy.
       // Codex's TUI does dense cursor-addressed redraws; inheriting the host
       // cursor makes Windows ConPTY more prone to transient cursor ghosts.
-      conptyInheritCursor: (isCodexRuntime || isKimi) ? false : !opts.noInheritCursor,
+      conptyInheritCursor: (isCodexRuntime || isKimi || isCodeAgent) ? false : !opts.noInheritCursor,
     });
     } catch (error) { codexEditorInput?.dispose(); antigravityForkCleanup?.(); throw error; }
 
