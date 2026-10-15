@@ -435,16 +435,16 @@ function buildClaudePtyLaunch(id, kind, opts, cwd, env, cv) {
 //   - 它不认 --settings：群聊插件隔离、fast、CLI 主题这些靠 overlay 的设置都不传；hook 写在配置目录。
 //   - 必须带 --disable-update（否则弹阻塞的升级框）与 --skip-safe-check（信任框）。
 //   - 没有 Claude 的模型目录与 fast 档；思考档只有 low/medium/high/max。
-// 家里联动替家里办事的会话（purpose=company-bridge）：按「家里联动」页选的权限在启动参数上禁用工具
-// （默认禁改写类工具，见 core/company-bridge/strict.js）、不加载任何 MCP；恢复、原地重拉都按 purpose 重新带上，不依赖提示词。
-// 这类会话也不走 /model 菜单，用 CodeAgent 的默认模型。
+// 家里联动替家里办事的会话（purpose=company-bridge）：不挂 Hub 自己的 MCP，也不走 /model 菜单（用 CodeAgent 的默认模型）。
+// 不改动公司电脑只靠说明约束：2026-10-15 公司真机实测 CodeAgent 1.2615 收到 --disallowedTools 照样放行 Write，
+// --strict-mcp-config 也挡不住用户级 MCP，用户拍板「只靠说明约束、公司 MCP 允许使用」，不再传这些不起作用的参数。
 function codeAgentReadOnly(opts) { return opts && opts.purpose === 'company-bridge'; }
 function buildCodeAgentPtyLaunch(id, kind, opts, cwd, env, config) {
   const { normalizeCodeAgentModel, EFFORTS, commandHead } = require('./codeagent-config');
   const hubDataDir = getHubDataDir();
-  const readOnly = codeAgentReadOnly(opts);
-  const mcp = buildClaudeMeetingMcpArgs({ cwd, hubDataDir, mcpConfigFile: readOnly ? undefined : opts.mcpConfigFile,
-    mcpProfile: readOnly ? 'none' : (opts.mcpProfile || 'full') });
+  const bridge = codeAgentReadOnly(opts); // 家里联动会话不挂 Hub 自己的 MCP
+  const mcp = buildClaudeMeetingMcpArgs({ cwd, hubDataDir, mcpConfigFile: bridge ? undefined : opts.mcpConfigFile,
+    mcpProfile: bridge ? 'none' : (opts.mcpProfile || 'full') });
   const args = ['--disable-update', '--skip-safe-check', '--model', normalizeCodeAgentModel(opts.model)];
   if (EFFORTS.includes(opts.effort)) args.push('--effort', opts.effort);
   args.push('--permission-mode', CLAUDE_PERMISSION_MODES.has(opts.permissionMode) ? opts.permissionMode : 'bypassPermissions');
@@ -452,8 +452,6 @@ function buildCodeAgentPtyLaunch(id, kind, opts, cwd, env, config) {
   if (mcp.configPaths && mcp.configPaths.length) args.push('--mcp-config', ...mcp.configPaths);
   if (mcp.profile !== 'full') args.push('--strict-mcp-config');
   for (const dir of claudeNativeAddDirs(opts.addDirs)) args.push('--add-dir', dir);
-  const disallowed = readOnly ? require('./company-bridge/strict').disallowedTools() : [];
-  if (disallowed.length) args.push('--disallowedTools', disallowed.join(','));
   const { findNativeClaudeHistory } = require('./claude-native-history');
   const historyEnv = { ...env, CLAUDE_CONFIG_DIR: config.configDir };
   const isUuid = value => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(value || ''));

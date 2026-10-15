@@ -4,8 +4,8 @@
 // 它记得上一轮读过什么。家里一个 Agent 对应这里一个 CodeAgent 会话，不同问题之间上下文互不干扰。
 // 起初只读 AirView / L2 代码；2026-10-15 用户要求放开成通用：查代码、查本机文件与文档、跑查询命令都行。
 //
-// 不改动公司电脑不只靠提示词：会话以 purpose=company-bridge 启动，Hub 按页面上选的权限在启动参数上
-// 禁用改写类工具（可选连命令行一起禁），不加载 MCP（core/session-manager.js 的 buildCodeAgentPtyLaunch、./strict.js）。
+// 不改动公司电脑靠说明约束：公司真机的 CodeAgent 不认 --disallowedTools / --strict-mcp-config（2026-10-15 实测），
+// 用户拍板只靠说明、公司电脑上已注册的 MCP 允许使用；会话以 purpose=company-bridge 启动，只是不挂 Hub 自己的 MCP。
 // 模型用 CodeAgent 自己的默认，不走 /model 菜单：公司真机上它把第一条消息卡住约 1 分钟（2026-10-15 用户反馈）。
 // 发回前查源码：围栏代码块、无围栏的代码行、压成一行的代码都算；超过限度先请它改写，改完仍超就删掉那几段再发。
 const path = require('node:path');
@@ -15,7 +15,7 @@ const { claimTimers, ownsTimers } = require('../hub-assistant/timer-owner');
 const { BridgeLink } = require('./link');
 
 const PURPOSE = 'company-bridge';
-// 第一版说明：没改过的老设置里存的就是它，读设置时换成新版默认。
+// 历代默认说明：没改过的老设置里存的就是它们，读设置时换成当前默认。
 const V1_INSTRUCTIONS = [
   '你是公司电脑上的代码阅读助手，替家里的 Agent 回答关于公司代码的问题。请遵守：',
   '1. 只读代码：可以打开、搜索、阅读文件；不运行程序或测试，不修改、新建、删除任何文件，不提交。',
@@ -24,7 +24,7 @@ const V1_INSTRUCTIONS = [
   '4. 末尾写「把握程度」（高 / 中 / 低及原因）和「没读到的部分」。',
   '5. 篇幅控制在 2 万字以内。',
 ].join('\n');
-const DEFAULT_INSTRUCTIONS = [
+const V2_INSTRUCTIONS = [
   '你是公司电脑上的助手，替家里的 Agent 办事：读公司代码（如 AirView、L2 的实际实现），查这台电脑上的文件、文档和环境，运行查询类命令收集信息。请遵守：',
   '1. 保持公司电脑原样：可以打开、搜索、阅读文件，运行查询类命令（如 git log、dir、findstr）；修改、新建、删除文件，提交代码，安装软件，这些都不做。',
   '2. 不回传源码：用文字和简短伪代码讲清逻辑，不成段粘贴源码。可以写函数名、文件相对路径和行号，方便对方追问。',
@@ -33,6 +33,16 @@ const DEFAULT_INSTRUCTIONS = [
   '5. 末尾写「把握程度」（高 / 中 / 低及原因）和「没读到的部分」。',
   '6. 篇幅控制在 2 万字以内。',
 ].join('\n');
+const DEFAULT_INSTRUCTIONS = [
+  '你是公司电脑上的助手，替家里的 Agent 办事：读公司代码（如 AirView、L2 的实际实现），查这台电脑上的文件、文档和环境，运行查询类命令，也可以用这台电脑上已注册的 MCP 工具（如 AirView、内网搜索）收集信息。请遵守：',
+  '1. 保持公司电脑原样：可以打开、搜索、阅读文件，运行查询类命令（如 git log、dir、findstr）；修改、新建、删除文件，提交代码，安装软件，这些都不做。',
+  '2. 有副作用的动作（提交或运行仿真、同步工程、发消息、改动共享平台上的内容），只在家里的问题里明确要求时才做，并在回答里写清做了什么。',
+  '3. 只回答问题需要的内容：不回传源码，用文字和简短伪代码讲清逻辑，可以写函数名、文件相对路径和行号；账号、密码、密钥、令牌这类凭据和与问题无关的个人信息不写进回答。',
+  '4. 先写结论，再逐条说明；分清「读到了」和「推测」。',
+  '5. 末尾写「把握程度」（高 / 中 / 低及原因）和「没读到的部分」。',
+  '6. 篇幅控制在 2 万字以内。',
+].join('\n');
+const OLD_DEFAULTS = [V1_INSTRUCTIONS, V2_INSTRUCTIONS];
 const DEFAULT_SETTINGS = Object.freeze({ enabled: true, codeRoots: [], instructions: DEFAULT_INSTRUCTIONS, effort: 'high', maxParallel: 2, pollSeconds: 30 });
 const EFFORTS = ['low', 'medium', 'high', 'max'];
 const MAX_REPLY_CHARS = 40000;
@@ -41,6 +51,26 @@ const MAX_CODE_RUN = 12;
 const MAX_CODE_TOTAL = 30;
 // 发出后会话停下、却一直没读到回答：判定没答上，告诉家里。
 const NO_ANSWER_MS = 10 * 60000;
+// 收回答前核对：CodeAgent 收到的那条消息里得有本题编号。剪贴板里的图片会顶掉粘贴进去的问题（2026-10-15 公司真机），
+// 这时它答的是图片，不能发回家；自动重发，连着被顶掉 2 次就报错让人清空剪贴板后重试。
+const MAX_HIJACK = 2;
+// 从 CodeAgent 的原生记录（Claude 格式 jsonl）里取用户发出的消息：时间、文字、图片张数（工具结果不算）。
+function userTurnsFromTranscript(file) {
+  let raw = '';
+  try { raw = require('node:fs').readFileSync(file, 'utf8'); } catch { return []; }
+  const turns = [];
+  for (const line of raw.split('\n')) {
+    if (!line.includes('"user"')) continue;
+    let o = null; try { o = JSON.parse(line); } catch { continue; }
+    if (!o || o.type !== 'user' || !o.message) continue;
+    const c = o.message.content;
+    const blocks = typeof c === 'string' ? [{ type: 'text', text: c }] : Array.isArray(c) ? c : [];
+    if (!blocks.length || blocks.every(b => b && b.type === 'tool_result')) continue;
+    turns.push({ at: Date.parse(o.timestamp) || 0, text: blocks.filter(b => b && b.type === 'text').map(b => String(b.text || '')).join('\n'),
+      images: blocks.filter(b => b && b.type === 'image').length });
+  }
+  return turns;
+}
 const short = (s, n = 28) => { s = String(s || '').replace(/\s+/g, ' ').trim(); return s.length > n ? s.slice(0, n) + '…' : s; };
 
 // ---- 源码检查 ----
@@ -130,7 +160,7 @@ class CompanyBridge {
   now() { return this.deps.now ? this.deps.now() : Date.now(); }
   settings() {
     const { model: _oldModel, ...s } = this.store.get('settings') || {}; // 旧版存过模型，现在不用
-    const instructions = !s.instructions || s.instructions.trim() === V1_INSTRUCTIONS ? DEFAULT_INSTRUCTIONS : s.instructions;
+    const instructions = !s.instructions || OLD_DEFAULTS.includes(s.instructions.trim()) ? DEFAULT_INSTRUCTIONS : s.instructions;
     return { ...DEFAULT_SETTINGS, ...s, instructions, codeRoots: Array.isArray(s.codeRoots) ? s.codeRoots : [] };
   }
   setSettings(patch = {}) {
@@ -144,8 +174,6 @@ class CompanyBridge {
     if ('instructions' in patch) { const t = String(patch.instructions || '').trim(); if (t.length > 8000) throw new Error('说明太长（上限 8000 字）'); next.instructions = t || DEFAULT_INSTRUCTIONS; }
     if ('effort' in patch) { if (!EFFORTS.includes(patch.effort)) throw new Error('思考深度只能是 low / medium / high / max'); next.effort = patch.effort; }
     if ('maxParallel' in patch) { const n = Number(patch.maxParallel); if (!Number.isInteger(n) || n < 1 || n > 4) throw new Error('同时处理的问题数只能是 1–4'); next.maxParallel = n; }
-    if ('permission' in patch) require('./strict').setMode(patch.permission);
-    else if ('strictReadOnly' in patch) require('./strict').setStrict(patch.strictReadOnly !== false); // 旧版页面
     if ('pollSeconds' in patch) { const n = Number(patch.pollSeconds); if (!Number.isInteger(n) || n < 10 || n > 600) throw new Error('检查间隔只能是 10–600 秒'); next.pollSeconds = n; }
     this.store.set('settings', next); this.changed();
     return next;
@@ -254,7 +282,7 @@ class CompanyBridge {
   }
 
   promptFor(t, r, s) {
-    if (r.rewrite) return '你上一条回答里有成段的源码。按规则不能回传源码：请把整份回答重写一遍，代码部分改成文字说明或几行伪代码，其余内容保持。直接输出重写后的完整回答。';
+    if (r.rewrite) return `（编号 ${t.id}，第 ${r.round} 轮）你上一条回答里有成段的源码。按规则不能回传源码：请把整份回答重写一遍，代码部分改成文字说明或几行伪代码，其余内容保持。直接输出重写后的完整回答。`;
     const roots = s.codeRoots.length ? s.codeRoots.map(p => '- ' + p).join('\n') : '- （未设置，请在当前目录里找）';
     if (r.round === 1 || !t.everAnswered) {
       return [s.instructions, '', '代码位置：', roots, '', `## 家里的问题（编号 ${t.id}${r.round > 1 ? `，第 ${r.round} 轮` : ''}）`, '', r.question].join('\n');
@@ -321,6 +349,13 @@ class CompanyBridge {
       if (this.now() - r.sentAt > NO_ANSWER_MS * 3) return this.failRound(t, r, '会话停下了，但一直没读到回答');
       return;
     }
+    if (this.promptCheck(t, r) === 'hijacked') {
+      const n = (r.hijacked || 0) + 1;
+      if (n > MAX_HIJACK) return this.failRound(t, r, '问题连续被公司电脑剪贴板里的图片顶掉（CodeAgent 粘贴时会读剪贴板）：清空剪贴板后在「家里联动」里点重试');
+      this.patchRound(t, r.round, { sentAt: null, hijacked: n });
+      this.notify('问题被剪贴板图片顶掉', `${t.id}：CodeAgent 收到的是剪贴板里的图片，不是家里的问题；那条回答不发回家，已重新发问`, t.sessionId);
+      return;
+    }
     let text = String(final.text || '').trim();
     if (sourceVerdict(text).tooMuch && !r.rewriteAsked) {
       // 第一次发现成段源码：请它自己改写（同一会话），改写稿出来再发。
@@ -354,6 +389,14 @@ class CompanyBridge {
     await this.link.flush().catch(() => {});
     this.notify('已回执', `${t.id} 第 ${r.round} 轮：${short(text, 60)}`, t.sessionId);
   }
+  // ok：收到的消息里有本题编号；hijacked：这一轮之后只收到过带图片、却没有编号的消息；unknown：读不到记录，照旧处理。
+  promptCheck(t, r) {
+    const meta = this.deps.getSession(t.sessionId) || this.deps.getSessionMetadata?.(t.sessionId) || {};
+    if (!meta.transcriptPath) return 'unknown';
+    const turns = (this.deps.readUserTurns || userTurnsFromTranscript)(meta.transcriptPath).filter(u => u.at >= (r.sentAt || 0) - 5000);
+    if (turns.some(u => u.text.includes('编号 ' + t.id))) return 'ok';
+    return turns.some(u => u.images > 0) ? 'hijacked' : 'unknown';
+  }
   failRound(t, r, why) {
     this.patchRound(t, r.round, { error: why, failedAt: this.now() });
     void this.link.send('status', { thread: t.id, gen: t.gen, round: r.round, state: 'error', note: why }).catch(() => {});
@@ -364,7 +407,7 @@ class CompanyBridge {
     const t = this.thread(id);
     if (!t) throw new Error('找不到这个问题');
     if (t.state === 'cancelled' || t.gen !== this.link.gen()) throw new Error('这个问题属于上一次配对，已作废');
-    const rounds = t.rounds.map(x => x.error && !x.reply ? { ...x, error: null, sentAt: null, failedAt: null, baseline: null } : x);
+    const rounds = t.rounds.map(x => x.error && !x.reply ? { ...x, error: null, sentAt: null, failedAt: null, baseline: null, hijacked: 0 } : x);
     this.saveThread({ ...t, rounds }); this.changed();
     void this.tick({ force: true });
     return this.status();
@@ -373,7 +416,7 @@ class CompanyBridge {
   status() {
     const c = this.link.config(), st = this.link.status();
     return {
-      ok: true, role: 'company', settings: { ...this.settings(), permission: require('./strict').mode() }, permissions: require('./strict').MODES, defaultInstructions: DEFAULT_INSTRUCTIONS,
+      ok: true, role: 'company', settings: this.settings(), defaultInstructions: DEFAULT_INSTRUCTIONS,
       link: { state: c.state || 'none', baseUrl: c.baseUrl || null, pairedAt: c.pairedAt || null, createdAt: c.createdAt || null, outbox: this.link.pendingOutbox() },
       net: { lastOkAt: st.lastOkAt || null, lastError: st.lastError || null, gate: st.gate || null, peerSeen: st.peerSeen || null },
       nextPullAt: this.nextPullAt, now: this.now(),
@@ -385,4 +428,4 @@ class CompanyBridge {
   close() { clearInterval(this.timer); this.timer = null; try { this.store.close(); } catch {} }
 }
 
-module.exports = { CompanyBridge, DEFAULT_INSTRUCTIONS, V1_INSTRUCTIONS, PURPOSE, sourceVerdict, stripCode, deriveState };
+module.exports = { CompanyBridge, DEFAULT_INSTRUCTIONS, V1_INSTRUCTIONS, V2_INSTRUCTIONS, PURPOSE, userTurnsFromTranscript, sourceVerdict, stripCode, deriveState };

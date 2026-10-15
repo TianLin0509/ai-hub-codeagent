@@ -33,12 +33,12 @@
     "releasePage": "https://github.com/TianLin0509/ai-hub-codeagent/releases"
   },
   "releaseNotes": [
-    "家里联动的 CodeAgent 会话不再先切模型，直接用 CodeAgent 的默认模型：上一版会在 /model 菜单上卡住约 1 分钟才开始作答",
-    "家里联动放开成通用助手：除了读代码，还能查这台电脑上的文件、文档和环境，运行查询类命令；默认禁用改写文件的工具，不改动这台电脑，回执仍不含源码",
-    "家里联动弹窗里的「只读方式」改为「权限」三选一：可运行查询命令（默认）/ 只能读文件 / 只靠说明约束；没改过的默认说明自动换成新版"
+    "修复：发问题给 CodeAgent 时，如果剪贴板里正好有一张图片，CodeAgent 收到的会是那张图片而不是问题；现在发送期间先把图片拿开、发完放回，万一仍被顶掉也不会把答图片的回答发出去，会自动重问",
+    "更正：上一版说明里「启动参数上禁用改写工具」实测不生效（CodeAgent 不认这个参数），已去掉这个设置；「不改动这台电脑、不回传源码和无关个人信息」靠给 CodeAgent 的说明约束",
+    "家里联动的会话可以使用这台电脑上已注册的 MCP（AirView、内网搜索等）；运行仿真、发消息这类有副作用的动作，只在对方明确要求时才做"
   ],
-  "version": "1.0.7",
-  "upstreamVersion": "1.6.490",
-  "upstreamCommit": "7ab6eb1693bece2724c38ce4aaa978742b86eb72",
+  "version": "1.0.8",
+  "upstreamVersion": "1.6.492",
+  "upstreamCommit": "02c5b9178d3a430b0cfa1df67baef0163c920d23",
   "upstreamDirty": false
 }

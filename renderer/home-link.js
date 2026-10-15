@@ -1,6 +1,6 @@
 'use strict';
 // 家里联动 · 公司一端的界面（2026-10-15）：设置菜单里不显眼的一项「家里联动」，打开是一个弹窗。
-// 弹窗里：粘贴配对码、网络放行提示、代码位置与给 CodeAgent 的说明（可改）、权限、收到的问题列表。
+// 弹窗里：粘贴配对码、网络放行提示、代码位置与给 CodeAgent 的说明（可改）、收到的问题列表。
 // 只有公司版、且主进程启用了公司一端时才出现；没配对的电脑什么也不做。
 (() => {
   const { ipcRenderer } = require('electron');
@@ -57,11 +57,10 @@
   }
   function settingsView() {
     const s = data.settings;
-    const perms = Object.entries(data.permissions || {}).map(([id, m]) => ({ id, label: m.label }));
     const opt = (list, cur) => list.map(x => `<option value="${esc(x.id)}"${x.id === cur ? ' selected' : ''}>${esc(x.label)}</option>`).join('');
     return `<div class="hl-grid">
       <label>自动作答</label><div class="hl-row"><select data-hl-f="enabled"><option value="1"${s.enabled ? ' selected' : ''}>开：收到问题就开 CodeAgent 会话作答</option><option value="0"${s.enabled ? '' : ' selected'}>关：只收下问题，不作答</option></select></div>
-      <label>权限</label><div class="hl-row"><select data-hl-f="permission">${opt(perms, s.permission)}</select></div>
+      <label>权限</label><div class="hl-muted">CodeAgent 不认禁用工具的启动参数，「不改动这台电脑、不回传源码」靠下面的说明约束；这台电脑上已注册的 MCP（AirView、内网搜索等）可以用。</div>
       <label>代码位置</label><div><textarea rows="3" data-hl-f="codeRoots" placeholder="每行一个目录，例如 D:\\code\\l2">${esc(s.codeRoots.join('\n'))}</textarea><div class="hl-muted">第一行作为 CodeAgent 会话的工作目录，其余目录一并开放读取。</div></div>
       <label>运行</label><div class="hl-row">模型用 CodeAgent 的默认 ·
         思考<select data-hl-f="effort">${opt(['low', 'medium', 'high', 'max'].map(x => ({ id: x, label: { low: '低', medium: '中', high: '高', max: '最高' }[x] })), s.effort)}</select>
@@ -116,7 +115,7 @@
       else if (verb === 'unpair') { if (!window.confirm('解除和家里 Hub 的配对？之后家里需要重新生成配对码。')) return; data = await call('bridge:unpair'); render(); }
       else if (verb === 'reset-instructions') { field('instructions').value = data.defaultInstructions; editing = true; }
       else if (verb === 'save') {
-        await call('bridge:set-settings', { enabled: field('enabled').value === '1', permission: field('permission').value, codeRoots: field('codeRoots').value, effort: field('effort').value,
+        await call('bridge:set-settings', { enabled: field('enabled').value === '1', codeRoots: field('codeRoots').value, effort: field('effort').value,
           maxParallel: Number(field('maxParallel').value), pollSeconds: Number(field('pollSeconds').value), instructions: field('instructions').value });
         editing = false; await load(); toast('家里联动设置已保存');
       }

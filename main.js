@@ -2081,6 +2081,9 @@ try {
     const { CompanyBridge } = require('./core/company-bridge/company');
     const live = new (require('./core/hub-assistant/live-history').LiveHistory)();
     companyBridgeService = new CompanyBridge({ ...bridgeDeps,
+      // CodeAgent 粘贴时会读剪贴板：里面有图片就会顶掉问题文字，发送期间先把图片拿开（core/company-bridge/clipboard-guard.js）。
+      sendPrompt: (sessionId, text, clientSubmissionId) => require('./core/company-bridge/clipboard-guard')
+        .withImageAside(require('electron').clipboard, () => bridgeDeps.sendPrompt(sessionId, text, clientSubmissionId)),
       fallbackCwd: os.homedir(),
       isDirectory: p => { try { return fs.statSync(p).isDirectory(); } catch { return false; } },
       // CodeAgent 的原生记录是 Claude 格式，按 Claude 读最终回答。
