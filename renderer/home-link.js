@@ -2,6 +2,8 @@
 // 公司一端的专用功能（2026-10-15）：设置菜单入口仅标明 AI 特战队使用，配对后才展示配置和任务。
 // 弹窗里：粘贴配对码、网络放行提示、代码位置与给 CodeAgent 的说明（可改）、收到的问题列表。
 // 只有公司版、且主进程启用了公司一端时才出现；没配对的电脑什么也不做。
+// 2026-10-15 起入口默认隐藏：设置菜单弹开时直接在键盘上敲出口令才出现，本机解锁一次后一直显示（core/company-bridge/unlock.js）。
+// 解锁时没有输入框、没有提示，菜单里只是多了这一项。
 (() => {
   const { ipcRenderer } = require('electron');
   let dialog = null, data = null, editing = false;
@@ -51,7 +53,9 @@
   }
   function netView() {
     const n = data.net || {};
-    if (n.gate) return `<div class="hl-banner bad"><span>公司网络要求重新「允许访问」（${clock(n.gate.since)} 起）。点右边打开放行页，点完允许后关掉那个窗口，这里会自动接上；期间收到的问题和要发的回执都不会丢。</span><button class="hl-btn primary" data-hl="gate">打开放行页</button></div>`;
+    const auto = data.settings?.autoGate && n.autoGate;
+    const autoNote = !auto ? '' : auto.cooldownUntil ? `自动放行连续 ${auto.maxTries} 次没成功，${clock(auto.cooldownUntil)} 再试；` : auto.tries ? `已自动尝试放行 ${auto.tries} 次；` : '已开自动放行，正在尝试；';
+    if (n.gate) return `<div class="hl-banner bad"><span>${autoNote}公司网络要求重新「允许访问」（${clock(n.gate.since)} 起）。点右边打开放行页，点完允许后关掉那个窗口，这里会自动接上；期间收到的问题和要发的回执都不会丢。</span><button class="hl-btn primary" data-hl="gate">打开放行页</button></div>`;
     // 放行页有时表现为直接断连（代理掐掉了连接），这里也给放行入口。
     if (n.lastError) return `<div class="hl-banner bad"><span>上次连接通道失败（${clock(n.lastError.at)}）：${esc(n.lastError.message)}。如果是公司网络要求重新允许访问，点「打开放行页」。</span><button class="hl-btn" data-hl="gate">打开放行页</button><button class="hl-btn" data-hl="check">重试</button></div>`;
     return `<div class="hl-banner ok"><span>通道正常 · 上次连通 ${clock(n.lastOkAt)} · ${n.peerSeen ? '对端 Hub ' + ago(n.peerSeen) + '在线' : '等待对端 Hub 连接'}${data.link.outbox ? ` · 待发 ${data.link.outbox} 条` : ''}</span><button class="hl-btn" data-hl="check">立即检查</button></div>`;
@@ -74,6 +78,8 @@
         同时<select data-hl-f="maxParallel">${opt([1, 2, 3, 4].map(x => ({ id: String(x), label: x + ' 个' })), String(s.maxParallel))}</select>
         空闲检查间隔<select data-hl-f="pollSeconds">${opt([...new Set([10, 15, 30, 60, 120, s.pollSeconds])].sort((a, b) => a - b).map(x => ({ id: String(x), label: x + ' 秒' })), String(s.pollSeconds))}</select>
         <div class="hl-muted">任务开始后自动每 10 秒检查；结束后保持 10 分钟，随后恢复空闲间隔。</div></div>
+      <label>网络放行</label><div><select data-hl-f="autoGate"><option value="0"${s.autoGate ? '' : ' selected'}>手动：被拦时提示我去点放行页</option><option value="1"${s.autoGate ? ' selected' : ''}>自动放行（我已知晓风险）</option></select>
+        <div class="hl-muted">自动放行：公司网络弹出放行页时，Hub 在后台替你点「继续访问」并重新连接；连续 3 次没放行就停下提示你，30 分钟后再试。</div></div>
       <label>给 CodeAgent<br>的说明</label><div><textarea rows="8" data-hl-f="instructions">${esc(s.instructions)}</textarea>
         <div class="hl-row hl-muted">每个新任务都以这段说明开头，后面自动接上代码位置和任务内容。<button class="hl-link" data-hl="reset-instructions">恢复默认说明</button></div></div>
     </div><div class="hl-foot"><button class="hl-btn primary" data-hl="save">保存设置</button></div>`;
@@ -141,7 +147,8 @@
       else if (verb === 'reset-instructions') { field('instructions').value = data.defaultInstructions; editing = true; }
       else if (verb === 'save') {
         await call('bridge:set-settings', { enabled: field('enabled').value === '1', codeRoots: field('codeRoots').value, effort: field('effort').value,
-          maxParallel: Number(field('maxParallel').value), pollSeconds: Number(field('pollSeconds').value), instructions: field('instructions').value });
+          maxParallel: Number(field('maxParallel').value), pollSeconds: Number(field('pollSeconds').value), instructions: field('instructions').value,
+          ...(field('autoGate') ? { autoGate: field('autoGate').value === '1' } : {}) });
         editing = false; await load(); toast('AI特战队专用功能设置已保存');
       }
     } catch (error) { toast(error.message); }
@@ -168,11 +175,35 @@
     item.addEventListener('click', () => { menu.style.display = 'none'; open(); });
     menu.appendChild(item);
   }
-  ipcRenderer.invoke('bridge:status').then(status => {
-    if (!status || status.role !== 'company') return;
+  function enable() {
     addMenuEntry();
     window.__homeLinkOpen = open;
     ipcRenderer.on('bridge:changed', () => { if (dialog?.open) void load().catch(() => {}); });
     ipcRenderer.on('bridge:notification', (_e, n) => { if (n?.text) toast(n.title + '：' + n.text); });
+  }
+  // 隐藏入口：设置菜单开着时记下连续敲的字母（只看字母，不拦截按键）；在输入框、终端里打字不算，菜单关了就清空。
+  function watchUnlock() {
+    const { matchesUnlock, UNLOCK_LENGTH } = require('../core/company-bridge/unlock');
+    let typed = '';
+    const typingInField = el => !!el?.closest?.('input, textarea, select, [contenteditable=""], [contenteditable="true"], .xterm');
+    const onKey = e => {
+      const menu = document.getElementById('options-menu');
+      if (!menu || menu.style.display === 'none' || !menu.getClientRects().length) { typed = ''; return; }
+      if (e.ctrlKey || e.altKey || e.metaKey || e.isComposing || typeof e.key !== 'string' || !/^[a-z]$/i.test(e.key)) return;
+      if (typingInField(e.target) || typingInField(document.activeElement)) return;
+      typed = (typed + e.key.toLowerCase()).slice(-UNLOCK_LENGTH);
+      if (!matchesUnlock(typed)) return;
+      const text = typed; typed = '';
+      ipcRenderer.invoke('bridge:unlock', { text }).then(r => {
+        if (!r?.unlocked) return;
+        document.removeEventListener('keydown', onKey, true);
+        enable();
+      }).catch(() => {});
+    };
+    document.addEventListener('keydown', onKey, true);
+  }
+  ipcRenderer.invoke('bridge:status').then(status => {
+    if (!status || status.role !== 'company') return;
+    if (status.unlocked) enable(); else watchUnlock();
   }).catch(() => {});
 })();

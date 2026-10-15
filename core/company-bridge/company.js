@@ -16,6 +16,9 @@ const { BridgeLink } = require('./link');
 const { receiptPromptFingerprint } = require('./receipt-reader');
 // 反方向（这台电脑上的 CodeAgent 用 ask_home 向家里求助）由 ask-home.js 处理，共用这条通道和数据库。
 const { AskHome } = require('./ask-home');
+// 2026-10-15：设置菜单的隐藏入口（unlock.js）与放行页自动点击（gate-pass.js）。
+const { matchesUnlock } = require('./unlock');
+const { GatePasser } = require('./gate-pass');
 
 const PURPOSE = 'company-bridge';
 // 历代默认说明：没改过的老设置里存的就是它们，读设置时换成当前默认。
@@ -48,7 +51,7 @@ const V3_INSTRUCTIONS = [
 // 只迁移未改过的默认说明；成员自己写的说明原样保留。
 const DEFAULT_INSTRUCTIONS = V3_INSTRUCTIONS.replace('替家里的 Agent 办事', '为已配对的授权 Agent 处理任务').replace('家里的问题里', '任务中');
 const OLD_DEFAULTS = [V1_INSTRUCTIONS, V2_INSTRUCTIONS, V3_INSTRUCTIONS];
-const DEFAULT_SETTINGS = Object.freeze({ enabled: true, codeRoots: [], instructions: DEFAULT_INSTRUCTIONS, effort: 'high', maxParallel: 2, pollSeconds: 30 });
+const DEFAULT_SETTINGS = Object.freeze({ enabled: true, codeRoots: [], instructions: DEFAULT_INSTRUCTIONS, effort: 'high', maxParallel: 2, pollSeconds: 30, autoGate: false });
 const ACTIVE_POLL_MS = 10000;
 const FOLLOWUP_WINDOW_MS = 10 * 60000;
 const EFFORTS = ['low', 'medium', 'high', 'max'];
@@ -163,9 +166,21 @@ class CompanyBridge {
     this.link = new BridgeLink({ side: 'company', store: this.store, fetchImpl: deps.fetchImpl, now: () => this.now() });
     this.busy = null; this.advanceBusy = null; this.deliverBusy = null; this.timer = null; this.nextPullAt = 0; this.lastPullAt = 0;
     this.askHome = new AskHome({ bridge: this, deps });
+    this.gatePass = new GatePasser({ open: url => deps.openHiddenGate(url), logDir: path.join(deps.dataDir, 'logs'), now: () => this.now(),
+      notify: (title, text) => this.notify(title, text) });
+    // 升级前就配对过的电脑（入口还没隐藏时用过）直接算已解锁，不让成员升级后找不到入口。
+    if (!this.store.get('featureUnlock') && (this.link.config().state || 'none') !== 'none') this.store.set('featureUnlock', { at: this.now(), via: 'paired' });
     if (!deps.noTimer) claimTimers(this.store);
   }
   now() { return this.deps.now ? this.deps.now() : Date.now(); }
+  // 隐藏入口：本机解锁过一次就一直显示（存在本机数据目录）。
+  unlocked() { return !!this.store.get('featureUnlock'); }
+  unlock(text) {
+    if (!matchesUnlock(text, this.deps.unlockDigest)) return false;
+    if (!this.unlocked()) this.store.set('featureUnlock', { at: this.now(), via: 'keys' });
+    this.changed();
+    return true;
+  }
   settings() {
     const { model: _oldModel, ...s } = this.store.get('settings') || {}; // 旧版存过模型，现在不用
     const instructions = !s.instructions || OLD_DEFAULTS.includes(s.instructions.trim()) ? DEFAULT_INSTRUCTIONS : s.instructions;
@@ -183,6 +198,7 @@ class CompanyBridge {
     if ('effort' in patch) { if (!EFFORTS.includes(patch.effort)) throw new Error('思考深度只能是 low / medium / high / max'); next.effort = patch.effort; }
     if ('maxParallel' in patch) { const n = Number(patch.maxParallel); if (!Number.isInteger(n) || n < 1 || n > 4) throw new Error('同时处理的问题数只能是 1–4'); next.maxParallel = n; }
     if ('pollSeconds' in patch) { const n = Number(patch.pollSeconds); if (!Number.isInteger(n) || n < 10 || n > 600) throw new Error('检查间隔只能是 10–600 秒'); next.pollSeconds = n; }
+    if ('autoGate' in patch) next.autoGate = patch.autoGate === true;
     this.store.set('settings', next);
     this.tightenPoll(); this.changed();
     return next;
@@ -238,6 +254,7 @@ class CompanyBridge {
         this.lastPullAt = this.now();
         this.nextPullAt = this.lastPullAt + this.polling().intervalSeconds * 1000;
         try { await this.link.pull(message => this.receive(message)); } catch {}
+        await this.passGate();
         this.changed();
       }
     })().finally(() => { this.busy = null; });
@@ -251,6 +268,15 @@ class CompanyBridge {
       if (!this.deliverBusy) this.deliverBusy = this.askHome.deliver().finally(() => { this.deliverBusy = null; });
       await this.deliverBusy;
     }
+  }
+  // 通道被放行页拦着、且开了自动放行：在看不见的窗口里点一次放行，点到了立即重试连接。
+  async passGate() {
+    const gate = this.link.status().gate;
+    if (!gate) { if (this.gatePass.passed()) this.notify('已自动放行', '公司网络的放行页已自动点过，通道恢复。'); return; }
+    if (!this.settings().autoGate || !this.deps.openHiddenGate) return;
+    if (!(await this.gatePass.attempt(gate.url || this.link.client().gatePage()))) return;
+    try { await this.link.pull(message => this.receive(message)); } catch {}
+    if (!this.link.status().gate && this.gatePass.passed()) this.notify('已自动放行', '公司网络的放行页已自动点过，通道恢复。');
   }
   checkNow() { this.nextPullAt = 0; return this.tick({ force: true }).then(() => this.status()); }
 
@@ -482,9 +508,9 @@ class CompanyBridge {
   status() {
     const c = this.link.config(), st = this.link.status();
     return {
-      ok: true, role: 'company', settings: this.settings(), defaultInstructions: DEFAULT_INSTRUCTIONS,
+      ok: true, role: 'company', unlocked: this.unlocked(), settings: this.settings(), defaultInstructions: DEFAULT_INSTRUCTIONS,
       link: { state: c.state || 'none', baseUrl: c.baseUrl || null, pairedAt: c.pairedAt || null, createdAt: c.createdAt || null, outbox: this.link.pendingOutbox() },
-      net: { lastOkAt: st.lastOkAt || null, lastError: st.lastError || null, gate: st.gate || null, peerSeen: st.peerSeen || null },
+      net: { lastOkAt: st.lastOkAt || null, lastError: st.lastError || null, gate: st.gate || null, peerSeen: st.peerSeen || null, autoGate: this.gatePass.status() },
       nextPullAt: this.nextPullAt, now: this.now(), polling: this.polling(),
       threads: this.threads().map(t => ({ ...t, session: t.sessionId ? { open: !!this.deps.getSession(t.sessionId), busy: this.sessionBusy(t.sessionId) } : null })),
       askHome: this.askHome.status(),

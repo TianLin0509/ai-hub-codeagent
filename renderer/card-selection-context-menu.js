@@ -1,10 +1,14 @@
 'use strict';
 
+const { readSelectedText } = require('./clipboard-controller.js');
+
 function createCardSelectionContextMenuController({
   document,
   window,
   menuEl,
   clipboard,
+  copyText,
+  expandText = text => text,
   pushToChatgpt,
   requestAnimationFrameFn = requestAnimationFrame,
 }) {
@@ -46,11 +50,16 @@ function createCardSelectionContextMenuController({
   }
 
   async function runAction(action, text = selectedText) {
-    const value = String(text || '');
+    const value = expandText(String(text || ''));
     if (!value.trim()) return { ok: false, error: '没有选中文字。' };
     if (action === 'copy') {
+      if (typeof copyText === 'function') {
+        const result = await copyText(value, { source: 'card-context-menu' });
+        return { ...result, copied: result?.ok === true };
+      }
       await Promise.resolve(clipboard.writeText(value));
-      return { ok: true, copied: true };
+      const ok = typeof clipboard.readText === 'function' && clipboard.readText() === value;
+      return { ok, copied: ok };
     }
     if (action === 'sync-chatgpt' && typeof pushToChatgpt === 'function') {
       return pushToChatgpt(value, '卡片选中文字');
@@ -60,8 +69,9 @@ function createCardSelectionContextMenuController({
 
   function init() {
     document.addEventListener('contextmenu', (event) => {
-      if (!event.target || !event.target.closest || !event.target.closest('#msg-overlay .turn-card')) return;
-      const value = readCardSelection();
+      if (!event.target?.closest || event.target.closest('.xterm')) return;
+      if (!event.target.closest('.turn-card, #preview-body, input, textarea, [contenteditable="true"]')) return;
+      const value = readSelectedText(event.target, window);
       if (!value || !open(value, event.clientX, event.clientY)) return;
       event.preventDefault();
       if (typeof event.stopImmediatePropagation === 'function') event.stopImmediatePropagation();

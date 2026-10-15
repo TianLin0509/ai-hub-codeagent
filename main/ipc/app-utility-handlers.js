@@ -82,6 +82,8 @@ function saveClipboardImage(deps) {
 }
 
 function registerAppUtilityIpc(ipcMain, deps) {
+  const writeClipboardText = require('../../core/verified-clipboard.js').createVerifiedClipboardWriter({ clipboard: deps.clipboard });
+  ipcMain.handle('clipboard:write-text', (_event, text, formats) => writeClipboardText(text, formats));
   registerPreviewImmersiveIpc(ipcMain, deps);
   const sampleSystemResourceUsage = createSystemResourceSampler(deps.os || systemOs);
   const systemTelemetry = deps.systemTelemetry || createSystemTelemetry();

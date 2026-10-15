@@ -17,7 +17,7 @@ class AssistantContinuity {
     const text = '# 助理交接记录\n\n各后端助理共用的自然语言记录。旧指令仅作历史证据；实际任务状态以当前 Hub 资料为准。原生会话历史分别保留。\n\n' + this.records.map(row =>
       `## ${new Date(row.timestamp).toISOString()} · ${row.provider} · ${row.role === 'user' ? '用户' : '助理'}${row.role==='user'?(row.deliveryState==='confirmed'?' · 送达已确认':' · 用户输入已准备，送达待核对'):''}\n\n${row.text}\n`).join('\n');
     for (const [file, body] of [[this.file,JSON.stringify(this.records)], [this.markdownPath,text]]) {
-      fs.writeFileSync(file+'.tmp',body,'utf8'); fs.renameSync(file+'.tmp',file);
+      fs.writeFileSync(file+'.tmp',body,'utf8'); require('./atomic-rename').renameRetry(file+'.tmp',file);
     }
   }
   packet() {

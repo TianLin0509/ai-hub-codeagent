@@ -46,6 +46,7 @@ function createClipboardController({
   document,
   window,
   clipboard,
+  writeTextVerified = null,
   retryDelaysMs = DEFAULT_RETRY_DELAYS_MS,
   wait = ms => new Promise(resolve => setTimeout(resolve, ms)),
   setTimeoutFn = setTimeout,
@@ -59,6 +60,7 @@ function createClipboardController({
     .map(value => Math.max(0, Number(value) || 0));
   let feedbackTimer = null;
   let initialized = false;
+  let copySequence = 0;
 
   function ensureFeedbackElement() {
     if (!renderFeedback || !document || !document.body) return null;
@@ -85,6 +87,7 @@ function createClipboardController({
   }
 
   function showFeedback(feedback = {}) {
+    if (feedback.reason === 'superseded') return feedback;
     const ok = feedback.ok === true;
     const length = Math.max(0, Number(feedback.length) || 0);
     const attempts = Math.max(1, Number(feedback.attempts) || 1);
@@ -122,7 +125,7 @@ function createClipboardController({
   }
 
   function clipboardMatches(expected) {
-    if (!clipboard || typeof clipboard.readText !== 'function') return true;
+    if (!clipboard || typeof clipboard.readText !== 'function') return false;
     return normalizeClipboardText(clipboard.readText()) === normalizeClipboardText(expected);
   }
 
@@ -130,8 +133,21 @@ function createClipboardController({
   //   它把结果显示在按钮上），避免同一次复制弹两处提示。
   async function copyText(value, options = {}) {
     const text = String(value == null ? '' : value);
+    const sequence = ++copySequence;
+    const superseded = () => ({ ok: false, reason: 'superseded', attempts: 0, length: countCharacters(text) });
     const report = options.silent ? (payload => payload) : showFeedback;
     if (!text) return { ok: false, reason: 'empty', attempts: 0, length: 0 };
+    if (typeof writeTextVerified === 'function') {
+      let result;
+      try {
+        result = await writeTextVerified(text, options.html ? { html: options.html } : undefined);
+        if (!result || typeof result.ok !== 'boolean') throw new Error('clipboard verification unavailable');
+      } catch (error) {
+        result = { ok: false, reason: error.message, attempts: 1 };
+      }
+      if (sequence !== copySequence || result.reason === 'superseded') return superseded();
+      return report({ ...result, length: countCharacters(text), source: options.source || 'selection' });
+    }
     if (!clipboard || typeof clipboard.writeText !== 'function') {
       return report({ ok: false, reason: 'clipboard-unavailable', attempts: 1, length: countCharacters(text), source: options.source });
     }
@@ -141,8 +157,10 @@ function createClipboardController({
     for (let index = 0; index < attempts; index += 1) {
       const delay = delays[index] || 0;
       if (delay > 0) await wait(delay);
+      if (sequence !== copySequence) return superseded();
       try {
         await Promise.resolve(clipboard.writeText(text));
+        if (sequence !== copySequence) return superseded();
         if (clipboardMatches(text)) {
           const result = {
             ok: true,
@@ -185,21 +203,22 @@ function createClipboardController({
   }
 
   function handleNativeCopy(event) {
-    // Covers menu/context-menu copy paths that do not pass through keydown.
-    // Let Chromium preserve rich formats first, then verify plain text and repair
-    // only if the native clipboard write was lost.
+    // 菜单复制也立即走同一写入方，不能留下一个稍后修复旧选区的定时器。
     if (!event || event.defaultPrevented) return;
-    const text = expandText(readSelectedText(event.target, window));
+    const rawText = readSelectedText(event.target, window);
+    const text = expandText(rawText);
     if (!text) return;
-    setTimeoutFn(() => {
-      try {
-        if (clipboardMatches(text)) {
-          showFeedback({ ok: true, attempts: 1, length: countCharacters(text), source: 'native-copy' });
-          return;
-        }
-      } catch (_) {}
-      void copyText(text, { source: 'native-copy-repair' });
-    }, 0);
+    // Preserve the native menu's rich-text format as well as the verified plain text.
+    let html;
+    const selection = window?.getSelection?.();
+    if (text === rawText && !elementForTarget(event.target)?.closest?.('input, textarea') && selection?.rangeCount && selection.getRangeAt && document?.createElement) {
+      const fragment = document.createElement('div');
+      fragment.appendChild(selection.getRangeAt(0).cloneContents());
+      html = fragment.innerHTML;
+    }
+    event.preventDefault?.();
+    event.stopImmediatePropagation?.();
+    void copyText(text, { source: 'native-copy', html });
   }
 
   function init() {
@@ -211,6 +230,7 @@ function createClipboardController({
   }
 
   function destroy() {
+    copySequence++;
     if (!initialized || !document || typeof document.removeEventListener !== 'function') return;
     initialized = false;
     document.removeEventListener('keydown', handleKeydown, true);

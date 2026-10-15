@@ -27,7 +27,7 @@ class AssistantLedger {
     this.saveState();
   }
   // 每个进程用自己的临时文件名，多开 Hub 时不会撞名；只有内容变了才写盘。
-  saveState() { const tmp = `${this.stateFile}.${process.pid}.tmp`; fs.writeFileSync(tmp, JSON.stringify(this.state), 'utf8'); fs.renameSync(tmp, this.stateFile); this.dirty = false; }
+  saveState() { const tmp = `${this.stateFile}.${process.pid}.tmp`; fs.writeFileSync(tmp, JSON.stringify(this.state), 'utf8'); require('./atomic-rename').renameRetry(tmp, this.stateFile); this.dirty = false; }
   flush() { if (this.dirty) this.saveState(); }
   append(entry) {
     const seen = this.state.seen[entry.sessionId] || [];
@@ -113,7 +113,7 @@ class AssistantLedger {
     const cutoff = this.now() - keepDays * 86400000;
     const kept = this.entries().filter(entry => (entry.recordedAt || entry.at) >= cutoff);
     const tmp = `${this.file}.${process.pid}.tmp`;
-    fs.writeFileSync(tmp, kept.map(entry => JSON.stringify(entry)).join('\n') + (kept.length ? '\n' : ''), 'utf8'); fs.renameSync(tmp, this.file);
+    fs.writeFileSync(tmp, kept.map(entry => JSON.stringify(entry)).join('\n') + (kept.length ? '\n' : ''), 'utf8'); require('./atomic-rename').renameRetry(tmp, this.file);
     // 30 天没有活动的会话，游标和去重表一起清掉，状态文件不会越积越大。
     for (const id of Object.keys(this.state.touched)) if (this.state.touched[id] < cutoff) { delete this.state.touched[id]; delete this.state.cursors[id]; delete this.state.seen[id]; this.dirty = true; }
     this.flush();

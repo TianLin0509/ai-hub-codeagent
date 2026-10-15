@@ -19,7 +19,8 @@ function renameWithRetrySync(source, target, options = {}) {
       fsImpl.renameSync(source, target);
       return attempt;
     } catch (error) {
-      if (!error || !retryCodes.has(error.code) || attempt >= retries) throw error;
+      // 进程级改名重试（core/fs-rename-retry.js）已经重试过的不再叠加。
+      if (!error || !retryCodes.has(error.code) || attempt >= retries || error.renameRetried !== undefined) throw error;
       sleep(retryDelayMs);
     }
   }

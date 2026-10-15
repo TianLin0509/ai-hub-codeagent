@@ -426,7 +426,7 @@ class AssistantService {
     return finish(session,id);
   }
   getLaunchOptions(kind,id){return backends.launchOptions(this,backends.backendKind(kind),id);}
-  async connectBridge(){await this.bridge.start();const temporary=this.endpointFile+'.'+process.pid+'.tmp';fs.writeFileSync(temporary,JSON.stringify({url:this.bridge.url,token:this.bridge.secret}),{mode:0o600});fs.renameSync(temporary,this.endpointFile);}
+  async connectBridge(){await this.bridge.start();const temporary=this.endpointFile+'.'+process.pid+'.tmp';fs.writeFileSync(temporary,JSON.stringify({url:this.bridge.url,token:this.bridge.secret}),{mode:0o600});require('./atomic-rename').renameRetry(temporary,this.endpointFile);}
   getMcpEntry(sessionId=this.store.get('sessionId')){return{name:'hub_assistant',command:this.deps.nodeExecutable||'node',args:[path.resolve(__dirname,'../../scripts/assistant-mcp.js')],env:{HUB_ASSISTANT_ENDPOINT_FILE:this.endpointFile,HUB_ASSISTANT_SESSION_ID:sessionId||''},toolApprovalModes:{list_sessions:'approve',history_context:'approve',session_evidence:'approve',watch_session:'approve',send_session:'approve',create_session:'approve',update_memory:'approve'},toolOutputTokenLimits:{history_context:50000,session_evidence:50000}};}
   isAssistantSession(sessionId){return isAssistantSession(this.store,sessionId,this.deps.getSession(sessionId));}
   // 已换班的旧助理可以打开查看历史；它不再是固定助理，会话管理工具在每次调用时都会被拒绝。

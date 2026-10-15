@@ -10,6 +10,16 @@ function normalizeTitle(title) {
   return String(title || '').trim();
 }
 
+// Logo 已标明客户端。只清除旧兜底自动加上的「客户端 · 」；手动名称与正文里的型号保留。
+function sessionDisplayTitle(session, kindLabels = KIND_LABELS) {
+  const title = normalizeTitle(session?.title);
+  if (!title.includes('·') || session?.userRenamed || isGenericAutoSessionTitle(title, kindLabels)) return title;
+  const kinds = resolveKindLabels(kindLabels);
+  const labels = [...new Set([...Object.values(kinds), ...Object.keys(kinds)])].filter(Boolean).map(escapeRegExp).join('|');
+  if (!labels) return title;
+  return title.replace(new RegExp(`^(分支\\s*\\d*\\s*[:：]\\s*)?(?:${labels})\\s*·\\s*(?=\\S)`, 'i'), '$1');
+}
+
 function stripBranchTitlePrefix(title) {
   return normalizeTitle(title).replace(/^分支\s*\d*\s*[:：]\s*/u, '').trim();
 }
@@ -38,6 +48,8 @@ function normalizeLegacyBranchSessionTitle(title) {
 
 function migrateLegacyBranchSessionMeta(session, kindLabels = KIND_LABELS) {
   if (!session || typeof session !== 'object') return session;
+  const displayTitle = sessionDisplayTitle(session, kindLabels);
+  if (displayTitle && displayTitle !== normalizeTitle(session.title)) session = { ...session, title: displayTitle };
   const originalTitle = normalizeTitle(session.title);
   const title = normalizeLegacyBranchSessionTitle(originalTitle);
   if (!title || title === originalTitle) return session;
@@ -132,4 +144,5 @@ module.exports = {
   parseBranchSessionIndex,
   shouldAcceptExternalSessionTitle,
   stripBranchTitlePrefix,
+  sessionDisplayTitle,
 };

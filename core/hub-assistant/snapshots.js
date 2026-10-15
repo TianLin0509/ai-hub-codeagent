@@ -9,7 +9,7 @@ class AssistantSnapshots {
     const packetHash=hashPacket(packet),createdAt=Date.now();
     const snapshot={schemaVersion:1,requestId,requestToken,createdAt,packetHash,packet};
     fs.mkdirSync(this.directory,{recursive:true});const file=this.file(requestToken),tmp=file+'.tmp';
-    fs.writeFileSync(tmp,JSON.stringify(snapshot),{encoding:'utf8',mode:0o600});fs.renameSync(tmp,file);
+    fs.writeFileSync(tmp,JSON.stringify(snapshot),{encoding:'utf8',mode:0o600});require('./atomic-rename').renameRetry(tmp,file);
     this.prune(createdAt);
     const manifest={requestToken,packetHash,sourceCount:packet.sources.length,selectedChars:packet.selectedChars||0,
       asOf:packet.asOf,since:packet.since,until:packet.until,range:packet.range,truncated:!!packet.truncated,

@@ -1,6 +1,7 @@
 'use strict';
 // 家里联动的主进程入口（2026-10-15）：家里 Hub 与公司 Hub 共用一组 IPC，按本机角色接到不同的服务。
 //   家里：生成配对码、看往来、挂载范围；公司：粘贴配对码、代码位置与说明、模型、放行页。
+// 公司一端没解锁隐藏入口前（core/company-bridge/unlock.js），只回答「是公司角色、未解锁」和解锁本身，其余一律拒绝。
 function registerCompanyBridgeIpc(ipcMain, service, { openGate } = {}) {
   const role = service.status().role;
   const handlers = {
@@ -31,8 +32,19 @@ function registerCompanyBridgeIpc(ipcMain, service, { openGate } = {}) {
       return service.checkNow();
     };
   }
+  const locked = () => role === 'company' && !service.unlocked();
+  if (role === 'company') {
+    handlers.status = () => locked() ? { ok: true, role: 'company', unlocked: false } : service.status();
+    handlers.unlock = request => ({ ok: true, unlocked: service.unlock(String(request?.text || '')) });
+  }
+  const open = new Set(['status', 'unlock']);
   for (const [name, handler] of Object.entries(handlers)) {
-    ipcMain.handle('bridge:' + name, async (_event, request = {}) => { try { return await handler(request); } catch (error) { return { ok: false, error: error.message }; } });
+    ipcMain.handle('bridge:' + name, async (_event, request = {}) => {
+      try {
+        if (!open.has(name) && locked()) throw new Error('功能未启用');
+        return await handler(request);
+      } catch (error) { return { ok: false, error: error.message }; }
+    });
   }
   return service;
 }

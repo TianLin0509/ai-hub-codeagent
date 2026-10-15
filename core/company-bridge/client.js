@@ -30,6 +30,9 @@ class BridgeClient {
     try {
       response = await this.fetch(url, { ...init, redirect: 'manual', cache: 'no-store', signal: AbortSignal.timeout(this.timeoutMs) });
     } catch (error) {
+      // Electron 的 net.fetch 遇到跳转（redirect: 'manual'）不返回跳转响应，而是直接报「Redirect was cancelled」
+      // （2026-10-15 真实 Electron 实测）：这正是代理把请求跳到放行页，按待放行处理，放行页用收件箱网页（会被代理再跳到放行页）。
+      if (/redirect/i.test(String(error && error.message || ''))) throw new BridgeError('gate', '网络要求重新放行（请求被跳转）', { gateUrl: this.gatePage(), status: 0 });
       throw new BridgeError('offline', '连不上通道：' + (error && error.message || error));
     }
     const type = String(response.headers?.get?.('content-type') || '');

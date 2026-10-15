@@ -70,6 +70,7 @@ function createPreviewPanelController({
   ipcRenderer,
   shell,
   clipboard,
+  copyText,
   fs,
   marked,
   DOMPurify,
@@ -80,6 +81,7 @@ function createPreviewPanelController({
   refitActiveTerminal,
   onReturnToConversation,
   onCopyFeedback,
+  onSelectionContextMenu,
   onBeforeOpen,
 }) {
   const previewPanelEl = document.getElementById('preview-panel');
@@ -545,6 +547,15 @@ function createPreviewPanelController({
         const feedback = event.args && event.args[0] || {};
         if (typeof onCopyFeedback === 'function') onCopyFeedback(feedback);
         else showPreviewNotice(feedback.message || (feedback.ok ? '已复制' : '复制失败'), feedback.ok ? 'success' : 'error');
+        return;
+      }
+      if (event.channel === 'preview-selection-menu') {
+        const selection = event.args?.[0];
+        if (selection?.text && typeof onSelectionContextMenu === 'function') {
+          const rect = webview.getBoundingClientRect();
+          onSelectionContextMenu(selection.text, rect.left + selection.x * rect.width / (selection.width || rect.width),
+            rect.top + selection.y * rect.height / (selection.height || rect.height));
+        }
         return;
       }
       if (event.channel !== 'preview-shortcut') return;
@@ -1042,7 +1053,7 @@ function createPreviewPanelController({
     return true;
   }
 
-  function copyOutlineReference() {
+  async function copyOutlineReference() {
     const state = getContextState();
     const tab = getActiveTab(state);
     const mode = outlineModeForTab(tab);
@@ -1061,7 +1072,7 @@ function createPreviewPanelController({
     }
     const reference = formatPreviewReference(tab && tab.path, { line, anchor });
     if (!reference) return false;
-    writeClipboard(reference);
+    await writeClipboard(reference);
     flashIconButton(outlineCopyEl, '引用已复制');
     return reference;
   }
@@ -1566,16 +1577,21 @@ function createPreviewPanelController({
     }, 1200);
   }
 
-  function writeClipboard(text) {
+  async function writeClipboard(text) {
+    if (typeof copyText === 'function') {
+      const result = await copyText(String(text), { source: 'preview', silent: true });
+      if (!result?.ok) throw new Error(result?.reason || '复制失败');
+      return;
+    }
     if (!clipboard || typeof clipboard.writeText !== 'function') throw new Error('clipboard unavailable');
-    clipboard.writeText(String(text));
+    await clipboard.writeText(String(text));
   }
 
   async function copyPreviewPath() {
     const button = document.getElementById('preview-copy-path');
     if (!currentPreviewPath) return;
     try {
-      writeClipboard(currentPreviewPath);
+      await writeClipboard(currentPreviewPath);
       flashButton(button, '路径已复制');
     } catch (error) {
       console.warn('[preview] copy path failed:', error);
@@ -1627,7 +1643,7 @@ function createPreviewPanelController({
           || currentState.activeTabId !== snapshot.tabId) {
         throw new Error('预览已切换，已取消复制');
       }
-      writeClipboard(content || '');
+      await writeClipboard(content || '');
       flashButton(button, '全文已复制');
     } catch (error) {
       console.warn('[preview] copy content failed:', error);

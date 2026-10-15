@@ -75,7 +75,7 @@ function providerLaunchOptions(service, kind, id) {
   const file = path.join(service.deps.dataDir, 'assistant', 'claude-' + id + '-mcp.json');
   const {command, args, env} = entry;
   fs.writeFileSync(file + '.tmp', JSON.stringify({mcpServers:{hub_assistant:{command,args,env}}}), {mode:0o600});
-  fs.renameSync(file + '.tmp', file);
+  require('./atomic-rename').renameRetry(file + '.tmp', file);
   // Dedicated assistant only. Hub still checks host identity and the current
   // user-request token on every management operation.
   // Claude 助理把成长记忆（USER.md / MEMORY.md）放进系统提示，每轮生效、不占每轮附带的 2048 字。

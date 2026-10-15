@@ -333,6 +333,7 @@ function createTerminalContextMenuController({
   window,
   termCtxMenuEl,
   openPreviewPanel,
+  copyText,
   syncSelection,
   requestAnimationFrameFn = requestAnimationFrame,
 }) {
@@ -373,6 +374,12 @@ function createTerminalContextMenuController({
     const syncBtn = typeof syncSelection === 'function'
       ? termCtxMenuEl.querySelector('[data-action="sync-chatgpt"]')
       : null;
+    const copyBtn = typeof copyText === 'function' ? termCtxMenuEl.querySelector('[data-action="copy"]') : null;
+    if (copyBtn) copyBtn.addEventListener('click', async () => {
+      const selection = termCtxMenuSelection;
+      close();
+      if (selection) await copyText(selection, { source: 'terminal-context-menu' });
+    });
     if (syncBtn) {
       syncBtn.addEventListener('click', async () => {
         const sel = termCtxMenuSelection;

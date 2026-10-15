@@ -32,7 +32,7 @@ class AssistantDossier {
     fs.mkdirSync(path.dirname(file), { recursive: true });
     try { if (fs.readFileSync(file, 'utf8') === text) return file; } catch (error) { if (error.code !== 'ENOENT') throw error; }
     const tmp = file + '.' + process.pid + '.tmp';
-    fs.writeFileSync(tmp, text, 'utf8'); fs.renameSync(tmp, file);
+    fs.writeFileSync(tmp, text, 'utf8'); require('./atomic-rename').renameRetry(tmp, file);
     return file;
   }
   publish(inventory, identity = '') {

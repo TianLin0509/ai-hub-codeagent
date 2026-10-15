@@ -34,10 +34,8 @@ function createAutoTitleManager(deps) {
       .replace(/[#*_`>\[\](){}<>]/g, ' ')
       .replace(/\s+/g, ' ')
       .trim();
-    const baseKind = String(kind || '').replace(/-resume$/, '');
-    const prefix = kindLabels[baseKind] || '会话';
     if (!clean) return '';
-    return `${prefix} · ${clean.slice(0, 18)}`;
+    return clean.slice(0, 18);
   }
 
   function fallbackMeetingTitleFromPrompt(text) {

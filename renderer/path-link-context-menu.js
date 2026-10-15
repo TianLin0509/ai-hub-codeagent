@@ -10,6 +10,7 @@ function createPathLinkContextMenuController({
   window,
   menuEl,
   clipboard,
+  copyText,
   shell,
   ipcRenderer,
   normalizeLocalPathForOpen,
@@ -126,7 +127,8 @@ function createPathLinkContextMenuController({
     if (!t) return;
     try {
       if (action === 'copy-abs-path') {
-        clipboard.writeText(t.absPath);
+        if (typeof copyText === 'function') return await copyText(t.absPath, { source: 'path-context-menu' });
+        await clipboard.writeText(t.absPath);
       } else if (action === 'copy-file') {
         if (t.isUrl) return;
         const r = await ipcRenderer.invoke('clipboard-copy-file', t.absPath);

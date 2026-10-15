@@ -12,7 +12,7 @@ class VideoStudio{
   }
   dir(id){if(!ID.test(id))throw Error('视频编号无效');return path.join(this.root,id);}
   read(id){return JSON.parse(fs.readFileSync(path.join(this.dir(id),'manifest.json'),'utf8'));}
-  save(m){const dir=this.dir(m.id);fs.mkdirSync(dir,{recursive:true});const f=path.join(dir,'manifest.json');fs.writeFileSync(f+'.tmp',JSON.stringify(m));fs.renameSync(f+'.tmp',f);this.a.workbench?.changed();return m;}
+  save(m){const dir=this.dir(m.id);fs.mkdirSync(dir,{recursive:true});const f=path.join(dir,'manifest.json');fs.writeFileSync(f+'.tmp',JSON.stringify(m));require('./atomic-rename').renameRetry(f+'.tmp',f);this.a.workbench?.changed();return m;}
   list(){const out=[];for(const id of fs.readdirSync(this.root)){if(!ID.test(id))continue;try{out.push(this.read(id));}catch(e){console.warn('[assistant] video manifest',id,e.message);}}return out.sort((a,b)=>b.createdAt-a.createdAt).slice(0,30);}
   // 手机清单不带分镜正文，只带标题、状态、时长、选题依据与讲述卡。
   summary(){return this.list().map(({storyboard,scenes,...m})=>m);}

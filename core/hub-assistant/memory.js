@@ -39,7 +39,7 @@ class AssistantMemory {
       '这两份文件是所有模型共用的正本（Claude、Codex、千问等当助理时都读它）。关于用户本人的偏好与约定，只记在这里；你自带的记忆目录不会被其他模型自动读到。',
       '', user.trim(), '', memory.trim(), ''].join('\n');
   }
-  writePrompt() { const tmp = `${this.promptPath}.${process.pid}.tmp`; fs.writeFileSync(tmp, this.promptText(), 'utf8'); fs.renameSync(tmp, this.promptPath); return this.promptPath; }
+  writePrompt() { const tmp = `${this.promptPath}.${process.pid}.tmp`; fs.writeFileSync(tmp, this.promptText(), 'utf8'); require('./atomic-rename').renameRetry(tmp, this.promptPath); return this.promptPath; }
   packet() {
     const { user, memory } = this.read();
     return { userPath: this.file('user'), memoryPath: this.file('memory'), user, memory,
@@ -73,7 +73,7 @@ class AssistantMemory {
     fs.writeFileSync(path.join(this.historyDir, `${stamp}-${Math.random().toString(36).slice(2, 7)}-${spec.name}`), before, 'utf8');
     const backups = fs.readdirSync(this.historyDir).sort();
     for (const old of backups.slice(0, Math.max(0, backups.length - 60))) { try { fs.unlinkSync(path.join(this.historyDir, old)); } catch {} }
-    const tmp = `${target}.${process.pid}.tmp`; fs.writeFileSync(tmp, after, 'utf8'); fs.renameSync(tmp, target);
+    const tmp = `${target}.${process.pid}.tmp`; fs.writeFileSync(tmp, after, 'utf8'); require('./atomic-rename').renameRetry(tmp, target);
     fs.appendFileSync(path.join(this.directory, 'CHANGES.md'), `- ${new Date(now).toISOString()} · ${spec.name} · ${action} · ${clean.split('\n')[0].slice(0, 80)}${reason ? ' · ' + String(reason).slice(0, 60) : ''}\n`, 'utf8');
     this.writePrompt();
     return { ok: true, file: target, chars: after.length, cap: spec.cap, appliesTo: '当前会话已知；新会话（换班、换模型后）自动读入' };

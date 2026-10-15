@@ -8,6 +8,7 @@ const {
 } = require('../core/session-attention-state.js');
 const { sessionRuntimeIssue } = require('../core/session-runtime-issue.js');
 const { KIND_LABELS } = require('../core/ai-kinds.js');
+const { sessionDisplayTitle } = require('../core/session-title-guards.js');
 // 右下角「国内正常 / 异常」只关 Kimi / DeepSeek 这类直连的国内 AI；发行版里一个都没有（公司纯净版只有 CodeAgent）就不显示
 // （2026-10-13 用户要求删掉）。
 const DOMESTIC_ROUTE_KINDS = ['kimi', 'deepseek', 'deepseek-acp', 'deepseek-claude'];
@@ -929,7 +930,8 @@ sessionListEl.addEventListener('keydown', event => {
       : isDormant
       ? `${s.suspendReason === 'idle-timeout' ? '自动休眠' : '休眠中'}${showUnread ? `，有 ${unreadCount} 条未读` : ''}，点击唤醒`
       : '';
-    const accessibleSummary = [s.title,
+    const displayTitle = sessionDisplayTitle(s);
+    const accessibleSummary = [displayTitle,
       s.currentModel ? (s.currentModel.displayName || s.currentModel.id) : '',
       ctxPct != null ? `Ctx ${ctxPct}%` : '',
       anyWarning,
@@ -940,7 +942,7 @@ sessionListEl.addEventListener('keydown', event => {
         : (showUnread ? (s.replyReadyText || s.lastOutputPreview || '有完成结果尚未查看') : '')),
     ].filter(Boolean).join(' · ');
     div.setAttribute('aria-label', accessibleSummary);
-    div.innerHTML = '<span class="sl-title">' + _warningHtml(anyWarning) + escapeHtml(s.title) + '</span>'
+    div.innerHTML = '<span class="sl-title">' + _warningHtml(anyWarning) + escapeHtml(displayTitle) + '</span>'
       + _sessionKindHtml(s.kind, modelTxt, isDormant && !isResumePending && !issue ? 'dorm' : dotCls, dormantStateTip || runtimeTruthSummary(runtimeTruth), s.currentModel?.id || '')
       + timeHtml(s, showUnread ? Math.max(1, unreadCount) : 0);
     if (child) div.className += ' child';
