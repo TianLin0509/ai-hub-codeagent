@@ -573,19 +573,34 @@ sessionManager.on('native-agent-lifecycle', event => {
 // CodeAgent：回答里的真实模型才算数（请求的模型可能因为没有权限而没生效），见 core/codeagent-models.js。
 // Stop hook 那一刻才开始盯的记录拿不到 model（尾巴从文件末尾读起），这时从记录末尾补读最后一条回答的 model。
 // 2026-10-13 公司真机：会话答了几十轮，Hub 一次实际模型都没记下（回合结束事件没走到这里）。
-// 所以 CodeAgent 的 Stop hook 也直接来这里读一次（via=stop-hook）；两条路先后到达时，第二次发现没有变化就不做事。
+// 所以 CodeAgent 的 Stop hook 也直接来这里读一次（via=stop-hook）。
+// 两条路可能乱序：完成事件携带的 tail 缓存可落后于磁盘，模型与用量必须取同一条最新回答。
+// 按实际 writer 排序异步读取；关闭重开或读期间改选模型后，旧结果不能回写。
+const codeAgentModelObservations = new WeakMap();
 async function observeCodeAgentModel(hubSessionId, ev, transcriptPath, source = 'turn-complete') {
   try {
+    const writer = sessionManager.sessions.get(hubSessionId);
+    const before = sessionManager.getSession(hubSessionId);
+    if (!writer || !before) return;
+    const observation = {};
+    codeAgentModelObservations.set(writer, observation);
+    const requestedModel = before.currentModel?.id;
     const codeAgentModels = require('./core/codeagent-models');
     let modelId = ev.modelId || null;
     let usage = ev.usage && typeof ev.usage === 'object' ? ev.usage : null;
-    const file = ev.transcriptPath || transcriptPath || sessionManager.getSession(hubSessionId)?.transcriptPath;
-    if ((!modelId || !usage) && file) {
+    const file = before.transcriptPath || transcriptPath || ev.transcriptPath;
+    if (file) {
       const last = await require('./core/read-last-assistant').readLastAssistantMessage(file);
-      modelId = modelId || last?.model || null;
-      usage = usage || last?.usage || null;
+      if (last) {
+        modelId = last.model || null;
+        usage = last.usage || null;
+      }
     }
     let session = sessionManager.getSession(hubSessionId);
+    if (!session || sessionManager.sessions.get(hubSessionId) !== writer
+      || codeAgentModelObservations.get(writer) !== observation
+      || session.currentModel?.id !== requestedModel
+      || session.transcriptPath !== before.transcriptPath) return;
     // 上下文占比（输入框旁的圆环）：CodeAgent 没有状态栏回调，按这一轮的用量算，见 core/codeagent-models.js。
     if (session && usage) {
       const configDir = session.codeagentConfigDir || require('./core/codeagent-config').resolveCodeAgentConfig(process.env).configDir;
