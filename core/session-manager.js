@@ -439,13 +439,19 @@ function buildClaudePtyLaunch(id, kind, opts, cwd, env, cv) {
 // 不改动公司电脑只靠说明约束：2026-10-15 公司真机实测 CodeAgent 1.2615 收到 --disallowedTools 照样放行 Write，
 // --strict-mcp-config 也挡不住用户级 MCP，用户拍板「只靠说明约束、公司 MCP 允许使用」，不再传这些不起作用的参数。
 function codeAgentReadOnly(opts) { return opts && opts.purpose === 'company-bridge'; }
+function shouldPickCodeAgentModel(opts) {
+  return !!(opts && opts.model && opts.codeagentModelPick !== false && !codeAgentReadOnly(opts));
+}
 function buildCodeAgentPtyLaunch(id, kind, opts, cwd, env, config) {
   const { normalizeCodeAgentModel, EFFORTS, commandHead } = require('./codeagent-config');
   const hubDataDir = getHubDataDir();
   const bridge = codeAgentReadOnly(opts); // 家里联动会话不挂 Hub 自己的 MCP
   const mcp = buildClaudeMeetingMcpArgs({ cwd, hubDataDir, mcpConfigFile: bridge ? undefined : opts.mcpConfigFile,
     mcpProfile: bridge ? 'none' : (opts.mcpProfile || 'full') });
-  const args = ['--disable-update', '--skip-safe-check', '--model', normalizeCodeAgentModel(opts.model)];
+  const args = ['--disable-update', '--skip-safe-check'];
+  const inheritModel = opts.codeagentModelPick === false || bridge;
+  if (!inheritModel) args.push('--model', normalizeCodeAgentModel(opts.model));
+  const requestedModel = inheritModel ? null : normalizeCodeAgentModel(opts.model);
   if (EFFORTS.includes(opts.effort)) args.push('--effort', opts.effort);
   args.push('--permission-mode', CLAUDE_PERMISSION_MODES.has(opts.permissionMode) ? opts.permissionMode : 'bypassPermissions');
   if (opts.appendSystemPromptFile) args.push('--append-system-prompt-file', String(opts.appendSystemPromptFile));
@@ -474,9 +480,9 @@ function buildCodeAgentPtyLaunch(id, kind, opts, cwd, env, config) {
   const cmd = ' ' + commandHead(config.command) + ' ' + [...identity, ...args].map(quote).join(' ') + '\r\n';
   require('./codeagent-models').appendModelLog(hubDataDir, {
     event: 'launch', session: String(id || '').slice(0, 8), kind,
-    requested: opts.model || '(default)', model: args[3], resume: identity.length ? identity[0] : '',
+    requested: inheritModel ? '(inherit)' : opts.model || '(default)', model: requestedModel || '(inherit)', resume: identity.length ? identity[0] : '',
   });
-  return { cmd, sessionId, model: args[3] };
+  return { cmd, sessionId, model: requestedModel };
 }
 
 function applyClaudeSessionEnv(sessionEnv, cv) {
@@ -1923,7 +1929,9 @@ class SessionManager extends EventEmitter {
       currentModel = { id: mid, displayName: mid === 'kimi-code/k3' || mid === 'k3' ? 'Kimi K3' : mid };
     } else if (isCodeAgent) {
       const mid = require('./codeagent-config').normalizeCodeAgentModel(opts.model);
-      currentModel = { id: mid, displayName: require('./codeagent-models').modelLabel(mid) };
+      currentModel = opts.codeagentModelPick === false || codeAgentReadOnly(opts)
+        ? { id: '', displayName: 'CodeAgent 当前模型' }
+        : { id: mid, displayName: require('./codeagent-models').modelLabel(mid) };
     }
 
     const effectiveCodexMcpProfile = isCodexRuntime
@@ -2029,7 +2037,8 @@ class SessionManager extends EventEmitter {
       ...(isDeepSeekClaude ? { effort: CLAUDE_EFFORT_LEVELS.has(opts.effort) ? opts.effort : DEEPSEEK_CLAUDE_DEFAULT_EFFORT } : {}),
       ...(isCodeAgent && require('./codeagent-config').EFFORTS.includes(opts.effort) ? { effort: opts.effort } : {}),
       // 身份待绑定：main.js 的 hook 路由据此接受第一个 hook 上报的原生 id（见 codeagentIdentityPending）。
-      ...(isCodeAgent ? { codeagentConfigDir: codeagentConfig.configDir, codeagentIdentityPending: !codeagentLaunch.sessionId } : {}),
+      ...(isCodeAgent ? { codeagentConfigDir: codeagentConfig.configDir, codeagentIdentityPending: !codeagentLaunch.sessionId,
+        codeagentModelPick: shouldPickCodeAgentModel(opts) } : {}),
       ...(isCodexRuntime && opts.effort ? { effort: normalizeCodexEffort(opts.effort) } : {}),
       ...(opts.codexSid ? { codexSid: opts.codexSid } : {}),
       ...(opts.geminiChatId ? { geminiChatId: opts.geminiChatId } : {}),
@@ -2367,7 +2376,8 @@ class SessionManager extends EventEmitter {
       if (agentPtyLaunch.sessionId) queueMicrotask(() => this._refreshOpenIdentity(id));
       // CodeAgent 交互模式不认 --model（2026-10-13 公司真机），明确选了模型就在它的 /model 菜单里再选一次。
       // 同步发出：监听方马上登记闸门，渲染进程随后发来的第一条消息会等它做完。
-      if (codeagentLaunch && opts.model && !codeAgentReadOnly(opts)) this.emit('codeagent-model-pick', { sessionId: id, modelId: codeagentLaunch.model, reason: 'launch' });
+      if (codeagentLaunch) require('./codeagent-model-picker').resetFailure(id);
+      if (codeagentLaunch && shouldPickCodeAgentModel(opts)) this.emit('codeagent-model-pick', { sessionId: id, modelId: codeagentLaunch.model, reason: 'launch' });
     }
 
     if (isGemini) {
@@ -3052,8 +3062,12 @@ class SessionManager extends EventEmitter {
     if (s && s.pty) {
       const safeCols = Math.max(cols, 60);
       s.pty.resize(safeCols, rows);
-      if (s.terminalSnapshot) s.terminalSnapshot.resize(safeCols, rows);
+      // 与输出共用单调序号：观察者从快照接到实时事件时，resize 也不能漏放或重放。
+      const seq = ++this._outputSeq;
+      s.lastOutputSeq = seq;
+      if (s.terminalSnapshot) s.terminalSnapshot.resize(safeCols, rows, seq);
       if (s.terminalOutputRewriter) s.terminalOutputRewriter.resize(safeCols, rows);
+      this.emit('terminal-resized', { sessionId, seq, cols: safeCols, rows });
     }
   }
 
@@ -3339,10 +3353,12 @@ class SessionManager extends EventEmitter {
         model: modelId, effort: s.info && s.info.effort, mcpConfigFile: s.claudeMcpConfigFile,
         mcpProfile: s.info && s.info.mcpProfile, appendSystemPromptFile: relaunchRules ? relaunchRules.file : undefined,
         purpose: s.info && s.info.purpose,
+        codeagentModelPick: s.info?.codeagentModelPick === true,
       }, s.info && s.info.cwd, s.pty.options?.env || process.env, config);
       Object.assign(s.info, { ccSessionId: undefined, transcriptPath: undefined, codeagentIdentityPending: true });
       cmd = launch.cmd;
-      codeagentRelaunchModel = modelId ? launch.model : null;
+      codeagentRelaunchModel = shouldPickCodeAgentModel({ ...s.info, model: modelId,
+        codeagentModelPick: s.info?.codeagentModelPick === true }) ? launch.model : null;
     } else if (isCodexCliKind(runtimeKind)) {
       // relaunch：API 模式时 codex 用 isolated CODEX_HOME，从 info.codexSessionsRoot 反推
       const codexConfigDir = s.info && s.info.codexSessionsRoot ? path.dirname(s.info.codexSessionsRoot) : null;
@@ -3461,6 +3477,7 @@ class SessionManager extends EventEmitter {
     }
     // 重置 group-chat 快路径缓存：CLI 是新启动，必须重新走冷启动流程
     s.groupChatReady = false;
+    if (isCodeAgentKind(runtimeKind)) require('./codeagent-model-picker').resetFailure(sessionId);
     // 新的 CodeAgent 进程同样不认 --model：就绪标记清掉之后再排选模型，免得把旧画面当成已就绪。
     if (codeagentRelaunchModel) this.emit('codeagent-model-pick', { sessionId, modelId: codeagentRelaunchModel, reason: 'relaunch' });
     return true;
@@ -3527,6 +3544,7 @@ class SessionManager extends EventEmitter {
       ...(info.currentModel ? { currentModel: info.currentModel } : {}),
       ...(info.codeagentActualModel ? { codeagentActualModel: info.codeagentActualModel } : {}),
       ...(info.codeagentRequestedModel ? { codeagentRequestedModel: info.codeagentRequestedModel } : {}),
+      ...(typeof info.codeagentModelPick === 'boolean' ? { codeagentModelPick: info.codeagentModelPick } : {}),
       ...(info.effort ? { effort: info.effort } : {}),
       ...(typeof info.contextPct === 'number' ? { contextPct: info.contextPct } : {}),
       ...(typeof info.contextUsed === 'number' ? { contextUsed: info.contextUsed } : {}),
@@ -3896,6 +3914,7 @@ module.exports = {
     claudePermissionModeArg,
     buildClaudePtyLaunch,
     buildCodeAgentPtyLaunch,
+    shouldPickCodeAgentModel,
     applyClaudeSessionEnv,
     resolveClaudeLaunchModel,
     quotePowerShellLiteral,

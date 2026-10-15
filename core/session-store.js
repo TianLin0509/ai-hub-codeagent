@@ -134,6 +134,7 @@ function _buildSessionPayload(hubId, data) {
     // CodeAgent：回答里的真实模型与当初请求的模型（core/codeagent-models.js observeModel）。
     codeagentActualModel: typeof data.codeagentActualModel === 'string' ? data.codeagentActualModel : null,
     codeagentRequestedModel: typeof data.codeagentRequestedModel === 'string' ? data.codeagentRequestedModel : null,
+    codeagentModelPick: typeof data.codeagentModelPick === 'boolean' ? data.codeagentModelPick : null,
     effort: typeof data.effort === 'string' ? data.effort : null,
     contextPct: typeof data.contextPct === 'number' ? data.contextPct : null,
     contextUsed: typeof data.contextUsed === 'number' ? data.contextUsed : null,

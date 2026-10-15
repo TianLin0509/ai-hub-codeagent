@@ -303,12 +303,16 @@ class TerminalSnapshot {
     });
   }
 
-  resize(cols, rows) {
+  resize(cols, rows, seq) {
     if (this._disposed) return;
     const nextCols = clampInt(cols, this._cols, 2);
     const nextRows = clampInt(rows, this._rows, 1);
+    const resizeSeq = Number(seq);
     void this._append(async () => {
-      if (this._disposed || (nextCols === this._cols && nextRows === this._rows)) return;
+      if (this._disposed) return;
+      // 同尺寸强制重绘也占一个事件序号；快照 barrier 必须覆盖已经处理的事件。
+      if (Number.isFinite(resizeSeq)) this._seq = Math.max(this._seq, resizeSeq);
+      if (nextCols === this._cols && nextRows === this._rows) return;
       // Record geometry changes in the same ordered operation log as PTY data.
       // Replaying them at compaction preserves xterm reflow semantics without
       // constructing a large headless terminal for every resize event.

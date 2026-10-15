@@ -9,8 +9,8 @@
 //   2. 读渲染后的屏幕，找到光标行和目标行，一次按一下方向键，每次都重新读屏确认光标真的动了；
 //   3. 菜单上写着「s to use this session only」就按 s，只改这个会话；没有这个提示就按回车，
 //      回车会把它存成以后新会话的默认模型，Hub 事后把配置里的 model 改回原值（只动这一个键）；
-//   4. 菜单消失（最好还看到「Set model to …」）算切换完成；下一轮回答再由 codeagent-models 核对实际模型。
-// 新会话的第一条消息要等这一步做完再发（waitForPick），否则第一轮还是默认模型。
+//   4. 确认普通输入框恢复且稳定（最好还有「Set model to …」）；下一轮回答再由 codeagent-models 核对实际模型。
+// 普通新建默认沿用 CLI 模型；明确选模型时第一条消息等待结果。失败保护正文，不把未知菜单当作已关闭。
 const fs = require('node:fs');
 const path = require('node:path');
 
@@ -84,6 +84,26 @@ function parsePicker(lines) {
   return { rows, cursor, sessionKey };
 }
 
+// 菜单存在与“能解析选项”是两件事。Select model 来自公司用户报告及
+// 2026-10-14 Claude 替身实录；不能把未知布局当成菜单已经关闭。
+function modelDialogVisible(lines) {
+  const text = (Array.isArray(lines) ? lines : String(lines || '').split(/\r?\n/)).join('\n');
+  return !!parsePicker(lines) || /^\s*(?:[│┃]\s*)?Select model\s*(?:[│┃])?\s*$/im.test(text)
+    || !!require('./cli-model-command').parseClaudeModelSwitchConfirmation(text);
+}
+
+function promptInputReady(lines) {
+  const screen = Array.isArray(lines) ? lines : String(lines || '').split(/\r?\n/);
+  if (modelDialogVisible(screen)) return false;
+  // 公司 2026-10-08 实录，见 unit-codeagent-launch / trust-screen。
+  if (screen.some(line => /^\s*(?:[│┃]\s*)?>\s+Anything I can assist you with\?/i.test(line))) return true;
+  // 真 Claude 测试替身：必须同时有空输入行和它下面的状态栏，菜单消失本身不算就绪。
+  // 2026-10-15 v2.1.300 实录的 ConPTY 重绘会留下「────────────❯ NBSP」；
+  // 仅容许水平分隔线残留，任意旧正文、模型编号和仍打开的菜单都不能算普通输入。
+  const prompt = screen.findLastIndex(line => /^[\s─]*[❯›]\s*(?:Try "[^"]*")?\s*$/.test(line));
+  return prompt >= 0 && screen.slice(prompt + 1).some(line => /\? for shortcuts|bypass permissions|(?:manual|plan|accept edits) mode on|shift\+tab/i.test(line));
+}
+
 // 目标在哪一行：模型名完全相同优先，其次以它开头，最后整行包含。
 function findTarget(picker, label) {
   const want = squash(label);
@@ -108,12 +128,24 @@ async function openSessionScreen(manager, sid) {
   const queued = [];
   let terminal = null, replayed = false, disposed = false, chain = Promise.resolve();
   const write = text => new Promise(resolve => terminal.write(text, resolve));
-  const listener = event => {
+  const apply = event => event.type === 'resize' ? terminal.resize(event.cols, event.rows) : write(event.data);
+  const enqueue = event => {
     if (event.sessionId !== sid || disposed) return;
     if (!replayed) queued.push(event);
-    else chain = chain.then(() => write(event.data));
+    else {
+      chain = chain.then(() => apply(event));
+      // 监听回调不能 await；由 lines() 将错误传给调用方，这里只避免读取前的未处理拒绝。
+      chain.catch(() => {});
+    }
+  };
+  const listener = event => enqueue({ ...event, type: 'write' });
+  const resizeListener = event => enqueue({ ...event, type: 'resize' });
+  const unsubscribe = () => {
+    manager.removeListener('output', listener);
+    manager.removeListener('terminal-resized', resizeListener);
   };
   manager.on('output', listener);
+  manager.on('terminal-resized', resizeListener);
   try {
     const snapshot = await manager.getSessionBufferSnapshot(sid);
     // windowsPty 与会话自己的快照终端一致（core/terminal-snapshot.js）：不按 ConPTY 解释换行和光标移动，
@@ -125,10 +157,10 @@ async function openSessionScreen(manager, sid) {
       if (operation.type === 'resize') terminal.resize(operation.cols, operation.rows);
       else if (operation.type === 'write') await write(operation.data);
     }
-    for (const event of queued) if (!event.seq || event.seq > snapshot.seq) await write(event.data);
+    for (const event of queued) if (!event.seq || event.seq > snapshot.seq) await apply(event);
     replayed = true;
   } catch (error) {
-    disposed = true; manager.removeListener('output', listener); try { terminal && terminal.dispose(); } catch {}
+    disposed = true; unsubscribe(); try { terminal && terminal.dispose(); } catch {}
     throw error;
   }
   return {
@@ -138,7 +170,11 @@ async function openSessionScreen(manager, sid) {
       for (let i = buffer.baseY; i < buffer.baseY + terminal.rows; i += 1) out.push(buffer.getLine(i)?.translateToString(true) || '');
       return out;
     },
-    dispose() { disposed = true; manager.removeListener('output', listener); chain.finally(() => { try { terminal.dispose(); } catch {} }); },
+    dispose() {
+      disposed = true; unsubscribe();
+      const cleanup = () => { try { terminal.dispose(); } catch {} };
+      chain.then(cleanup, cleanup);
+    },
   };
 }
 
@@ -185,6 +221,17 @@ async function waitFor(screen, predicate, timeoutMs) {
   return { value: null, lines };
 }
 
+async function waitForInput(screen, timeoutMs = 3000) {
+  let previous = '', readySince = 0;
+  return waitFor(screen, lines => {
+    if (!promptInputReady(lines)) { readySince = 0; return false; }
+    const text = lines.join('\n');
+    if (!readySince || text !== previous) { previous = text; readySince = Date.now(); }
+    // Esc 后输入框必须真实恢复且稳定；不能只睡一拍就把正文当 Alt+键送进去。
+    return Date.now() - readySince >= 320;
+  }, timeoutMs);
+}
+
 // 选中之后 CLI 打印的「Set model to <模型>」：从原始输出里找，不依赖屏幕重绘。界面框架用光标移动代替空格，
 // 去掉控制序列后单词会粘在一起，所以压成小写字母数字再比。返回回显里模型名开头的一段（已压缩），没有返回 null。
 // 会话里已经聊过时，选中后还会弹「Switch model? … ❯ 1. Yes, switch to X / 2. No, go back」（提醒换模型后历史要重读）。
@@ -217,15 +264,22 @@ async function waitForEcho(manager, sid, mark, timeoutMs, screen) {
 async function pickModel({ manager, sid, kind, modelId, configDir, sendToPty, screenTimeoutMs = 8000, env = process.env }) {
   const label = pickerLabelFor(modelId, env);
   const screen = await openSessionScreen(manager, sid);
-  let opened = false;
+  let attempted = false, result;
   // 失败时把当时的画面带回去，写进数据目录方便排查（公司电脑上的菜单长相我们看不到）。
   const fail = async message => ({ ok: false, message, screen: await screen.lines().catch(() => []) });
-  try {
-    const sent = await sendToPty(sid, '/model', kind, { codeagentModelPick: true });
-    if (!sent || sent.ok === false || sent.notSent) return { ok: false, message: (sent && sent.message) || 'CodeAgent 没有接收 /model 命令' };
+  async function choose() {
+    // 已有菜单时不要再把 /model 填进搜索框。明确的模型切换可接手当前菜单。
+    const existingMenu = modelDialogVisible(await screen.lines());
+    attempted = true;
+    if (!existingMenu) {
+      const sent = await sendToPty(sid, '/model', kind, { codeagentModelPick: true });
+      if (!sent || sent.ok === false || sent.notSent || sent.sendStatus && sent.sendStatus !== 'ok') {
+        if (sent?.notSent) attempted = false;
+        return fail((sent && sent.message) || 'CodeAgent 没有确认打开模型菜单');
+      }
+    }
     const first = await waitFor(screen, parsePicker, screenTimeoutMs);
-    if (!first.value) return fail('CodeAgent 的模型菜单没有出现，或画面认不出来' );
-    opened = true;
+    if (!first.value) return fail('当前 CodeAgent 模型菜单的布局无法自动识别，未完成模型切换');
     let picker = first.value;
     const target = findTarget(picker, label);
     if (target < 0) return fail(`模型菜单里没有 ${modelId}（菜单里有：${picker.rows.map(row => row.label).join('、')}）` );
@@ -241,7 +295,6 @@ async function pickModel({ manager, sid, kind, modelId, configDir, sendToPty, sc
     const mode = picker.sessionKey ? 'session' : 'default';
     const mark = typeof manager.getSessionOutputMark === 'function' ? manager.getSessionOutputMark(sid) : null;
     manager.writeToSession(sid, picker.sessionKey || '\r');
-    opened = false;
     const echo = mark == null ? null : await waitForEcho(manager, sid, mark, screenTimeoutMs, screen);
     // CLI 可能在回显之后才把默认模型写进配置：稍等再改回，过一会儿再核一次。
     let restored = [];
@@ -256,31 +309,55 @@ async function pickModel({ manager, sid, kind, modelId, configDir, sendToPty, sc
     if (echo && !echoMatches) {
       return { ...(await fail(`CodeAgent 回显选中的不是 ${modelId}（回显：${echo.slice(0, 30)}）`)), restored };
     }
-    if (!echo) {
-      // 没有「Set model to」这句回显（CodeAgent 的措辞可能不同）：至少菜单要关掉。
-      const closed = await waitFor(screen, lines => !parsePicker(lines), 3000);
-      if (!closed.value) return { ...(await fail('选中后没有看到切换回显，菜单也没有关闭')), restored };
-    }
+    const ready = await waitForInput(screen);
+    if (!ready.value) return { ...(await fail('选中后未确认恢复普通输入框')), restored };
     return { ok: true, mode, confirmed: !!echo, restored };
-  } finally {
-    // 只关自己打开的菜单；用户的输入和正在进行的回答不碰。
-    if (opened) {
-      try { manager.writeToSession(sid, '\x1b'); } catch {}
-      // 紧跟在 Esc 后面到达的字符会被终端当成 Alt+键，排队等着的第一条消息就被吞了、输入框里什么也没有
-      // （2026-10-14 替身实录：菜单里没有要选的模型 → Esc → 第一条消息没发出去）。等菜单关掉、再留一拍才放行。
-      await waitFor(screen, lines => !parsePicker(lines), 3000).catch(() => {});
-      await sleep(400);
-    }
-    screen.dispose();
   }
+  try {
+    result = await choose();
+  } catch (error) {
+    if (error?.notSent) attempted = false;
+    result = await fail(error && error.message ? error.message : String(error));
+  } finally {
+    // 发过 /model 即须负责退出，不能等“解析成功”后才承担清理责任。
+    try {
+      if (attempted && !promptInputReady(await screen.lines())) manager.writeToSession(sid, '\x1b');
+      const ready = await waitForInput(screen);
+      result = { ...result, inputReady: !!ready.value };
+      if (!ready.value) result = { ...result, ok: false, message: `${result?.message || '模型操作尚未完成'}；尚未确认恢复普通输入框` };
+    } catch (error) {
+      result = { ...result, ok: false, inputReady: false,
+        message: `${result?.message || '模型操作失败'}；退出菜单失败：${error && error.message ? error.message : String(error)}` };
+    } finally {
+      screen.dispose();
+    }
+  }
+  return result;
 }
 
 // ---------------------------------------------------------------- 排队与第一条消息的闸门
 const pending = new Map(); // sid → Promise
+const failures = new Map(); // 完成不等于成功；pending 删除后仍须保护后来的正文。
 let queue = Promise.resolve();
+function notSent(message, code = 'codeagent-model-pick-failed') {
+  return Object.assign(new Error(message), { notSent: true, code });
+}
+function failureMessage(result, inputReady) {
+  const reason = result?.message || '所选模型未完成切换';
+  return inputReady
+    ? `${reason}。普通输入框已恢复，本条消息未发送；再次发送将沿用 CodeAgent 当前模型，也可以先重新选择模型。`
+    : `${reason}。本条消息未发送；请点“后台”退出模型菜单，恢复普通输入框后再发送，或重新选择模型。`;
+}
 // 同一时间只做一次：回车方式会改写共用的默认模型，几个会话并发选会互相覆盖快照。
 function schedulePick(sid, task) {
-  const run = queue.then(task, task);
+  const run = queue.then(task, task).then(result => {
+    if (result?.ok) failures.delete(sid);
+    else failures.set(sid, { result, reported: false });
+    return result;
+  }, error => {
+    failures.set(sid, { result: { ok: false, inputReady: false, message: error?.message || String(error) }, reported: false });
+    throw error;
+  });
   queue = run.catch(() => {});
   const tracked = run.finally(() => { if (pending.get(sid) === tracked) pending.delete(sid); });
   pending.set(sid, tracked);
@@ -290,16 +367,64 @@ function schedulePick(sid, task) {
 async function waitForPick(sid, timeoutMs = 150000) {
   const task = pending.get(sid);
   if (!task) return;
-  // 兜底上限：选模型卡住也不能让消息永远发不出去。做完就清掉计时器。
+  // 上限只能让这次提交明确失败，不能放行正文穿过仍在操作的菜单。
   let timer = null;
-  const limit = new Promise(resolve => { timer = setTimeout(resolve, timeoutMs); });
-  try { await Promise.race([task.catch(() => {}), limit]); }
+  const limit = new Promise((_resolve, reject) => { timer = setTimeout(() => reject(notSent(
+    'CodeAgent 仍在处理模型选择，本条消息未发送；请稍后再发送或到“后台”查看菜单。', 'codeagent-model-pick-timeout')), timeoutMs); });
+  try {
+    const result = await Promise.race([task, limit]);
+    if (!result?.ok) {
+      const failure = failures.get(sid);
+      if (failure) failure.reported = true;
+      if (result?.inputReady) failures.delete(sid);
+      throw notSent(failureMessage(result, result?.inputReady));
+    }
+    return result;
+  } catch (error) {
+    if (error.notSent) throw error;
+    const failure = failures.get(sid);
+    if (failure) failure.reported = true;
+    throw notSent(failureMessage(failure?.result || { message: error?.message || String(error) }, false));
+  }
   finally { clearTimeout(timer); }
 }
 function isPicking(sid) { return pending.has(sid); }
 
+async function beforePrompt(manager, sid) {
+  const rejectPending = () => {
+    if (isPicking(sid)) throw notSent('CodeAgent 正在切换模型，本条消息未发送；切换完成后再发送。', 'codeagent-model-pick-pending');
+  };
+  let screen;
+  try {
+    // 入队之后才开始的 picker 可能把 /model 排在本条后面；此处只能拒绝，不能等它造成自锁。
+    rejectPending();
+    // 真实 SessionManager 都有屏幕快照；精简替身仍可用当前输出检查已知菜单。
+    screen = typeof manager.getSessionBufferSnapshot === 'function' ? await openSessionScreen(manager, sid) : null;
+    const lines = screen ? await screen.lines() : String(manager.getSessionBuffer?.(sid) || '').split(/\r?\n/);
+    rejectPending();
+    const failure = failures.get(sid);
+    const inputReady = promptInputReady(lines);
+    if (failure) {
+      if (inputReady) failures.delete(sid);
+      if (!inputReady || !failure.reported) {
+        failure.reported = true;
+        throw notSent(failureMessage(failure.result, inputReady));
+      }
+    }
+    if (modelDialogVisible(lines)) throw notSent(
+      'CodeAgent 当前仍在模型选择界面，本条消息未发送；请点“后台”退出菜单，恢复普通输入框后再发送。', 'codeagent-model-menu-open');
+  } catch (error) {
+    if (error.notSent) throw error;
+    throw notSent(`无法确认 CodeAgent 当前输入位置，本条消息未发送：${error?.message || String(error)}`, 'codeagent-input-check-failed');
+  } finally { screen?.dispose(); }
+}
+
+function resetFailure(sid) { failures.delete(sid); }
+
 module.exports = {
   parsePicker,
+  modelDialogVisible,
+  promptInputReady,
   findTarget,
   confirmationSeen,
   pickerLabelFor,
@@ -310,4 +435,6 @@ module.exports = {
   schedulePick,
   waitForPick,
   isPicking,
+  beforePrompt,
+  resetFailure,
 };

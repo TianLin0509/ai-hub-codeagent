@@ -5170,8 +5170,13 @@ function mountFloatingInput(sessionId, termContainer, terminal, pane = {}) {
     // 立即清 UI；原生会话继续在 Hub 输入框接收下一条消息。
     // 清空必须走 replaceContenteditableText（execCommand）：直接赋 textContent 会
     // 清掉原生撤销栈，误发之后 Ctrl+Z 拿不回原文。
-    let session, kind, wasRunning;
+    let session, kind, wasRunning, optimisticCard = null;
     const clientSubmissionId = require('node:crypto').randomUUID();
+    const discardUnsentOptimisticCard = () => {
+      // 只撤回本次尚未落盘的临时卡；权威历史以及送达未知的消息保持原样。
+      if (optimisticCard?.dataset.optimistic === 'true'
+        && optimisticCard.dataset.sessionId === String(sessionId)) optimisticCard.remove();
+    };
     try {
       if (inputHistory) {
         inputHistory.push(sessionId, userText);
@@ -5218,8 +5223,8 @@ function mountFloatingInput(sessionId, termContainer, terminal, pane = {}) {
         ? { clientSubmissionId } : {};
       if ((pane.isCard ? pane.isCard() : currentView === 'card') && cardCapableKind && !acpQueueing && typeof mountOptimisticUserCard === 'function') {
         try {
-          if (pane.optimistic) pane.optimistic(text, kind, optimisticReceipt);
-          else mountOptimisticUserCard(sessionId, text, kind, optimisticReceipt);
+          if (pane.optimistic) optimisticCard = pane.optimistic(text, kind, optimisticReceipt);
+          else optimisticCard = mountOptimisticUserCard(sessionId, text, kind, optimisticReceipt);
         } catch (err) {
           console.warn('[optimistic user-card] mount failed:', err);
         }
@@ -5235,6 +5240,7 @@ function mountFloatingInput(sessionId, termContainer, terminal, pane = {}) {
     } catch (error) {
       // History and optimistic UI precede dispatch. A synchronous error here
       // must not leave a cleared composer looking like a completed send.
+      discardUnsentOptimisticCard();
       console.warn('[floating-input] preparation failed before dispatch:', error);
       if (!readContenteditablePlainText(inputBox)) {
         floatingInputDrafts.set(sessionId, text);
@@ -5247,6 +5253,7 @@ function mountFloatingInput(sessionId, termContainer, terminal, pane = {}) {
     const delivery = nativeCommand ? null : beginPromptDelivery(clientSubmissionId);
     if (delivery) floatingPromptDeliveries.set(sessionId, delivery);
     Promise.resolve().then(() => ipcRenderer.invoke('session:send-prompt', { sessionId, text, clientSubmissionId, memoryIndex: true })).then((result) => {
+      if (result?.notSent) discardUnsentOptimisticCard();
       if (nativeCommand) {
         if (feedbackSequence !== commandFeedbackSequence) return;
         const failed = !result?.ok || result.sendStatus === 'stuck';
@@ -9241,6 +9248,7 @@ ipcRenderer.on('session-updated', (_e, { session }) => {
   // CodeAgent：回答里的真实模型与当初请求的模型（core/codeagent-models.js）。
   if (session.codeagentActualModel) local.codeagentActualModel = session.codeagentActualModel;
   if (session.codeagentRequestedModel) local.codeagentRequestedModel = session.codeagentRequestedModel;
+  if (typeof session.codeagentModelPick === 'boolean') local.codeagentModelPick = session.codeagentModelPick;
   let persistModel = false;
   if (session.currentModel && session.currentModel.id) {
     const previousModelId = local.currentModel && local.currentModel.id;
@@ -9360,6 +9368,7 @@ function persistWorkscene(flush = false) {
           ? { ...s._connectionIssueAck }
           : null,
         currentModel: s.currentModel || null,
+        ...(typeof s.codeagentModelPick === 'boolean' ? { codeagentModelPick: s.codeagentModelPick } : {}),
         effort: s.effort || null,
         contextPct: typeof s.contextPct === 'number' ? s.contextPct : null,
         contextUsed: typeof s.contextUsed === 'number' ? s.contextUsed : null,
@@ -9719,6 +9728,7 @@ sessionImmersive = require('./session-immersive').createSessionImmersiveControll
         transcriptPath: meta.transcriptPath || null,
         meetingId: meta.meetingId || null,
         currentModel: resolvedModel,
+        ...(typeof meta.codeagentModelPick === 'boolean' ? { codeagentModelPick: meta.codeagentModelPick } : {}),
         effort: meta.effort || null,
         contextPct: typeof meta.contextPct === 'number' ? meta.contextPct : null,
         contextUsed: typeof meta.contextUsed === 'number' ? meta.contextUsed : null,

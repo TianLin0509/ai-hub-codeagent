@@ -1,7 +1,7 @@
 # Windows PowerShell 5.1+. No Node, Git, admin rights or existing Hub required.
 [CmdletBinding()]
 param(
-  [ValidatePattern('^v?\d+\.\d+\.\d+(?:-[A-Za-z0-9.-]+)?$')][string]$Version = 'v1.0.9',
+  [ValidatePattern('^v?\d+\.\d+\.\d+(?:-[A-Za-z0-9.-]+)?$')][string]$Version = 'v1.0.10',
   [string]$Destination = (Join-Path $env:LOCALAPPDATA 'Programs\AIHubCommunity'),
   [string]$PackagePath,
   [string]$ChecksumPath,

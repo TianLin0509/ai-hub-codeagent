@@ -201,9 +201,12 @@
   let hubLaunchDefaults = {};
   let defaultsSaving = false;
   let modalRevision = 0;
-  // 本轮面板里用户有没有亲手动过模型下拉。异步回读配置后靠它决定能不能覆盖
+  // 本轮面板里用户有没有亲手调过配置。异步回读配置后靠它决定能不能覆盖
   // 当前选择，避免把用户刚选的值改掉。
   let tuningTouchedByUser = false;
+  // CodeAgent 只有本次明确选了具体模型才打开原生 /model 菜单；
+  // 调思考强度或 MCP 不表示选过模型，切换 AI 类型时这份意图也分别记忆。
+  let modelTouchedByUser = false;
 
   function defaultModelConfig() {
     return { defaultModels: hubDefaultModels };
@@ -1033,14 +1036,16 @@
     if (!options.some(option => option.id === selectedModel)) {
       selectedModel = resolveDefaultModel(selectedKind, defaultModelConfig(), options.map(option => option.id));
     }
-    const wanted = options.map(option => `${option.id}\u0000${option.label}`).join('|');
+    const nativeCodeagentOption = selectedKind === 'codeagent'
+      ? '<option value="">沿用 CodeAgent 当前模型</option>' : '';
+    const wanted = nativeCodeagentOption + options.map(option => `${option.id}\u0000${option.label}`).join('|');
     if (modelSelect.dataset.builtFor !== wanted) {
-      modelSelect.innerHTML = options
+      modelSelect.innerHTML = nativeCodeagentOption + options
         .map(option => `<option value="${escapeHtml(option.id)}">${escapeHtml(option.label)}</option>`)
         .join('');
       modelSelect.dataset.builtFor = wanted;
     }
-    modelSelect.value = selectedModel;
+    modelSelect.value = selectedKind === 'codeagent' && !modelTouchedByUser ? '' : selectedModel;
 
     const effortLabel = document.getElementById('new-session-effort-label');
     const fastField = document.getElementById('new-session-fast-field');
@@ -1093,6 +1098,9 @@
 
     if (note) {
       const lines = [];
+      if (selectedKind === 'codeagent') lines.push(modelTouchedByUser
+        ? '本次将请求切换到所选模型，启动后以实际回报为准。'
+        : '沿用 CodeAgent 当前模型；选择具体模型后才会请求切换。');
       // fast 有真实代价，别只写"更快"就完事：2026-06-11 实测 fastMode 交互式会话
       // 不落盘 transcript jsonl，卡片视图因此收不到回复。用户有权在勾之前知道。
       if (showFast && selectedFastMode) lines.push('fast 更快出字，但交互式会话可能不落 transcript，卡片视图收不到回复时可关掉它。');
@@ -1247,6 +1255,7 @@
   function tuningTag() {
     const options = modelOptionsFor(selectedKind);
     if (options.length === 0) return '';
+    if (selectedKind === 'codeagent' && !modelTouchedByUser) return `沿用 CodeAgent 当前模型 · ${selectedEffort}`;
     const model = options.find(option => option.id === selectedModel);
     const modelLabel = model ? model.label : selectedModel;
     if (selectedKind === 'codex') {
@@ -1304,6 +1313,7 @@
     tuningMemory.clear();
     accountNotice = '';
     tuningTouchedByUser = false;
+    modelTouchedByUser = false;
     const details = document.getElementById('new-session-tuning-details');
     if (details) details.open = false;
     const { kindAllowed } = require('../core/distribution');
@@ -1362,6 +1372,7 @@
     if (!tuningTouchedByUser) { tuningMemory.delete(kind); return; }
     tuningMemory.set(kind, {
       model: selectedModel,
+      modelTouchedByUser,
       effort: selectedEffort,
       mcpProfile: selectedMcpProfile,
       fastMode: selectedFastMode,
@@ -1375,6 +1386,7 @@
     const saved = tuningMemory.get(kind) || {};
     const tuning = resolveSessionTuning(kind, saved.model || '', saved);
     selectedModel = tuning.model;
+    modelTouchedByUser = saved.modelTouchedByUser === true;
     selectedEffort = tuning.effort;
     selectedMcpProfile = tuning.mcpProfile;
     selectedFastMode = tuning.fastMode;
@@ -1492,6 +1504,7 @@
       codexProfile: codexAccountId,
     });
     if (selectedKind === 'deepseek-claude') opts.deepseekRoute = deepseekRoute;
+    if (selectedKind === 'codeagent') opts.codeagentModelPick = modelTouchedByUser;
     return opts;
   }
 
@@ -1599,6 +1612,7 @@
     if (modelSelect) {
       modelSelect.addEventListener('change', () => {
         selectedModel = modelSelect.value;
+        modelTouchedByUser = selectedKind !== 'codeagent' || !!selectedModel;
         tuningTouchedByUser = true;
         paint();
       });

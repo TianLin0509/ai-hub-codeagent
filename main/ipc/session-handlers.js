@@ -531,7 +531,7 @@ function registerSessionIpc(ipcMain, deps) {
       } catch { /* 只是排查用的附件 */ }
     }
     if (result.ok) {
-      const updated = sessionManager.updateSessionMeta(sessionId, { currentModel: { id: modelId, displayName: codeagentModels.modelLabel(modelId) }, codeagentRequestedModel: undefined });
+      const updated = sessionManager.updateSessionMeta(sessionId, { currentModel: { id: modelId, displayName: codeagentModels.modelLabel(modelId) }, codeagentRequestedModel: undefined, codeagentModelPick: true });
       if (updated) sendToRenderer('session-updated', { session: updated });
     }
     return result;
@@ -543,8 +543,9 @@ function registerSessionIpc(ipcMain, deps) {
       const result = await runCodeAgentPick(sessionId, modelId, reason);
       if (!result.ok) {
         sendToRenderer('session-notice', { sessionId, level: 'warning',
-          message: `没能在 CodeAgent 里切到 ${codeagentModels.modelLabel(modelId)}：${result.message}。这个会话先用 CodeAgent 的默认模型；`
-            + '可以点输入框下方的模型再选一次，或者点「后台」在终端里输入 /model 手动选。' });
+          message: `没能在 CodeAgent 里切到 ${codeagentModels.modelLabel(modelId)}：${result.message}。`
+            + (result.inputReady ? '普通输入框已恢复；如有待发送正文会保留，确认沿用当前模型后再发送，或重新选择模型。'
+              : '尚未确认退出模型菜单，正文不会写入；请点“后台”退出菜单后再发送，或重新选择模型。') });
       }
       return result;
     });

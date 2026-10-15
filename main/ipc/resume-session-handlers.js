@@ -57,6 +57,7 @@ function createResumeSessionHandler(deps) {
     if (meta.launchOverrides) {
       const { model, ...rest } = meta.launchOverrides;
       meta = { ...meta, ...rest, ...(model ? { model, currentModel: { id: model, displayName: model } } : {}) };
+      if (model && /^codeagent(?:-resume)?$/.test(meta.kind)) meta.codeagentModelPick = rest.codeagentModelPick !== false;
       delete meta.launchOverrides;
     }
 
@@ -264,6 +265,8 @@ function createResumeSessionHandler(deps) {
       meetingId: meta.meetingId || null,
       completionNotificationEnabled: meta.completionNotificationEnabled === true,
       model: safeResumeModel || undefined,
+      // 老记录只有 currentModel，不能据此推断用户要求每次恢复都操作 /model。
+      ...(/^codeagent(?:-resume)?$/.test(meta.kind) ? { codeagentModelPick: meta.codeagentModelPick === true } : {}),
       ...(meta.effort ? { effort: meta.effort } : {}),
       ...(isLegacyDeepSeek ? { deepseekLegacyClaude: true } : {}),
       // DeepSeek on Claude Code：沿用会话自己的接入方式（Token Plan / 官方 API），缺 Key 时报错而不是换线。
