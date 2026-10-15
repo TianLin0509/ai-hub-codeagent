@@ -2039,6 +2039,7 @@ class SessionManager extends EventEmitter {
       ...(isCodeAgent && require('./codeagent-config').EFFORTS.includes(opts.effort) ? { effort: opts.effort } : {}),
       // 身份待绑定：main.js 的 hook 路由据此接受第一个 hook 上报的原生 id（见 codeagentIdentityPending）。
       ...(isCodeAgent ? { codeagentConfigDir: codeagentConfig.configDir, codeagentIdentityPending: !codeagentLaunch.sessionId,
+        codeagentForkSourceSessionId: opts.forkCCSessionId || opts.codeagentForkSourceSessionId || undefined,
         codeagentModelPick: shouldPickCodeAgentModel(opts) } : {}),
       ...(isCodexRuntime && opts.effort ? { effort: normalizeCodexEffort(opts.effort) } : {}),
       ...(opts.codexSid ? { codexSid: opts.codexSid } : {}),
@@ -2921,8 +2922,14 @@ class SessionManager extends EventEmitter {
   updateSessionMeta(sessionId, fields = {}) {
     const session = this.sessions.get(sessionId);
     if (!session || !fields || typeof fields !== 'object') return undefined;
-    Object.assign(session.info, fields);
-    this._refreshOpenIdentity(sessionId);
+    // 身份租约冲突/I/O 失败不能留下“已绑定”的元数据。同步校验候选值，
+    // 成功后才提交；保留原 info 对象，PTY 事件闭包仍引用它。
+    const originalInfo = session.info;
+    const candidateInfo = { ...originalInfo, ...fields };
+    session.info = candidateInfo;
+    try { this._refreshOpenIdentity(sessionId); }
+    finally { session.info = originalInfo; }
+    Object.assign(originalInfo, candidateInfo);
     this.emit('session-updated', this._toPublic(session.info));
     return { ...session.info };
   }
@@ -3519,6 +3526,7 @@ class SessionManager extends EventEmitter {
       ...(info.pinned !== undefined ? { pinned: info.pinned } : {}),
       ...(info.bottomed !== undefined ? { bottomed: info.bottomed } : {}),
       ...(info.ccSessionId !== undefined ? { ccSessionId: info.ccSessionId } : {}),
+      ...(info.codeagentForkSourceSessionId ? { codeagentForkSourceSessionId: info.codeagentForkSourceSessionId } : {}),
       ...(info.transcriptPath !== undefined ? { transcriptPath: info.transcriptPath } : {}),
       ...(info.codexSid !== undefined ? { codexSid: info.codexSid } : {}),
       ...(info.codexSessionsRoot !== undefined ? { codexSessionsRoot: info.codexSessionsRoot } : {}),

@@ -135,6 +135,7 @@ function _buildSessionPayload(hubId, data) {
     codeagentActualModel: typeof data.codeagentActualModel === 'string' ? data.codeagentActualModel : null,
     codeagentRequestedModel: typeof data.codeagentRequestedModel === 'string' ? data.codeagentRequestedModel : null,
     codeagentModelPick: typeof data.codeagentModelPick === 'boolean' ? data.codeagentModelPick : null,
+    codeagentForkSourceSessionId: typeof data.codeagentForkSourceSessionId === 'string' ? data.codeagentForkSourceSessionId : null,
     effort: typeof data.effort === 'string' ? data.effort : null,
     contextPct: typeof data.contextPct === 'number' ? data.contextPct : null,
     contextUsed: typeof data.contextUsed === 'number' ? data.contextUsed : null,

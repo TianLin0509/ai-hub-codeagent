@@ -1504,6 +1504,18 @@ function handleCodexPtyHook(session, event, parsed) {
   return _codexPtyHookHandler(session, event, parsed);
 }
 
+function codeAgentIdentityRejection(hubSessionId, current, fields) {
+  if (!isCodeAgentKind(current?.kind)) return null;
+  const identity = require('./core/codeagent-fork-identity');
+  const sourceId = identity.forkSourceIdentity({ ...current,
+    codeagentForkSourceSessionId: current.codeagentForkSourceSessionId
+      || sessionManager.openLeases?.get(hubSessionId)?.forkSource }, {
+    getSession: id => sessionManager.getSession(id),
+    loadSessionFile: id => require('./core/session-store').loadSessionFile(id, { strict: true }),
+  });
+  return identity.identityRejection(fields, sourceId);
+}
+
 function updateSessionTranscriptBinding(hubSessionId, fields = {}) {
   if (!hubSessionId) return null;
   const next = {};
@@ -1512,6 +1524,16 @@ function updateSessionTranscriptBinding(hubSessionId, fields = {}) {
   if (Object.keys(next).length === 0) return null;
   const current = sessionManager.getSession(hubSessionId);
   if (!current) return null;
+  const identityRejected = codeAgentIdentityRejection(hubSessionId, current, {
+    ccSessionId: fields.ccSessionId || current.ccSessionId,
+    transcriptPath: fields.transcriptPath,
+  });
+  if (identityRejected) {
+    console.warn(`[codeagent binding] ignored ${identityRejected} for ${String(hubSessionId).slice(0, 8)}`);
+    return null;
+  }
+  // 首次绑定和 pending 的消费同一次提交；租约拒绝时不能遗留半个身份。
+  if (isCodeAgentKind(current.kind) && fields.codeagentIdentityPending === false) next.codeagentIdentityPending = false;
   // 子进程劫持防护：在会话里再跑一个 `claude`（跑测试、批处理、脚本探针）时，
   // 子进程会继承 CLAUDE_HUB_SESSION_ID，它的 Stop hook 会把本卡片重绑到子进程的
   // transcript 上；子进程目录一旦被清理，卡片视图就 ENOENT 打不开。
@@ -2587,6 +2609,15 @@ const hookServer = http.createServer((req, res) => {
         const eventAt = Date.now();
         let boundClaudeSessionId = String(hookTargetSession.ccSessionId || '');
         const incomingClaudeSessionId = String(parsed.claudeSessionId || '');
+        if (!parsed.agentId) {
+          const identityRejected = codeAgentIdentityRejection(parsed.sessionId, hookTargetSession, {
+            ccSessionId: incomingClaudeSessionId, transcriptPath: parsed.transcriptPath,
+          });
+          if (identityRejected) {
+            console.warn(`[codeagent hook] ignored ${identityRejected} for ${parsed.sessionId.slice(0, 8)} (${event})`);
+            res.writeHead(202); res.end(JSON.stringify({ ignored: identityRejected })); return;
+          }
+        }
         let initialCwdMismatch = false;
         let initialTranscriptBucketMismatch = false;
         if (!boundClaudeSessionId && parsed.cwd && hookTargetSession.cwd) {
@@ -2597,7 +2628,7 @@ const hookServer = http.createServer((req, res) => {
         }
         // 公司 Code Agent 不认 --session-id，Hub 启动时无法预定身份（core/codeagent-config.js）。
         // 待绑定期间（新建、分支、没有记录可恢复的重启），工作目录与记录所在目录都对得上的第一个
-        // 顶层 hook 就是这个会话本人：绑定后立刻撤掉待绑定标记，之后与 Claude 一样严格拒收外来 id。
+        // 顶层 hook 才能绑定；分支不接受父身份，编号必须与记录文件一致。绑定成功后再撤销 pending。
         // 子代理（agentId）和在会话里另起的 CLI（目录不同）不会被当成本人。
         if (hookTargetSession.codeagentIdentityPending === true && isCodeAgentKind(hookTargetSession.kind)
             && !parsed.agentId && incomingClaudeSessionId && hookTargetSession.cwd) {
@@ -2606,9 +2637,9 @@ const hookServer = http.createServer((req, res) => {
           try { sameCwd = !parsed.cwd || sameWorkDir(parsed.cwd, hookTargetSession.cwd); } catch {}
           try { if (parsed.transcriptPath) sameBucket = transcriptBucketMatches(parsed.transcriptPath, hookTargetSession.cwd); } catch {}
           if (sameCwd && sameBucket) {
-            sessionManager.updateSessionMeta(parsed.sessionId, { codeagentIdentityPending: false, ccSessionId: null });
             const bound = updateSessionTranscriptBinding(parsed.sessionId, {
               ccSessionId: incomingClaudeSessionId, transcriptPath: parsed.transcriptPath, cwd: parsed.cwd,
+              codeagentIdentityPending: false,
             });
             if (bound && bound.ccSessionId === incomingClaudeSessionId) {
               boundClaudeSessionId = incomingClaudeSessionId;

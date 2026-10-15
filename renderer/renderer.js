@@ -9249,6 +9249,7 @@ ipcRenderer.on('session-updated', (_e, { session }) => {
   if (session.codeagentActualModel) local.codeagentActualModel = session.codeagentActualModel;
   if (session.codeagentRequestedModel) local.codeagentRequestedModel = session.codeagentRequestedModel;
   if (typeof session.codeagentModelPick === 'boolean') local.codeagentModelPick = session.codeagentModelPick;
+  if (session.codeagentForkSourceSessionId) local.codeagentForkSourceSessionId = session.codeagentForkSourceSessionId;
   let persistModel = false;
   if (session.currentModel && session.currentModel.id) {
     const previousModelId = local.currentModel && local.currentModel.id;
@@ -9369,6 +9370,7 @@ function persistWorkscene(flush = false) {
           : null,
         currentModel: s.currentModel || null,
         ...(typeof s.codeagentModelPick === 'boolean' ? { codeagentModelPick: s.codeagentModelPick } : {}),
+        ...(s.codeagentForkSourceSessionId ? { codeagentForkSourceSessionId: s.codeagentForkSourceSessionId } : {}),
         effort: s.effort || null,
         contextPct: typeof s.contextPct === 'number' ? s.contextPct : null,
         contextUsed: typeof s.contextUsed === 'number' ? s.contextUsed : null,
@@ -9729,6 +9731,7 @@ sessionImmersive = require('./session-immersive').createSessionImmersiveControll
         meetingId: meta.meetingId || null,
         currentModel: resolvedModel,
         ...(typeof meta.codeagentModelPick === 'boolean' ? { codeagentModelPick: meta.codeagentModelPick } : {}),
+        ...(meta.codeagentForkSourceSessionId ? { codeagentForkSourceSessionId: meta.codeagentForkSourceSessionId } : {}),
         effort: meta.effort || null,
         contextPct: typeof meta.contextPct === 'number' ? meta.contextPct : null,
         contextUsed: typeof meta.contextUsed === 'number' ? meta.contextUsed : null,

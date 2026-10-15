@@ -32,6 +32,7 @@ const RESUME_META_FIELDS = [
   'kimiSessionDir',
   'currentModel',
   'codeagentModelPick',
+  'codeagentForkSourceSessionId',
   'effort',
   'contextPct',
   'contextUsed',
@@ -296,6 +297,7 @@ function handlePersistSessions(list, meetingList, deps) {
     // 接入方式只在主进程确定（缺 Key 不换线），渲染层漏带时以主进程为准。
     if (authoritative?.deepseekRoute && !session.deepseekRoute) session.deepseekRoute = authoritative.deepseekRoute;
     if (typeof authoritative?.codeagentModelPick === 'boolean') session.codeagentModelPick = authoritative.codeagentModelPick;
+    if (authoritative?.codeagentForkSourceSessionId) session.codeagentForkSourceSessionId = authoritative.codeagentForkSourceSessionId;
     const previous = previousSessionsById.get(session.hubId);
     const changed = !previous
       || typeof previous.updatedAt !== 'number'

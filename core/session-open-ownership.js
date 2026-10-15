@@ -79,11 +79,16 @@ class SessionOpenOwnership {
     if(!pending.length)return;
     this.db.exec('BEGIN IMMEDIATE');
     try {
+      // Native identity can arrive after the Hub card already bound its writer.
+      // Copy the existing PID observation: bindPid's unchanged-PID fast path
+      // will not revisit this new alias, and a fresh timestamp could mask reuse.
+      const bound = this.db.prepare('SELECT server_pid, observed_at FROM open_owners WHERE nonce=? AND server_pid IS NOT NULL LIMIT 1').get(lease.nonce);
       for (const key of pending) {
         const old = this.db.prepare('SELECT * FROM open_owners WHERE key=?').get(key);
         if (old?.nonce === lease.nonce) continue;
         if (this.live(old,true)) throw occupied(old);
-        this.db.prepare('INSERT OR REPLACE INTO open_owners VALUES (?,?,?,?,?,NULL,?)').run(key, lease.sessionId, this.pid, this.version, lease.nonce, Date.now());
+        this.db.prepare('INSERT OR REPLACE INTO open_owners VALUES (?,?,?,?,?,?,?)').run(key, lease.sessionId, this.pid, this.version, lease.nonce,
+          bound?.server_pid ?? null, bound?.observed_at ?? Date.now());
       }
       this.db.exec('COMMIT');
       lease.keys ||= new Set();for(const key of pending)lease.keys.add(key);

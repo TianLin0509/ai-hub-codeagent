@@ -64,6 +64,14 @@ function createResumeSessionHandler(deps) {
     }
     delete meta.launchOverrides;
 
+    // A polluted fork may still store the source id beside its exact child file.
+    // Reconcile that evidence before id-based discovery can overwrite the child path.
+    const codeagentFork = require('../../core/codeagent-fork-identity').recoverCodeAgentFork(meta, {
+      getSession: id => sessionManager.getSession(id),
+      loadSessionFile: id => require('../../core/session-store').loadSessionFile(id, { strict: true }),
+    });
+    meta = codeagentFork.meta;
+
     require('../../core/session-meeting-membership.js').restoreMissingMeetingIds(
       [meta], meetingManager.getAllMeetings?.() || []);
     const isGemini = meta.kind === 'gemini' || meta.kind === 'gemini-resume';
@@ -275,6 +283,8 @@ function createResumeSessionHandler(deps) {
       // DeepSeek on Claude Code：沿用会话自己的接入方式（Token Plan / 官方 API），缺 Key 时报错而不是换线。
       ...(meta.deepseekRoute ? { deepseekRoute: meta.deepseekRoute } : {}),
       resumeCCSessionId: isClaudeCliResumable ? (meta.ccSessionId || undefined) : undefined,
+      ...(codeagentFork.forkCCSessionId ? { forkCCSessionId: codeagentFork.forkCCSessionId } : {}),
+      ...(meta.codeagentForkSourceSessionId ? { codeagentForkSourceSessionId: meta.codeagentForkSourceSessionId } : {}),
       ...(meta.runtimeBackend === 'claude-stream-json' ? { ...meta.nativeConfig, nativeRuntime: meta.nativeRuntime } : {}),
       resumeTranscriptPath: resumeTranscriptPath || undefined,
       // Code Agent 没有身份时从头开：--continue 会接上这个目录里最近的别的对话（它不认 --session-id，身份只能等 hook）。
