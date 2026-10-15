@@ -33,12 +33,12 @@
     "releasePage": "https://github.com/TianLin0509/ai-hub-codeagent/releases"
   },
   "releaseNotes": [
-    "设置菜单新增「🏠 家里联动」：和指定的另一台 AI Hub 配对后，这台电脑接收对方关于代码的提问，每个问题开一个只读的 CodeAgent 会话作答（禁用命令行与改写工具），回执只发文字说明；同一问题的追问续用同一个会话。没配对时不联网、不做任何事",
-    "家里联动遇到网络要求重新「允许访问」时会提示，点「打开放行页」允许后自动接上，期间收到的问题和要发的回执都不会丢",
-    "家里联动的弹窗里可以改：代码位置、给 CodeAgent 的说明、模型与思考深度、同时处理几个问题；每个 CodeAgent 会话都能在会话栏打开查看"
+    "家里联动的 CodeAgent 会话不再先切模型，直接用 CodeAgent 的默认模型：上一版会在 /model 菜单上卡住约 1 分钟才开始作答",
+    "家里联动放开成通用助手：除了读代码，还能查这台电脑上的文件、文档和环境，运行查询类命令；默认禁用改写文件的工具，不改动这台电脑，回执仍不含源码",
+    "家里联动弹窗里的「只读方式」改为「权限」三选一：可运行查询命令（默认）/ 只能读文件 / 只靠说明约束；没改过的默认说明自动换成新版"
   ],
-  "version": "1.0.6",
-  "upstreamVersion": "1.6.489",
-  "upstreamCommit": "677e7f4d3c23e76e5604dfa1cff6aeb22ac6df2a",
+  "version": "1.0.7",
+  "upstreamVersion": "1.6.490",
+  "upstreamCommit": "7ab6eb1693bece2724c38ce4aaa978742b86eb72",
   "upstreamDirty": false
 }

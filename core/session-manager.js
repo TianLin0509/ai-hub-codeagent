@@ -435,9 +435,9 @@ function buildClaudePtyLaunch(id, kind, opts, cwd, env, cv) {
 //   - 它不认 --settings：群聊插件隔离、fast、CLI 主题这些靠 overlay 的设置都不传；hook 写在配置目录。
 //   - 必须带 --disable-update（否则弹阻塞的升级框）与 --skip-safe-check（信任框）。
 //   - 没有 Claude 的模型目录与 fast 档；思考档只有 low/medium/high/max。
-// 家里联动替家里读公司代码的会话（purpose=company-bridge）：在启动参数上落实只读——
-// 禁用命令行与改写类工具、不加载任何 MCP；恢复、原地重拉都按 purpose 重新带上，不依赖提示词。
-const CODEAGENT_READONLY_DISALLOWED = Object.freeze(['Bash', 'BashOutput', 'KillShell', 'Edit', 'MultiEdit', 'Write', 'NotebookEdit']);
+// 家里联动替家里办事的会话（purpose=company-bridge）：按「家里联动」页选的权限在启动参数上禁用工具
+// （默认禁改写类工具，见 core/company-bridge/strict.js）、不加载任何 MCP；恢复、原地重拉都按 purpose 重新带上，不依赖提示词。
+// 这类会话也不走 /model 菜单，用 CodeAgent 的默认模型。
 function codeAgentReadOnly(opts) { return opts && opts.purpose === 'company-bridge'; }
 function buildCodeAgentPtyLaunch(id, kind, opts, cwd, env, config) {
   const { normalizeCodeAgentModel, EFFORTS, commandHead } = require('./codeagent-config');
@@ -452,7 +452,8 @@ function buildCodeAgentPtyLaunch(id, kind, opts, cwd, env, config) {
   if (mcp.configPaths && mcp.configPaths.length) args.push('--mcp-config', ...mcp.configPaths);
   if (mcp.profile !== 'full') args.push('--strict-mcp-config');
   for (const dir of claudeNativeAddDirs(opts.addDirs)) args.push('--add-dir', dir);
-  if (readOnly && require('./company-bridge/strict').strictEnabled()) args.push('--disallowedTools', CODEAGENT_READONLY_DISALLOWED.join(','));
+  const disallowed = readOnly ? require('./company-bridge/strict').disallowedTools() : [];
+  if (disallowed.length) args.push('--disallowedTools', disallowed.join(','));
   const { findNativeClaudeHistory } = require('./claude-native-history');
   const historyEnv = { ...env, CLAUDE_CONFIG_DIR: config.configDir };
   const isUuid = value => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(value || ''));
@@ -2368,7 +2369,7 @@ class SessionManager extends EventEmitter {
       if (agentPtyLaunch.sessionId) queueMicrotask(() => this._refreshOpenIdentity(id));
       // CodeAgent 交互模式不认 --model（2026-10-13 公司真机），明确选了模型就在它的 /model 菜单里再选一次。
       // 同步发出：监听方马上登记闸门，渲染进程随后发来的第一条消息会等它做完。
-      if (codeagentLaunch && opts.model) this.emit('codeagent-model-pick', { sessionId: id, modelId: codeagentLaunch.model, reason: 'launch' });
+      if (codeagentLaunch && opts.model && !codeAgentReadOnly(opts)) this.emit('codeagent-model-pick', { sessionId: id, modelId: codeagentLaunch.model, reason: 'launch' });
     }
 
     if (isGemini) {

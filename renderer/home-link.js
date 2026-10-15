@@ -1,6 +1,6 @@
 'use strict';
 // 家里联动 · 公司一端的界面（2026-10-15）：设置菜单里不显眼的一项「家里联动」，打开是一个弹窗。
-// 弹窗里：粘贴配对码、网络放行提示、代码位置与给 CodeAgent 的说明（可改）、模型、收到的问题列表。
+// 弹窗里：粘贴配对码、网络放行提示、代码位置与给 CodeAgent 的说明（可改）、权限、收到的问题列表。
 // 只有公司版、且主进程启用了公司一端时才出现；没配对的电脑什么也不做。
 (() => {
   const { ipcRenderer } = require('electron');
@@ -10,7 +10,7 @@
   const ago = at => { if (!at) return '还没有'; const m = Math.round((Date.now() - Date.parse(at)) / 60000); return m <= 1 ? '刚刚' : m < 60 ? m + ' 分钟前' : clock(at); };
   const call = async (channel, payload) => { const r = await ipcRenderer.invoke(channel, payload); if (r && r.ok === false) throw new Error(r.error || '操作未完成'); return r; };
   const toast = m => (window.__hubToast ? window.__hubToast(m) : console.log(m));
-  const STATE = { queued: ['排队', 'wait'], running: ['CodeAgent 在读代码', 'run'], replied: ['已回执', 'ok'], failed: ['没答上', 'bad'], cancelled: ['已作废', ''] };
+  const STATE = { queued: ['排队', 'wait'], running: ['CodeAgent 在处理', 'run'], replied: ['已回执', 'ok'], failed: ['没答上', 'bad'], cancelled: ['已作废', ''] };
 
   const css = `
   .hl-dialog{position:fixed;inset:0;margin:auto;height:fit-content;max-height:calc(100vh - 40px);overflow:auto;width:min(760px,calc(100vw - 40px));padding:0;border:1px solid var(--border-subtle,#e3e1ea);border-radius:14px;background:var(--surface-raised,#fff);color:var(--fg-default,#1f2330);box-shadow:0 24px 60px rgba(30,24,60,.22);font:inherit}
@@ -57,14 +57,13 @@
   }
   function settingsView() {
     const s = data.settings;
-    const models = [{ id: '', label: '默认（CodeAgent 配置里的模型）' }, ...(data.models || []).map(m => ({ id: m.id || m, label: m.label || m.id || m }))];
-    if (s.model && !models.some(m => m.id === s.model)) models.push({ id: s.model, label: s.model });
+    const perms = Object.entries(data.permissions || {}).map(([id, m]) => ({ id, label: m.label }));
     const opt = (list, cur) => list.map(x => `<option value="${esc(x.id)}"${x.id === cur ? ' selected' : ''}>${esc(x.label)}</option>`).join('');
     return `<div class="hl-grid">
       <label>自动作答</label><div class="hl-row"><select data-hl-f="enabled"><option value="1"${s.enabled ? ' selected' : ''}>开：收到问题就开 CodeAgent 会话作答</option><option value="0"${s.enabled ? '' : ' selected'}>关：只收下问题，不作答</option></select></div>
-      <label>只读方式</label><div class="hl-row"><select data-hl-f="strictReadOnly"><option value="1"${s.strictReadOnly !== false ? ' selected' : ''}>启动参数禁用命令行与改写工具（推荐）</option><option value="0"${s.strictReadOnly === false ? ' selected' : ''}>只靠说明约束（CodeAgent 不认上面的参数时用）</option></select></div>
+      <label>权限</label><div class="hl-row"><select data-hl-f="permission">${opt(perms, s.permission)}</select></div>
       <label>代码位置</label><div><textarea rows="3" data-hl-f="codeRoots" placeholder="每行一个目录，例如 D:\\code\\l2">${esc(s.codeRoots.join('\n'))}</textarea><div class="hl-muted">第一行作为 CodeAgent 会话的工作目录，其余目录一并开放读取。</div></div>
-      <label>模型</label><div class="hl-row"><select data-hl-f="model">${opt(models, s.model || '')}</select>
+      <label>运行</label><div class="hl-row">模型用 CodeAgent 的默认 ·
         思考<select data-hl-f="effort">${opt(['low', 'medium', 'high', 'max'].map(x => ({ id: x, label: { low: '低', medium: '中', high: '高', max: '最高' }[x] })), s.effort)}</select>
         同时<select data-hl-f="maxParallel">${opt([1, 2, 3, 4].map(x => ({ id: String(x), label: x + ' 个' })), String(s.maxParallel))}</select>
         检查间隔<select data-hl-f="pollSeconds">${opt([...new Set([15, 30, 60, 120, s.pollSeconds])].sort((a, b) => a - b).map(x => ({ id: String(x), label: x + ' 秒' })), String(s.pollSeconds))}</select></div>
@@ -117,7 +116,7 @@
       else if (verb === 'unpair') { if (!window.confirm('解除和家里 Hub 的配对？之后家里需要重新生成配对码。')) return; data = await call('bridge:unpair'); render(); }
       else if (verb === 'reset-instructions') { field('instructions').value = data.defaultInstructions; editing = true; }
       else if (verb === 'save') {
-        await call('bridge:set-settings', { enabled: field('enabled').value === '1', strictReadOnly: field('strictReadOnly').value === '1', codeRoots: field('codeRoots').value, model: field('model').value, effort: field('effort').value,
+        await call('bridge:set-settings', { enabled: field('enabled').value === '1', permission: field('permission').value, codeRoots: field('codeRoots').value, effort: field('effort').value,
           maxParallel: Number(field('maxParallel').value), pollSeconds: Number(field('pollSeconds').value), instructions: field('instructions').value });
         editing = false; await load(); toast('家里联动设置已保存');
       }

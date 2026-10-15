@@ -1,10 +1,12 @@
 'use strict';
 // 公司 Hub 一端的常驻助理（2026-10-15）：像脚本一样定时去通道里取家里的问题，
-// 每个问题新开一个 CodeAgent 会话只读代码作答，答完自动发回；同一问题的追问送进同一个会话，
+// 每个问题新开一个 CodeAgent 会话作答，答完自动发回；同一问题的追问送进同一个会话，
 // 它记得上一轮读过什么。家里一个 Agent 对应这里一个 CodeAgent 会话，不同问题之间上下文互不干扰。
+// 起初只读 AirView / L2 代码；2026-10-15 用户要求放开成通用：查代码、查本机文件与文档、跑查询命令都行。
 //
-// 只读不靠提示词：会话以 purpose=company-bridge 启动，Hub 在启动参数上禁用命令行与改写类工具、
-// 不加载 MCP（core/session-manager.js 的 buildCodeAgentPtyLaunch）。说明里再写一遍规则（页面上可以改）。
+// 不改动公司电脑不只靠提示词：会话以 purpose=company-bridge 启动，Hub 按页面上选的权限在启动参数上
+// 禁用改写类工具（可选连命令行一起禁），不加载 MCP（core/session-manager.js 的 buildCodeAgentPtyLaunch、./strict.js）。
+// 模型用 CodeAgent 自己的默认，不走 /model 菜单：公司真机上它把第一条消息卡住约 1 分钟（2026-10-15 用户反馈）。
 // 发回前查源码：围栏代码块、无围栏的代码行、压成一行的代码都算；超过限度先请它改写，改完仍超就删掉那几段再发。
 const path = require('node:path');
 const { randomUUID } = require('node:crypto');
@@ -13,7 +15,8 @@ const { claimTimers, ownsTimers } = require('../hub-assistant/timer-owner');
 const { BridgeLink } = require('./link');
 
 const PURPOSE = 'company-bridge';
-const DEFAULT_INSTRUCTIONS = [
+// 第一版说明：没改过的老设置里存的就是它，读设置时换成新版默认。
+const V1_INSTRUCTIONS = [
   '你是公司电脑上的代码阅读助手，替家里的 Agent 回答关于公司代码的问题。请遵守：',
   '1. 只读代码：可以打开、搜索、阅读文件；不运行程序或测试，不修改、新建、删除任何文件，不提交。',
   '2. 不回传源码：用文字和简短伪代码讲清逻辑，不成段粘贴源码。可以写函数名、文件相对路径和行号，方便对方追问。',
@@ -21,7 +24,16 @@ const DEFAULT_INSTRUCTIONS = [
   '4. 末尾写「把握程度」（高 / 中 / 低及原因）和「没读到的部分」。',
   '5. 篇幅控制在 2 万字以内。',
 ].join('\n');
-const DEFAULT_SETTINGS = Object.freeze({ enabled: true, codeRoots: [], instructions: DEFAULT_INSTRUCTIONS, model: '', effort: 'high', maxParallel: 2, pollSeconds: 30 });
+const DEFAULT_INSTRUCTIONS = [
+  '你是公司电脑上的助手，替家里的 Agent 办事：读公司代码（如 AirView、L2 的实际实现），查这台电脑上的文件、文档和环境，运行查询类命令收集信息。请遵守：',
+  '1. 保持公司电脑原样：可以打开、搜索、阅读文件，运行查询类命令（如 git log、dir、findstr）；修改、新建、删除文件，提交代码，安装软件，这些都不做。',
+  '2. 不回传源码：用文字和简短伪代码讲清逻辑，不成段粘贴源码。可以写函数名、文件相对路径和行号，方便对方追问。',
+  '3. 账号、密码、密钥、令牌这类凭据不写进回答。',
+  '4. 先写结论，再逐条说明；分清「读到了」和「推测」。',
+  '5. 末尾写「把握程度」（高 / 中 / 低及原因）和「没读到的部分」。',
+  '6. 篇幅控制在 2 万字以内。',
+].join('\n');
+const DEFAULT_SETTINGS = Object.freeze({ enabled: true, codeRoots: [], instructions: DEFAULT_INSTRUCTIONS, effort: 'high', maxParallel: 2, pollSeconds: 30 });
 const EFFORTS = ['low', 'medium', 'high', 'max'];
 const MAX_REPLY_CHARS = 40000;
 // 源码检查的限度：成段（连续）超过 12 行，或全篇累计超过 30 行像代码的内容。
@@ -117,8 +129,9 @@ class CompanyBridge {
   }
   now() { return this.deps.now ? this.deps.now() : Date.now(); }
   settings() {
-    const s = this.store.get('settings') || {};
-    return { ...DEFAULT_SETTINGS, ...s, codeRoots: Array.isArray(s.codeRoots) ? s.codeRoots : [] };
+    const { model: _oldModel, ...s } = this.store.get('settings') || {}; // 旧版存过模型，现在不用
+    const instructions = !s.instructions || s.instructions.trim() === V1_INSTRUCTIONS ? DEFAULT_INSTRUCTIONS : s.instructions;
+    return { ...DEFAULT_SETTINGS, ...s, instructions, codeRoots: Array.isArray(s.codeRoots) ? s.codeRoots : [] };
   }
   setSettings(patch = {}) {
     const next = this.settings();
@@ -129,10 +142,10 @@ class CompanyBridge {
       next.codeRoots = list;
     }
     if ('instructions' in patch) { const t = String(patch.instructions || '').trim(); if (t.length > 8000) throw new Error('说明太长（上限 8000 字）'); next.instructions = t || DEFAULT_INSTRUCTIONS; }
-    if ('model' in patch) next.model = String(patch.model || '').trim().slice(0, 96);
     if ('effort' in patch) { if (!EFFORTS.includes(patch.effort)) throw new Error('思考深度只能是 low / medium / high / max'); next.effort = patch.effort; }
     if ('maxParallel' in patch) { const n = Number(patch.maxParallel); if (!Number.isInteger(n) || n < 1 || n > 4) throw new Error('同时处理的问题数只能是 1–4'); next.maxParallel = n; }
-    if ('strictReadOnly' in patch) require('./strict').setStrict(patch.strictReadOnly !== false);
+    if ('permission' in patch) require('./strict').setMode(patch.permission);
+    else if ('strictReadOnly' in patch) require('./strict').setStrict(patch.strictReadOnly !== false); // 旧版页面
     if ('pollSeconds' in patch) { const n = Number(patch.pollSeconds); if (!Number.isInteger(n) || n < 10 || n > 600) throw new Error('检查间隔只能是 10–600 秒'); next.pollSeconds = n; }
     this.store.set('settings', next); this.changed();
     return next;
@@ -246,7 +259,7 @@ class CompanyBridge {
     if (r.round === 1 || !t.everAnswered) {
       return [s.instructions, '', '代码位置：', roots, '', `## 家里的问题（编号 ${t.id}${r.round > 1 ? `，第 ${r.round} 轮` : ''}）`, '', r.question].join('\n');
     }
-    return [`## 家里的追问（编号 ${t.id}，第 ${r.round} 轮）`, '', r.question, '', '（规则同前：只读代码、不回传源码、末尾写把握程度和没读到的部分。）'].join('\n');
+    return [`## 家里的追问（编号 ${t.id}，第 ${r.round} 轮）`, '', r.question, '', '（规则同前：保持公司电脑原样、不回传源码和凭据、末尾写把握程度和没读到的部分。）'].join('\n');
   }
 
   async dispatch(t) {
@@ -260,7 +273,7 @@ class CompanyBridge {
         sessionId = randomUUID();
         const cwd = s.codeRoots.find(p => this.deps.isDirectory ? this.deps.isDirectory(p) : true) || this.deps.fallbackCwd;
         const opts = { id: sessionId, cwd, title: '家里 · ' + short(t.title, 22), purpose: PURPOSE, autonomous: true, noInheritCursor: true,
-          effort: s.effort, ...(s.model ? { model: s.model } : {}), addDirs: s.codeRoots.filter(p => p !== cwd) };
+          effort: s.effort, addDirs: s.codeRoots.filter(p => p !== cwd) };
         const created = await this.deps.createSession('codeagent', opts);
         if (!created || created.id !== sessionId) throw new Error('会话创建结果与预留编号不一致');
         // 开会话要十几秒：期间可能已解除配对。重新读一次，作废了就不再发问题。
@@ -282,7 +295,7 @@ class CompanyBridge {
         throw Object.assign(new Error(receipt?.error || '问题没有发进会话'), { notSent: true });
       }
       if (receipt.ok === false || receipt.sendStatus === 'stuck' || receipt.unconfirmed) this.patchRound(this.thread(t.id), r.round, { sendUncertain: true });
-      if (!r.rewrite) void this.link.send('status', { thread: t.id, gen: t.gen, round: r.round, state: 'running', note: '公司 CodeAgent 正在读代码' }).catch(() => {});
+      if (!r.rewrite) void this.link.send('status', { thread: t.id, gen: t.gen, round: r.round, state: 'running', note: '公司 CodeAgent 正在处理' }).catch(() => {});
     } catch (error) {
       const fresh = this.thread(t.id) || t;
       this.saveThread({ ...fresh, rounds: fresh.rounds.map(x => x.round === r.round ? { ...x, sentAt: null, error: '公司这边没能开始：' + short(error.message, 160), failedAt: this.now() } : x) });
@@ -360,12 +373,11 @@ class CompanyBridge {
   status() {
     const c = this.link.config(), st = this.link.status();
     return {
-      ok: true, role: 'company', settings: { ...this.settings(), strictReadOnly: require('./strict').strictEnabled() }, defaultInstructions: DEFAULT_INSTRUCTIONS,
+      ok: true, role: 'company', settings: { ...this.settings(), permission: require('./strict').mode() }, permissions: require('./strict').MODES, defaultInstructions: DEFAULT_INSTRUCTIONS,
       link: { state: c.state || 'none', baseUrl: c.baseUrl || null, pairedAt: c.pairedAt || null, createdAt: c.createdAt || null, outbox: this.link.pendingOutbox() },
       net: { lastOkAt: st.lastOkAt || null, lastError: st.lastError || null, gate: st.gate || null, peerSeen: st.peerSeen || null },
       nextPullAt: this.nextPullAt, now: this.now(),
       threads: this.threads().map(t => ({ ...t, session: t.sessionId ? { open: !!this.deps.getSession(t.sessionId), busy: this.sessionBusy(t.sessionId) } : null })),
-      models: this.deps.modelOptions ? this.deps.modelOptions() : [],
     };
   }
   notify(title, text, sessionId = null) { try { this.deps.onNotify?.({ title: '家里联动 · ' + title, text, sessionId }); } catch {} }
@@ -373,4 +385,4 @@ class CompanyBridge {
   close() { clearInterval(this.timer); this.timer = null; try { this.store.close(); } catch {} }
 }
 
-module.exports = { CompanyBridge, DEFAULT_INSTRUCTIONS, PURPOSE, sourceVerdict, stripCode, deriveState };
+module.exports = { CompanyBridge, DEFAULT_INSTRUCTIONS, V1_INSTRUCTIONS, PURPOSE, sourceVerdict, stripCode, deriveState };
