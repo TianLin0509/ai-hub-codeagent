@@ -1,5 +1,5 @@
 'use strict';
-// 家里联动 · 公司一端的界面（2026-10-15）：设置菜单里不显眼的一项「家里联动」，打开是一个弹窗。
+// 公司一端的专用功能（2026-10-15）：设置菜单入口仅标明 AI 特战队使用，配对后才展示配置和任务。
 // 弹窗里：粘贴配对码、网络放行提示、代码位置与给 CodeAgent 的说明（可改）、收到的问题列表。
 // 只有公司版、且主进程启用了公司一端时才出现；没配对的电脑什么也不做。
 (() => {
@@ -43,8 +43,8 @@
 
   function pairingView() {
     const state = data.link.state;
-    if (state === 'waiting-welcome') return `<div class="hl-banner info"><span>已发出配对请求，等家里的 Hub 确认（家里 Hub 开着时 1 分钟内完成；24 小时没确认自动作废）。</span><button class="hl-btn" data-hl="check">立即检查</button><button class="hl-btn" data-hl="cancel-pair">取消，重新粘贴</button></div>`;
-    return `<p>把家里 Hub「无线 → 公司联动」生成的配对码整段粘贴到下面（以 AIHUB-LINK-1. 开头）。配对后只有那一台家里电脑能向这里提问。</p>
+    if (state === 'waiting-welcome') return `<div class="hl-banner info"><span>已发出配对请求，等待对端确认。对端 Hub 开着时通常 1 分钟内完成；24 小时未确认自动作废。</span><button class="hl-btn" data-hl="check">立即检查</button><button class="hl-btn" data-hl="cancel-pair">取消，重新粘贴</button></div>`;
+    return `<p>供 AI 特战队授权成员使用。已有配对码的成员可在下方粘贴完整配对码；未配对时此功能不运行。</p>
       <textarea rows="3" data-hl-f="code" placeholder="AIHUB-LINK-1.…"></textarea>
       <div class="hl-foot"><button class="hl-btn primary" data-hl="pair">配对</button></div>`;
   }
@@ -53,7 +53,13 @@
     if (n.gate) return `<div class="hl-banner bad"><span>公司网络要求重新「允许访问」（${clock(n.gate.since)} 起）。点右边打开放行页，点完允许后关掉那个窗口，这里会自动接上；期间收到的问题和要发的回执都不会丢。</span><button class="hl-btn primary" data-hl="gate">打开放行页</button></div>`;
     // 放行页有时表现为直接断连（代理掐掉了连接），这里也给放行入口。
     if (n.lastError) return `<div class="hl-banner bad"><span>上次连接通道失败（${clock(n.lastError.at)}）：${esc(n.lastError.message)}。如果是公司网络要求重新允许访问，点「打开放行页」。</span><button class="hl-btn" data-hl="gate">打开放行页</button><button class="hl-btn" data-hl="check">重试</button></div>`;
-    return `<div class="hl-banner ok"><span>通道正常 · 上次连通 ${clock(n.lastOkAt)} · ${n.peerSeen ? '家里 Hub ' + ago(n.peerSeen) + '在线' : '家里 Hub 还没来过（它每 3 分钟看一次）'}${data.link.outbox ? ` · 待发 ${data.link.outbox} 条` : ''}</span><button class="hl-btn" data-hl="check">立即检查</button></div>`;
+    return `<div class="hl-banner ok"><span>通道正常 · 上次连通 ${clock(n.lastOkAt)} · ${n.peerSeen ? '对端 Hub ' + ago(n.peerSeen) + '在线' : '等待对端 Hub 连接'}${data.link.outbox ? ` · 待发 ${data.link.outbox} 条` : ''}</span><button class="hl-btn" data-hl="check">立即检查</button></div>`;
+  }
+  function pollingView() {
+    const p = data.polling;
+    if (!p || !Number.isFinite(p.intervalSeconds)) return '';
+    const mode = p.active ? '活跃检查' : '空闲检查';
+    return `<div class="hl-muted hl-polling">${mode} · 每 ${esc(p.intervalSeconds)} 秒检查${p.active ? `；空闲时每 ${esc(data.settings.pollSeconds)} 秒检查` : ''}</div>`;
   }
   function settingsView() {
     const s = data.settings;
@@ -65,20 +71,21 @@
       <label>运行</label><div class="hl-row">模型用 CodeAgent 的默认 ·
         思考<select data-hl-f="effort">${opt(['low', 'medium', 'high', 'max'].map(x => ({ id: x, label: { low: '低', medium: '中', high: '高', max: '最高' }[x] })), s.effort)}</select>
         同时<select data-hl-f="maxParallel">${opt([1, 2, 3, 4].map(x => ({ id: String(x), label: x + ' 个' })), String(s.maxParallel))}</select>
-        检查间隔<select data-hl-f="pollSeconds">${opt([...new Set([15, 30, 60, 120, s.pollSeconds])].sort((a, b) => a - b).map(x => ({ id: String(x), label: x + ' 秒' })), String(s.pollSeconds))}</select></div>
+        空闲检查间隔<select data-hl-f="pollSeconds">${opt([...new Set([10, 15, 30, 60, 120, s.pollSeconds])].sort((a, b) => a - b).map(x => ({ id: String(x), label: x + ' 秒' })), String(s.pollSeconds))}</select>
+        <div class="hl-muted">任务开始后自动每 10 秒检查；结束后保持 10 分钟，随后恢复空闲间隔。</div></div>
       <label>给 CodeAgent<br>的说明</label><div><textarea rows="8" data-hl-f="instructions">${esc(s.instructions)}</textarea>
-        <div class="hl-row hl-muted">每个新问题都以这段说明开头，后面自动接上代码位置和家里的问题。<button class="hl-link" data-hl="reset-instructions">恢复默认说明</button></div></div>
+        <div class="hl-row hl-muted">每个新任务都以这段说明开头，后面自动接上代码位置和任务内容。<button class="hl-link" data-hl="reset-instructions">恢复默认说明</button></div></div>
     </div><div class="hl-foot"><button class="hl-btn primary" data-hl="save">保存设置</button></div>`;
   }
   function threadsView() {
     const list = data.threads || [];
-    if (!list.length) return '<p class="hl-muted">还没有收到家里的问题。</p>';
+    if (!list.length) return '<p class="hl-muted">还没有收到任务。</p>';
     return list.slice(0, 30).map(t => {
       const [label, tone] = STATE[t.state] || [t.state, ''];
       const rounds = t.rounds.map(r => `<div><b>第 ${r.round} 轮</b>${r.error ? ` <span class="hl-pill bad">${esc(r.error)}</span>` : ''}<pre>${esc(r.question)}</pre>${r.reply ? `<div class="hl-muted">回执（${clock(r.replyAt)}）</div><pre>${esc(r.reply)}</pre>` : ''}</div>`).join('');
       return `<div class="hl-item"><div class="hl-row"><span class="hl-pill ${tone}">${label}</span><b>${esc(t.id)}</b><span>${esc(t.title)}</span>
         <span style="flex:1"></span>${t.sessionId ? `<button class="hl-link" data-hl="open:${esc(t.sessionId)}">${t.session?.open ? '打开会话' : '找回会话'}</button>` : ''}${t.state === 'failed' ? `<button class="hl-link" data-hl="retry:${esc(t.id)}">重试</button>` : ''}</div>
-        <div class="hl-muted">收到 ${clock(t.createdAt)} · ${t.rounds.length} 轮${t.from?.title ? ' · 来自家里会话「' + esc(t.from.title) + '」' : ''}</div>
+        <div class="hl-muted">收到 ${clock(t.createdAt)} · ${t.rounds.length} 轮${t.from?.title ? ' · 来自会话「' + esc(t.from.title) + '」' : ''}</div>
         <details><summary class="hl-muted">看问答</summary>${rounds}</details></div>`;
     }).join('');
   }
@@ -87,13 +94,13 @@
     const paired = data.link.state === 'paired';
     const body = dialog.querySelector('.hl-body');
     const keep = editing && paired ? body.querySelector('[data-hl-sec="settings"]') : null;
-    body.innerHTML = `${paired ? netView() : `<div class="hl-sec" style="border:0;margin:0;padding:0">${pairingView()}</div>${data.link.state === 'waiting-welcome' ? netView() : ''}`}
+    body.innerHTML = `${paired ? netView() + pollingView() : `<div class="hl-sec" style="border:0;margin:0;padding:0">${pairingView()}</div>${data.link.state === 'waiting-welcome' ? netView() : ''}`}
       ${paired ? `<div class="hl-sec" data-hl-sec="settings"><h3>设置</h3>${settingsView()}</div>
-      <div class="hl-sec"><h3>家里的问题</h3>${threadsView()}</div>
-      <div class="hl-sec hl-row"><span class="hl-muted" style="flex:1">配对于 ${clock(data.link.pairedAt)}。解除后家里需要重新生成配对码。</span><button class="hl-btn" data-hl="unpair">解除配对</button></div>` : ''}`;
+      <div class="hl-sec"><h3>任务记录</h3>${threadsView()}</div>
+      <div class="hl-sec hl-row"><span class="hl-muted" style="flex:1">配对于 ${clock(data.link.pairedAt)}。解除后需要对端重新生成配对码。</span><button class="hl-btn" data-hl="unpair">解除配对</button></div>` : ''}`;
     // 正在改设置时别把输入框刷掉
     if (keep) body.querySelector('[data-hl-sec="settings"]').replaceWith(keep);
-    dialog.querySelector('.hl-state').textContent = { none: '未配对', 'waiting-welcome': '等待家里确认', paired: data.settings.enabled ? '已接通 · 自动作答' : '已接通 · 作答已关' }[data.link.state] || data.link.state;
+    dialog.querySelector('.hl-state').textContent = { none: '未配对', 'waiting-welcome': '等待确认', paired: data.settings.enabled ? '已接通 · 自动作答' : '已接通 · 作答已关' }[data.link.state] || data.link.state;
   }
   async function load() { data = await call('bridge:status'); render(); }
   function field(name) { return dialog.querySelector(`[data-hl-f="${name}"]`); }
@@ -107,17 +114,17 @@
     }
     button && (button.disabled = true);
     try {
-      if (verb === 'pair') { data = await call('bridge:pair', { code: field('code').value }); render(); toast('已发出配对请求，等家里 Hub 确认'); }
+      if (verb === 'pair') { data = await call('bridge:pair', { code: field('code').value }); render(); toast('已发出配对请求，等待对端 Hub 确认'); }
       else if (verb === 'check') { data = await call('bridge:check-now'); render(); }
       else if (verb === 'gate') { toast('放行页已打开：点完允许后关掉那个窗口'); data = await call('bridge:open-gate'); render(); }
       else if (verb === 'retry') { data = await call('bridge:retry', { id: arg }); render(); }
       else if (verb === 'cancel-pair') { data = await call('bridge:unpair'); render(); }
-      else if (verb === 'unpair') { if (!window.confirm('解除和家里 Hub 的配对？之后家里需要重新生成配对码。')) return; data = await call('bridge:unpair'); render(); }
+      else if (verb === 'unpair') { if (!window.confirm('解除当前配对？之后需要对端重新生成配对码。')) return; data = await call('bridge:unpair'); render(); }
       else if (verb === 'reset-instructions') { field('instructions').value = data.defaultInstructions; editing = true; }
       else if (verb === 'save') {
         await call('bridge:set-settings', { enabled: field('enabled').value === '1', codeRoots: field('codeRoots').value, effort: field('effort').value,
           maxParallel: Number(field('maxParallel').value), pollSeconds: Number(field('pollSeconds').value), instructions: field('instructions').value });
-        editing = false; await load(); toast('家里联动设置已保存');
+        editing = false; await load(); toast('AI特战队专用功能设置已保存');
       }
     } catch (error) { toast(error.message); }
     finally { if (button && button.isConnected) button.disabled = false; }
@@ -126,20 +133,20 @@
     if (!dialog) {
       const style = document.createElement('style'); style.textContent = css; document.head.append(style);
       dialog = document.createElement('dialog'); dialog.className = 'hl-dialog'; dialog.id = 'home-link-dialog';
-      dialog.innerHTML = `<div class="hl-head"><strong>家里联动 <span class="hl-muted hl-state"></span></strong><button class="hl-x" data-hl="close" title="关闭">×</button></div><div class="hl-body"></div>`;
+      dialog.innerHTML = `<div class="hl-head"><strong>AI特战队专用功能 <span class="hl-muted hl-state"></span></strong><button class="hl-x" data-hl="close" title="关闭">×</button></div><div class="hl-body"></div>`;
       document.body.append(dialog);
       dialog.addEventListener('click', e => { const b = e.target.closest('[data-hl]'); if (b) void act(b.dataset.hl, b); });
       dialog.addEventListener('input', e => { if (e.target.closest('[data-hl-sec="settings"]')) editing = true; });
       dialog.addEventListener('close', () => { editing = false; });
     }
     if (!dialog.open) dialog.showModal();
-    void load().catch(e => toast('家里联动状态读取失败：' + e.message));
+    void load().catch(e => toast('AI特战队专用功能状态读取失败：' + e.message));
   }
   function addMenuEntry() {
     const menu = document.getElementById('options-menu');
     if (!menu || document.getElementById('options-home-link')) return;
     const item = document.createElement('div');
-    item.className = 'options-item'; item.id = 'options-home-link'; item.textContent = '🏠 家里联动';
+    item.className = 'options-item'; item.id = 'options-home-link'; item.textContent = 'AI特战队专用功能';
     item.addEventListener('click', () => { menu.style.display = 'none'; open(); });
     menu.appendChild(item);
   }

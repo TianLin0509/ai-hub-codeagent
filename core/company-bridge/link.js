@@ -81,7 +81,7 @@ class BridgeLink {
   // ---- 公司：粘贴配对码 ----
   async acceptPairing(code, info = {}) {
     const { baseUrl, secret: initialSecret, homePublicKey } = bridgeCrypto.parsePairingCode(code);
-    if (!homePublicKey) throw new Error('配对码版本太旧：请在家里 Hub 重新生成');
+    if (!homePublicKey) throw new Error('配对码版本太旧：请在发起配对的 Hub 重新生成');
     const pair = bridgeCrypto.newKeyPair();
     const secret = bridgeCrypto.agree(pair.privateKey, homePublicKey, initialSecret);
     const gen = randomUUID();
@@ -173,7 +173,9 @@ class BridgeLink {
         }
         more = !!page.more;
       }
-      this.ok();
+      // POST 可能被代理拦下而 GET 仍成功；待发项还在时保留上传错误，不能把收件成功当作已送达。
+      if (this.pendingOutbox() && this.status().lastError) this.saveStatus({ lastOkAt: this.now() });
+      else this.ok();
     } catch (error) { this.fail(error); throw error; }
     return { received };
   }
