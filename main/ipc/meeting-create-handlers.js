@@ -21,6 +21,7 @@ function sanitizeMeetingSlot(slot = {}, fallbackIndex = null) {
   if (/^[A-Za-z][A-Za-z0-9_-]{0,63}$/.test(memberId)) safe.memberId = memberId;
   else if (Number.isInteger(fallbackIndex) && fallbackIndex >= 0) safe.memberId = `m${fallbackIndex + 1}`;
   if (typeof slot.model === 'string' && slot.model.trim()) safe.model = slot.model.trim();
+  if (kind === 'codeagent') safe.codeagentModelPick = slot.codeagentModelPick === true;
 
   const effort = typeof slot.effort === 'string' ? slot.effort.trim().toLowerCase() : '';
   // DeepSeek on Claude Code 与 Claude 同一套 --effort / MCP 档位。

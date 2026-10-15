@@ -296,6 +296,9 @@
       return { model: route.id, effort: route.effort, mcpProfile: 'none', codexSpeedTier: 'inherit' };
     }
     if (tuning.modelOptions.length > 0 && tuning.model) opts.model = tuning.model;
+    // 群聊/写作/造梦提交的具体型号是本次配置选择；解析出的默认型号本身不是选型请求。
+    if (kind === 'codeagent') opts.codeagentModelPick = typeof selection.codeagentModelPick === 'boolean'
+      ? selection.codeagentModelPick : !!modelId && selection.followDefault !== true;
     if (tuning.showEffort && tuning.effort) opts.effort = tuning.effort;
     if (tuning.showMcp) opts.mcpProfile = tuning.mcpProfile;
     // 只有"关"需要写字段：session-manager 全链路按 fastMode === false 判断，

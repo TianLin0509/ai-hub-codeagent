@@ -571,6 +571,9 @@ class HubMemoryService {
           .filter((k) => request.opts?.[k] !== undefined)
           .map((k) => [k, request.opts[k]]),
       );
+      if (j.kind === 'codeagent' && typeof request.opts?.codeagentModelPick === 'boolean') {
+        opts.codeagentModelPick = request.opts.codeagentModelPick;
+      }
       const s = await this.createSession(j.kind, {
         ...opts,
         cwd: dir,

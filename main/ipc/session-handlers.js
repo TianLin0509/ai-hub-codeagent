@@ -531,7 +531,7 @@ function registerSessionIpc(ipcMain, deps) {
       } catch { /* 只是排查用的附件 */ }
     }
     if (result.ok) {
-      const updated = sessionManager.updateSessionMeta(sessionId, { currentModel: { id: modelId, displayName: codeagentModels.modelLabel(modelId) }, codeagentRequestedModel: undefined, codeagentModelPick: true });
+      const updated = sessionManager.updateSessionMeta(sessionId, { currentModel: { id: modelId, displayName: codeagentModels.modelLabel(modelId) }, codeagentRequestedModel: undefined, codeagentModelPick: false });
       if (updated) sendToRenderer('session-updated', { session: updated });
     }
     return result;

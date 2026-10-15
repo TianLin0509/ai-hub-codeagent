@@ -440,7 +440,8 @@ function buildClaudePtyLaunch(id, kind, opts, cwd, env, cv) {
 // --strict-mcp-config 也挡不住用户级 MCP，用户拍板「只靠说明约束、公司 MCP 允许使用」，不再传这些不起作用的参数。
 function codeAgentReadOnly(opts) { return opts && opts.purpose === 'company-bridge'; }
 function shouldPickCodeAgentModel(opts) {
-  return !!(opts && opts.model && opts.codeagentModelPick !== false && !codeAgentReadOnly(opts));
+  // model 也来自分支、历史恢复和场景元数据；只有本次操作的明确意图才能打开菜单。
+  return !!(opts && opts.model && opts.codeagentModelPick === true && !codeAgentReadOnly(opts));
 }
 function buildCodeAgentPtyLaunch(id, kind, opts, cwd, env, config) {
   const { normalizeCodeAgentModel, EFFORTS, commandHead } = require('./codeagent-config');
@@ -449,7 +450,7 @@ function buildCodeAgentPtyLaunch(id, kind, opts, cwd, env, config) {
   const mcp = buildClaudeMeetingMcpArgs({ cwd, hubDataDir, mcpConfigFile: bridge ? undefined : opts.mcpConfigFile,
     mcpProfile: bridge ? 'none' : (opts.mcpProfile || 'full') });
   const args = ['--disable-update', '--skip-safe-check'];
-  const inheritModel = opts.codeagentModelPick === false || bridge;
+  const inheritModel = !shouldPickCodeAgentModel(opts);
   if (!inheritModel) args.push('--model', normalizeCodeAgentModel(opts.model));
   const requestedModel = inheritModel ? null : normalizeCodeAgentModel(opts.model);
   if (EFFORTS.includes(opts.effort)) args.push('--effort', opts.effort);
@@ -1929,7 +1930,7 @@ class SessionManager extends EventEmitter {
       currentModel = { id: mid, displayName: mid === 'kimi-code/k3' || mid === 'k3' ? 'Kimi K3' : mid };
     } else if (isCodeAgent) {
       const mid = require('./codeagent-config').normalizeCodeAgentModel(opts.model);
-      currentModel = opts.codeagentModelPick === false || codeAgentReadOnly(opts)
+      currentModel = !shouldPickCodeAgentModel(opts)
         ? { id: '', displayName: 'CodeAgent 当前模型' }
         : { id: mid, displayName: require('./codeagent-models').modelLabel(mid) };
     }
@@ -3341,7 +3342,6 @@ class SessionManager extends EventEmitter {
     // Code Agent 不认 --settings，群聊隔离 overlay 对它无效，不传。
     const isolation = isClaudeCli && !isCodeAgentKind(baseKind) ? buildGroupChatIsolationFlags(meetingId || autonomous) : '';
     let cmd;
-    let codeagentRelaunchModel = null;
     if (isCodeAgentKind(runtimeKind)) {
       // 原地重拉开一个新的 CLI 进程（同 Claude）。它不认 --session-id，新身份要等 hook 上报：
       // 先清掉旧绑定并标记待绑定，否则新进程的 hook 会因 id 不同被当成外来会话丢弃。
@@ -3353,12 +3353,10 @@ class SessionManager extends EventEmitter {
         model: modelId, effort: s.info && s.info.effort, mcpConfigFile: s.claudeMcpConfigFile,
         mcpProfile: s.info && s.info.mcpProfile, appendSystemPromptFile: relaunchRules ? relaunchRules.file : undefined,
         purpose: s.info && s.info.purpose,
-        codeagentModelPick: s.info?.codeagentModelPick === true,
+        codeagentModelPick: false,
       }, s.info && s.info.cwd, s.pty.options?.env || process.env, config);
-      Object.assign(s.info, { ccSessionId: undefined, transcriptPath: undefined, codeagentIdentityPending: true });
+      Object.assign(s.info, { ccSessionId: undefined, transcriptPath: undefined, codeagentIdentityPending: true, codeagentModelPick: false });
       cmd = launch.cmd;
-      codeagentRelaunchModel = shouldPickCodeAgentModel({ ...s.info, model: modelId,
-        codeagentModelPick: s.info?.codeagentModelPick === true }) ? launch.model : null;
     } else if (isCodexCliKind(runtimeKind)) {
       // relaunch：API 模式时 codex 用 isolated CODEX_HOME，从 info.codexSessionsRoot 反推
       const codexConfigDir = s.info && s.info.codexSessionsRoot ? path.dirname(s.info.codexSessionsRoot) : null;
@@ -3478,8 +3476,7 @@ class SessionManager extends EventEmitter {
     // 重置 group-chat 快路径缓存：CLI 是新启动，必须重新走冷启动流程
     s.groupChatReady = false;
     if (isCodeAgentKind(runtimeKind)) require('./codeagent-model-picker').resetFailure(sessionId);
-    // 新的 CodeAgent 进程同样不认 --model：就绪标记清掉之后再排选模型，免得把旧画面当成已就绪。
-    if (codeagentRelaunchModel) this.emit('codeagent-model-pick', { sessionId, modelId: codeagentRelaunchModel, reason: 'relaunch' });
+    // 原地重拉沿用原生模型；历史选型标记不能变成一次新的 /model 请求。
     return true;
   }
 

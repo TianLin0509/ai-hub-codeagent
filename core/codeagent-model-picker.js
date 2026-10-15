@@ -104,6 +104,24 @@ function promptInputReady(lines) {
   return prompt >= 0 && screen.slice(prompt + 1).some(line => /\? for shortcuts|bypass permissions|(?:manual|plan|accept edits) mode on|shift\+tab/i.test(line));
 }
 
+// 正文投递只需确认普通输入区，不能要求它为空或模型已经空闲：用户可在
+// 原生草稿后追加，也可在公司实录的“补充指令”框里给忙着的 CLI 排队。
+// 菜单退出的稳定确认仍用上面的空输入判据，不放宽模型选择成功的条件。
+function promptInputAvailable(lines) {
+  const screen = Array.isArray(lines) ? lines : String(lines || '').split(/\r?\n/);
+  if (modelDialogVisible(screen)) return false;
+  if (promptInputReady(screen)) return true;
+  const companyPrompt = screen.findLastIndex(line => /^\s*(?:[│┃]\s*)?>\s*/.test(line));
+  if (companyPrompt >= 0) {
+    if (/^\s*(?:[│┃]\s*)?>\s+补充指令（Enter 排队等待发送）/.test(screen[companyPrompt])) return true;
+    if (screen.slice(companyPrompt + 1).some(line => /^\s*(?:[│┃]\s*)?[A-Za-z][A-Za-z ]{0,30}\(Cycle shift\+tab\)\s*\|/i.test(line))) return true;
+  }
+  // Claude 替身的非空输入仍有同一底栏。排除只剩一个编号选项的残缺帧。
+  const prompt = screen.findLastIndex(line => /^[\s─]*[❯›]\s*/.test(line)
+    && !(NUMBERED_ROW.test(line) && MODEL_WORDS.test(line)));
+  return prompt >= 0 && screen.slice(prompt + 1).some(line => /\? for shortcuts|bypass permissions|(?:manual|plan|accept edits) mode on|shift\+tab/i.test(line));
+}
+
 // 目标在哪一行：模型名完全相同优先，其次以它开头，最后整行包含。
 function findTarget(picker, label) {
   const want = squash(label);
@@ -165,7 +183,10 @@ async function openSessionScreen(manager, sid) {
   }
   return {
     async lines() {
-      await chain;
+      // await 期间 output/resize 仍能延长队列；等旧尾部会把已收到的新菜单
+      // 藏到下一次读取。排到当前尾部稳定才返回，拒绝的链仍向调用方传播。
+      let observed;
+      do { observed = chain; await observed; } while (observed !== chain);
       const buffer = terminal.buffer.active, out = [];
       for (let i = buffer.baseY; i < buffer.baseY + terminal.rows; i += 1) out.push(buffer.getLine(i)?.translateToString(true) || '');
       return out;
@@ -390,7 +411,7 @@ async function waitForPick(sid, timeoutMs = 150000) {
 }
 function isPicking(sid) { return pending.has(sid); }
 
-async function beforePrompt(manager, sid) {
+async function beforePrompt(manager, sid, { allowUnready = false } = {}) {
   const rejectPending = () => {
     if (isPicking(sid)) throw notSent('CodeAgent 正在切换模型，本条消息未发送；切换完成后再发送。', 'codeagent-model-pick-pending');
   };
@@ -403,7 +424,7 @@ async function beforePrompt(manager, sid) {
     const lines = screen ? await screen.lines() : String(manager.getSessionBuffer?.(sid) || '').split(/\r?\n/);
     rejectPending();
     const failure = failures.get(sid);
-    const inputReady = promptInputReady(lines);
+    const inputReady = promptInputAvailable(lines);
     if (failure) {
       if (inputReady) failures.delete(sid);
       if (!inputReady || !failure.reported) {
@@ -413,6 +434,8 @@ async function beforePrompt(manager, sid) {
     }
     if (modelDialogVisible(lines)) throw notSent(
       'CodeAgent 当前仍在模型选择界面，本条消息未发送；请点“后台”退出菜单，恢复普通输入框后再发送。', 'codeagent-model-menu-open');
+    if (!inputReady && !allowUnready) throw notSent(
+      '尚未确认 CodeAgent 的普通输入框，本条消息未发送；请等会话启动完成，或点“后台”查看并退出选择菜单后再发送。', 'codeagent-input-not-ready');
   } catch (error) {
     if (error.notSent) throw error;
     throw notSent(`无法确认 CodeAgent 当前输入位置，本条消息未发送：${error?.message || String(error)}`, 'codeagent-input-check-failed');
@@ -425,6 +448,7 @@ module.exports = {
   parsePicker,
   modelDialogVisible,
   promptInputReady,
+  promptInputAvailable,
   findTarget,
   confirmationSeen,
   pickerLabelFor,

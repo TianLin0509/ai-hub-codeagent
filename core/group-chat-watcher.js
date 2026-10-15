@@ -471,7 +471,9 @@ async function sendToPtyImpl(sid, prompt, kind, options = {}) {
   // ready 缓存只证明 CLI 曾经启动，不能证明现在仍是聊天输入框。
   // 检查放在提交队列内，避免另一条排队消息/模型失败在入队后改变输入目标。
   if (isCodeAgentKind(kind) && !options.codeagentModelPick) {
-    await require('./codeagent-model-picker').beforePrompt(sessionManager, sid);
+    // 启动前屏幕可能还没画完，先拦明确菜单/pending；真正写正文前再要求
+    // 当前普通输入区的正向证据，不能把这里的早期检查当作持久许可。
+    await require('./codeagent-model-picker').beforePrompt(sessionManager, sid, { allowUnready: true });
   }
   const FAST_PATH_QUIET_MS = 250;       // 连续 250ms 无 PTY 数据 → 视为 paste 接收完
   const FAST_PATH_MAX_WAIT_MS = 3000;   // 上限：极大 prompt 也不无限等
@@ -597,6 +599,11 @@ async function sendToPtyImpl(sid, prompt, kind, options = {}) {
       && await sessionManager.tryLoadCodexEditorInput?.(sid, prompt, { attachments: options.attachments || [] });
     if (!usedCodexEditorInput) await clearCodexInputLine(sessionManager, sid, kind);
     if (options.submissionReceipt?.resolved) return alreadySubmitted();
+    if (isCodeAgentKind(kind) && !options.codeagentModelPick) {
+      // 冷启动等待期间可能才出现 /model；检查必须在所有等待之后、首个
+      // payload 之前。队列内只拒绝 pending，不等它，避免 /model 自锁。
+      await require('./codeagent-model-picker').beforePrompt(sessionManager, sid);
+    }
     const beforeBufferLength = String(sessionManager.getSessionBuffer(sid) || '').length;
     const beforeWrite = sessionManager.getGroupChatLastActivity(sid);
     // 分块投喂（2026-09-03）：单次 write 几十 KB 会把 node-pty 的 inSocket 队列灌满，
