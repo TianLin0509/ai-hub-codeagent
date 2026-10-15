@@ -2088,6 +2088,7 @@ try {
       isDirectory: p => { try { return fs.statSync(p).isDirectory(); } catch { return false; } },
       // CodeAgent 的原生记录是 Claude 格式，按 Claude 读最终回答。
       readFinals: meta => { const r = live.read({ ...meta, id: meta.id || meta.hubId, kind: 'claude' }); return r && r.available ? r.records : []; },
+      readReceipt: (meta, round) => require('./core/company-bridge/receipt-reader').readCompanyReceipt(meta, round),
     });
     companyBridgeService.start();
   }

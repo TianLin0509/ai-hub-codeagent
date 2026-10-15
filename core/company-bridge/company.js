@@ -13,6 +13,7 @@ const { randomUUID } = require('node:crypto');
 const { AssistantStore } = require('../hub-assistant/store');
 const { claimTimers, ownsTimers } = require('../hub-assistant/timer-owner');
 const { BridgeLink } = require('./link');
+const { receiptPromptFingerprint } = require('./receipt-reader');
 
 const PURPOSE = 'company-bridge';
 // 历代默认说明：没改过的老设置里存的就是它们，读设置时换成当前默认。
@@ -346,9 +347,11 @@ class CompanyBridge {
         t = latest;
       }
       const before = this.lastFinal(sessionId);
+      const prompt = this.promptFor(t, r, s);
       // 先记下「已派发」和发前最后一条回答，再发：发送结果未知时不会被当成失败重发。
-      t = this.patchRound(t, r.round, { sentAt: this.now(), firstSentAt: r.firstSentAt || this.now(), baseline: before ? before.id : null, error: null, sendUncertain: null });
-      const receipt = await this.deps.sendPrompt(sessionId, this.promptFor(t, r, s), randomUUID());
+      t = this.patchRound(t, r.round, { sentAt: this.now(), firstSentAt: r.firstSentAt || this.now(), baseline: before ? before.id : null,
+        promptFingerprint: receiptPromptFingerprint(prompt), receiptIssue: null, error: null, sendUncertain: null });
+      const receipt = await this.deps.sendPrompt(sessionId, prompt, randomUUID());
       if (!receipt || receipt.notSent || (receipt.ok === false && !receipt.unconfirmed && receipt.sendStatus !== 'stuck')) {
         throw Object.assign(new Error(receipt?.error || '问题没有发进会话'), { notSent: true });
       }
@@ -386,7 +389,25 @@ class CompanyBridge {
       this.notify('问题被剪贴板图片顶掉', `${t.id}：CodeAgent 收到的图片与本轮任务不符；已保留记录并重新发问`, t.sessionId);
       return;
     }
-    let text = String(final.text || '').trim();
+    let receipt = null;
+    if (this.deps.readReceipt) {
+      const session = this.deps.getSession(t.sessionId) || this.deps.getSessionMetadata?.(t.sessionId);
+      try { receipt = this.deps.readReceipt(session, { ...r, threadId: t.id }); }
+      catch (error) { receipt = { available: false, issue: '原生回执核对失败：' + error.message }; }
+      if (!receipt?.available) {
+        const issue = receipt?.issue || '本次请求的原生回执尚未核对';
+        if (this.now() - r.sentAt > NO_ANSWER_MS * 3) return this.failRound(t, r, issue);
+        if (r.receiptIssue !== issue) {
+          this.patchRound(t, r.round, { receiptIssue: issue });
+          this.notify('回执待核对', `${t.id}：${issue}；记录已保留，稍后会继续核对`, t.sessionId);
+          void this.link.send('status', { thread: t.id, gen: t.gen, round: r.round, state: 'running', note: '回执待核对：' + issue }).catch(() => {});
+          this.changed();
+        }
+        return;
+      }
+      if (r.receiptIssue) t = this.patchRound(t, r.round, { receiptIssue: null });
+    }
+    let text = String(receipt ? receipt.text : final.text || '').trim();
     if (sourceVerdict(text).tooMuch && !r.rewriteAsked) {
       // 第一次发现成段源码：请它自己改写（同一会话），改写稿出来再发。
       this.patchRound(t, r.round, { rewriteAsked: true, rewrite: true, sentAt: null, firstDraftChars: text.length });
@@ -403,7 +424,8 @@ class CompanyBridge {
     const fresh = this.thread(t.id);
     if (!fresh || fresh.state === 'cancelled' || fresh.gen !== this.link.gen()) return;
     const session = this.deps.getSession(t.sessionId);
-    const meta = { model: session?.currentModel?.id || session?.model || null, elapsedSec: Math.round((this.now() - (r.firstSentAt || r.sentAt)) / 1000), codeLinesRemoved: removed, rewritten: !!r.rewriteAsked };
+    const meta = { model: session?.currentModel?.id || session?.model || null, elapsedSec: Math.round((this.now() - (r.firstSentAt || r.sentAt)) / 1000), codeLinesRemoved: removed, rewritten: !!r.rewriteAsked,
+      ...(receipt ? { userMessageId: receipt.userMessageId, sourceMessageIds: receipt.records.map(record => record.messageId) } : {}) };
     // 回答落账和回执入发件箱放在同一个事务：要么都成，要么都不成（下一轮再收）。之后发件箱负责重发。
     const item = this.link.prepare('reply', { thread: t.id, gen: fresh.gen, round: r.round, text, meta });
     this.store.db.exec('BEGIN IMMEDIATE');
