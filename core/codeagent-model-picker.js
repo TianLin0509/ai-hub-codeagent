@@ -222,7 +222,8 @@ function restoreDefaults(snapshot) {
     if (now === before.model) continue;
     if (before.model === undefined) delete value.model; else value.model = before.model;
     const temp = `${before.file}.hub-model-${process.pid}.tmp`;
-    try { fs.writeFileSync(temp, JSON.stringify(value, null, 2) + '\n', 'utf8'); fs.renameSync(temp, before.file); restored.push(path.basename(before.file)); }
+    // Windows 上 CLI 或杀毒正读着 settings.json 时覆盖改名会短暂 EPERM：有界重试，否则用户的默认模型会被留成菜单改过的值。
+    try { fs.writeFileSync(temp, JSON.stringify(value, null, 2) + '\n', 'utf8'); require('./claude-project-trust').renameWithRetrySync(temp, before.file, { retries: process.platform === 'win32' ? 20 : 0, retryCodes: new Set(['EPERM', 'EBUSY']) }); restored.push(path.basename(before.file)); }
     finally { try { fs.unlinkSync(temp); } catch {} }
   }
   return restored;

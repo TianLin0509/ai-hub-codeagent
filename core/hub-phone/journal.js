@@ -1,9 +1,13 @@
 'use strict';
 const fs=require('node:fs'),path=require('node:path');
 class PhoneJournal{
- constructor(dir,safeStorage){this.dir=dir;this.file=path.join(dir,'channel.bin');this.safe=safeStorage;fs.mkdirSync(dir,{recursive:true});this.state=fs.existsSync(this.file)?JSON.parse(safeStorage.decryptString(fs.readFileSync(this.file))):{enabled:false,cursor:0,inbox:[],outbox:[],notices:[]};for(const r of this.state.inbox)if(r.state==='dispatching'){r.state='unknown';r.issue='上次提交被中断，先核对，不自动重发';}for(const r of this.state.inbox)if(r.state==='transcribing'||r.state==='switching'){r.state='queued';}this.save();}
+ // claim=false：只读载入，不写盘（Hub 重启时旧进程可能仍在写）；拿到写入锁后再 claim() 重新载入并接管。
+ constructor(dir,safeStorage,{claim=true}={}){this.dir=dir;this.file=path.join(dir,'channel.bin');this.safe=safeStorage;fs.mkdirSync(dir,{recursive:true});this.claimed=false;this.load();if(claim)this.claim(false);}
+ load(){this.state=fs.existsSync(this.file)?JSON.parse(this.safe.decryptString(fs.readFileSync(this.file))):{enabled:false,cursor:0,inbox:[],outbox:[],notices:[]};}
+ claim(reload=true){if(reload)this.load();this.claimed=true;for(const r of this.state.inbox)if(r.state==='dispatching'){r.state='unknown';r.issue='上次提交被中断，先核对，不自动重发';}for(const r of this.state.inbox)if(r.state==='transcribing'||r.state==='switching'){r.state='queued';}this.save();}
  // Windows 上刚写完的文件常被杀毒/索引短暂占用：EPERM/EBUSY/EACCES 时稍等重试，不让一次占用打断整轮收发。
- save(){const data=this.safe.encryptString(JSON.stringify(this.compact()));for(let i=0;;i++){try{fs.writeFileSync(this.file+'.tmp',data);fs.renameSync(this.file+'.tmp',this.file);return;}catch(e){if(i>=5||!['EPERM','EBUSY','EACCES'].includes(e.code))throw e;Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,40*(i+1));}}}
+ // 接管前不写盘：旧进程仍是这份记录的唯一写入者。
+ save(){if(!this.claimed)return;const data=this.safe.encryptString(JSON.stringify(this.compact()));for(let i=0;;i++){try{fs.writeFileSync(this.file+'.tmp',data);fs.renameSync(this.file+'.tmp',this.file);return;}catch(e){if(i>=5||!['EPERM','EBUSY','EACCES'].includes(e.code))throw e;Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,40*(i+1));}}}
  // 只留必要记录（2026-10-05：发出的图片、网页全文原先永久留在 channel.bin，涨到 4MB+，每次状态变化都整份重写）：
  // 已发出的消息只留编号用于去重（最近 600 条），办完的收件只留最近 300 条，提醒去重表只留最近 500 条。
  compact(){const s=this.state;for(const r of s.outbox)if(r.sent)delete r.payload;

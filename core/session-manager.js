@@ -1342,6 +1342,7 @@ class SessionManager extends EventEmitter {
 
   // 额外挂载的 MCP（2026-10-15 家里联动「问公司」）：由 main.js 注册的提供者按会话决定挂不挂。
   // Codex 走固定挂载（不受 MCP 档位影响）；Claude 把它并进 --mcp-config 的那份配置。
+  // 公司版的 CodeAgent（「问家里」ask_home）同 Claude：它认 --mcp-config，并进同一份配置。
   setExtraMcpProvider(provider) { this.extraMcpProvider = typeof provider === 'function' ? provider : null; }
   _withExtraMcp(kind, opts) {
     if (!this.extraMcpProvider) return opts;
@@ -1355,7 +1356,7 @@ class SessionManager extends EventEmitter {
     if (isCodexCliKind(base)) {
       return { ...opts, codexPinnedMcpEntries: [...(opts.codexPinnedMcpEntries || []).filter(e => e && e.name !== entry.name), entry] };
     }
-    if (base === 'claude') {
+    if (base === 'claude' || isCodeAgentKind(base)) {
       let config = { mcpServers: {} };
       if (typeof opts.mcpConfigFile === 'string' && opts.mcpConfigFile) {
         try { const parsed = JSON.parse(fs.readFileSync(opts.mcpConfigFile, 'utf8')); if (parsed && typeof parsed === 'object') config = { ...parsed, mcpServers: { ...(parsed.mcpServers || {}) } }; } catch {}
@@ -1363,7 +1364,7 @@ class SessionManager extends EventEmitter {
       config.mcpServers[entry.name] = { command: entry.command, args: entry.args || [], env: entry.env || {} };
       const dir = path.join(getHubDataDir(), 'extra-mcp');
       fs.mkdirSync(dir, { recursive: true });
-      const file = path.join(dir, `claude-${opts.id}.json`);
+      const file = path.join(dir, `${base === 'claude' ? 'claude' : 'codeagent'}-${opts.id}.json`);
       fs.writeFileSync(file + '.tmp', JSON.stringify(config), { mode: 0o600 });
       fs.renameSync(file + '.tmp', file);
       return { ...opts, mcpConfigFile: file };

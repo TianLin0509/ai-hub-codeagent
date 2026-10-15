@@ -4,6 +4,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { randomUUID } = require('node:crypto');
 const { nativeSessionIdentity, supportsRecoverableSession } = require('./session-capabilities');
+const { renameWithRetrySync } = require('./claude-project-trust');
 
 const ARG = '--hub-restart=';
 const CONTINUE_PROMPT = '刚才因 AI Hub 重启中断。请依据本会话现有对话，继续完成尚未完成的任务。先核对最后一步的实际执行结果、文件与工具状态，避免重复执行已完成操作；不要重新开始整个任务。若任务已经完成，请报告完成结果；若缺少必要审批或用户回答，请继续等待用户。';
@@ -51,7 +52,8 @@ class HubRestart {
     const fd = fs.openSync(tmp, 'w');
     try { fs.writeFileSync(fd, JSON.stringify(this.plan, null, 2), 'utf8'); fs.fsyncSync(fd); }
     finally { fs.closeSync(fd); }
-    fs.renameSync(tmp, file);
+    // Windows：读方（或杀毒扫描）开着恢复文件时覆盖改名会短暂报 EPERM，按全局约定有界重试（同 web-risk-guard）。
+    renameWithRetrySync(tmp, file, { retries: 20 });
     this.publish(this.snapshot());
   }
   snapshot() { return this.plan ? clone(this.plan) : null; }

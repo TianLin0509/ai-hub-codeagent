@@ -16,6 +16,9 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const { renameWithRetrySync } = require('./claude-project-trust');
+// 只重试短暂占用（EPERM/EBUSY）；EACCES 是真的没权限，重试只会拖慢报错。
+const RENAME_RETRY_CODES = new Set(['EPERM', 'EBUSY']);
 
 const FILE = 'web-risk.json';
 // Paused, not failed: a site that challenged automation is left alone this long.
@@ -97,13 +100,26 @@ function update(root, fn) {
       Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 25);
     }
   }
+  let tmp = null, failed = false;
   try {
     const state = read(root), result = fn(state);
-    const tmp = file(root) + '.' + process.pid + '.' + crypto.randomBytes(4).toString('hex') + '.tmp';
+    tmp = file(root) + '.' + process.pid + '.' + crypto.randomBytes(4).toString('hex') + '.tmp';
     fs.writeFileSync(tmp, JSON.stringify(state), 'utf8');
-    fs.renameSync(tmp, file(root));
+    // Windows：读方（或杀毒扫描）开着 web-risk.json 时覆盖改名会短暂报 EPERM，按全局约定有界重试。
+    // 只重试这一份快照、持着写锁，不重跑 fn（否则一次访问或租约会记两遍）。
+    renameWithRetrySync(tmp, file(root), { retries: process.platform === 'win32' ? 20 : 0, retryCodes: RENAME_RETRY_CODES });
     return result;
-  } finally { fs.closeSync(fd); fs.rmSync(lock, { force: true }); }
+  } catch (error) {
+    failed = true;
+    throw error;
+  } finally {
+    // Best effort: a held temp must not replace the original save error.
+    if (tmp) { try { fs.rmSync(tmp, { force: true }); } catch {} }
+    let cleanupError = null;
+    try { fs.closeSync(fd); } catch (error) { cleanupError = error; }
+    try { fs.rmSync(lock, { force: true }); } catch (error) { cleanupError ||= error; }
+    if (!failed && cleanupError) throw cleanupError;
+  }
 }
 const key = (identity, site) => identity + ':' + site;
 

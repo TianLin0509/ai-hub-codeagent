@@ -12,19 +12,24 @@ const MAX_VOICE_BYTES=16000*2*120;
 const ACTIVE=['dispatching','waiting','unknown'];
 const LONG_POLL_SECONDS=15; // 中继支持长等待时，新消息一到即返回；旧中继忽略该参数、立即返回
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+const WORKBENCH_SNAPSHOT=/^workbench-[0-9a-f]{8}-[0-9a-f]{4}-/;
 class PhoneChannel{
- constructor({assistant,journal,renderHtml=null,transcribe,prepareVoice=null,fastLane=null,imageRoots=[],speak=null,inboxRoot=null}){Object.assign(this,{assistant,journal,renderHtml,transcribe,prepareVoice,fastLane,imageRoots,speak,inboxRoot});this.closed=false;this.issue=null;this.online=false;this.lastPoll=0;this.sessionChat=new SessionChat(this);this.sessionChat.recover();}
- status(){const s=this.journal.state;return{ok:true,version:'1.1.0',protocol:2,enabled:s.enabled,connected:this.online,issue:this.issue,paired:!!s.credentials,pending:s.inbox.filter(r=>r.state==='queued').length,unknown:s.inbox.filter(r=>['unknown','unresolved'].includes(r.state)).length,voice:true,phoneApp:s.phoneApp||null,backend:this.assistant.overview().backendKind||null};}
- async request(endpoint,{method='GET',body,role='hub',wait=0}={}){const c=this.journal.state.credentials;if(!c)throw Error('请先连接手机');const q=method==='GET'?`?channel=${c.channel}&role=${role}&after=${this.journal.state.cursor}${wait?'&wait='+wait:''}`:'';const headers={Authorization:'Bearer '+c.hubToken,'Content-Type':'application/json'};if(endpoint==='/create'){const file='C:/AppData/Secrets/aihub-phone-relay-registration.txt';const secret=process.env.HUB_PHONE_REGISTER_KEY||(fs.existsSync(file)?fs.readFileSync(file,'utf8').trim():'');if(!/^[A-Za-z0-9_-]{43}$/.test(secret))throw Error('手机连接服务尚未配置，请先完成手机服务部署');headers['X-Register-Key']=secret;}const r=await fetch(c.url+endpoint+q,{method,headers,body:body&&JSON.stringify({...body,channel:c.channel,role}),signal:AbortSignal.timeout(wait?(wait+15)*1000:20000)});if(!r.ok)throw Error('手机连接服务暂时不可用（'+r.status+'）');return r.json();}
- async pair(){const s=this.journal.state;if(!s.credentials)this.journal.change(x=>{x.credentials=credentials();x.notices=this.assistant.notifications({limit:200}).notifications.map(n=>n.id);x.created=Date.now();});const {channel,hubToken,phoneToken}=s.credentials;await this.request('/create',{method:'POST',body:{channel,hubToken,phoneToken}});this.journal.change(x=>{x.enabled=true;});this.start();return{...this.status(),code:invite(s.credentials)};}
- emit(id,value){const s=this.journal.state;if(s.outbox.some(r=>r.id===id))return;if(value.type==='status'&&value.requestId)this.log({id:value.requestId,role:'delivery',state:value.state,text:value.text});const c=s.credentials;this.journal.change(x=>{x.outbox.push({id,payload:seal(c.key,c.channel,id,'hub',{...value,time:Date.now()}),sent:false});});}
+ constructor({assistant,journal,renderHtml=null,transcribe,prepareVoice=null,fastLane=null,imageRoots=[],speak=null,inboxRoot=null,lock=null}){Object.assign(this,{assistant,journal,renderHtml,transcribe,prepareVoice,fastLane,imageRoots,speak,inboxRoot,lock});this.closed=false;this.refused=[];this.issue=null;this.online=false;this.lastPoll=0;this.sessionChat=new SessionChat(this);this.sessionChat.recover();}
+ status(){const s=this.journal.state;return{ok:true,version:'1.1.0',protocol:2,enabled:s.enabled,connected:this.online,issue:this.issue,paired:!!s.credentials,pending:s.inbox.filter(r=>r.state==='queued').length,unknown:s.inbox.filter(r=>['unknown','unresolved'].includes(r.state)).length,voice:true,phoneApp:s.phoneApp||null,backend:this.assistant.overview().backendKind||null,delivery:this.delivery(),waitingForPreviousHub:!!this.lockTimer};}
+ // 「已连接」只说明能拉到消息；送达情况单独给出：待发条数、最早一条等了多久、最近一次送达、拒收记录。
+ delivery(){const un=this.journal.state.outbox.filter(r=>!r.sent),oldest=un.reduce((m,r)=>r.at&&(!m||r.at<m)?r.at:m,0)||null,stuck=!!oldest&&Date.now()-oldest>10*60000;return{pending:un.length,oldestAt:oldest,stuck,lastSentAt:this.lastSentAt||null,issue:this.sendIssue||null,refused:this.refused.slice(-5)};}
+ async request(endpoint,{method='GET',body,role='hub',wait=0}={}){const c=this.journal.state.credentials;if(!c)throw Error('请先连接手机');const q=method==='GET'?`?channel=${c.channel}&role=${role}&after=${this.journal.state.cursor}${wait?'&wait='+wait:''}`:'';const headers={Authorization:'Bearer '+c.hubToken,'Content-Type':'application/json'};if(endpoint==='/create'){const file='C:/AppData/Secrets/aihub-phone-relay-registration.txt';const secret=process.env.HUB_PHONE_REGISTER_KEY||(fs.existsSync(file)?fs.readFileSync(file,'utf8').trim():'');if(!/^[A-Za-z0-9_-]{43}$/.test(secret))throw Error('手机连接服务尚未配置，请先完成手机服务部署');headers['X-Register-Key']=secret;}const r=await fetch(c.url+endpoint+q,{method,headers,body:body&&JSON.stringify({...body,channel:c.channel,role}),signal:AbortSignal.timeout(wait?(wait+15)*1000:20000)});if(!r.ok)throw Object.assign(Error('手机连接服务暂时不可用（'+r.status+'）'),{status:r.status});return r.json();}
+ // 拿到写入锁才接管记录：重新载入旧进程最后写下的状态，再开始收发。
+ own(){if(!this.lock||this.lock.held)return true;if(!this.lock.tryAcquire())return false;console.log('[phone] channel writer acquired');this.journal.claim?.();return true;}
+ async pair(){if(!this.own())throw Error('另一个 Hub 进程正在负责手机连接，请等它退出后再试');const s=this.journal.state;if(!s.credentials)this.journal.change(x=>{x.credentials=credentials();x.notices=this.assistant.notifications({limit:200}).notifications.map(n=>n.id);x.created=Date.now();});const {channel,hubToken,phoneToken}=s.credentials;await this.request('/create',{method:'POST',body:{channel,hubToken,phoneToken}});this.journal.change(x=>{x.enabled=true;});this.start();return{...this.status(),code:invite(s.credentials)};}
+ emit(id,value){const s=this.journal.state;if(s.outbox.some(r=>r.id===id))return;if(value.type==='status'&&value.requestId)this.log({id:value.requestId,role:'delivery',state:value.state,text:value.text});const c=s.credentials;this.journal.change(x=>{x.outbox.push({id,payload:seal(c.key,c.channel,id,'hub',{...value,time:Date.now()}),sent:false,at:Date.now()});});}
  observeReceipt(r){if(r?.status!=='confirmed'||r.notSent||r.contentMismatch)return;const row=this.journal.state.inbox.find(x=>x.id===r.clientSubmissionId&&x.sessionId===r.sessionId);if(row&&(ACTIVE.includes(row.state)||row.state==='unresolved')){this.journal.change(()=>{row.turnId=r.turnId||null;if(row.state!=='unresolved')row.state='waiting';row.issue=null;row.t={...row.t,confirmed:row.t?.confirmed||Date.now()};});const by=this.assistantLabel(row);this.emit('receipt-'+row.id,{type:'status',requestId:row.id,state:'received',lane:'assistant',by,text:'已交给助理会话（'+by+'）处理。'});}}
  // 有任务在途或 10 分钟内有往来时 1.5 秒取一次，其余 2.2 秒；中继按 IP 限每分钟 180 次，手机与电脑常在同一出口。
  // 收消息走独立的长等待循环（消息一到立刻处理）；处理由 kick 触发（新消息、助理答完、关注提醒），定时器只做兜底。
- start(){if(this.timer||this.closed)return;this.timer=setInterval(()=>{this.startPhotoDispatch();const s=this.journal.state,busy=s.inbox.some(r=>r.state==='queued'||r.state==='transcribing'||ACTIVE.includes(r.state))||this.sessionChat.active()||Date.now()-(s.lastInbound||0)<600000;if(Date.now()-this.lastPoll>=(busy?1500:5000))void this.tick();},500);this.timer.unref();void this.receiveLoop();void this.tick();}
+ start(){if(this.timer||this.closed)return;clearTimeout(this.lockTimer);this.lockTimer=null;if(!this.own()){this.lockTimer=setTimeout(()=>{this.lockTimer=null;this.start();},2000);this.lockTimer.unref?.();return;}this.timer=setInterval(()=>{if(this.lock&&Date.now()-(this.lastBeat||0)>=10000){this.lastBeat=Date.now();try{this.lock.beat();}catch{}}this.startPhotoDispatch();const s=this.journal.state,busy=s.inbox.some(r=>r.state==='queued'||r.state==='transcribing'||ACTIVE.includes(r.state))||this.sessionChat.active()||Date.now()-(s.lastInbound||0)<600000;if(Date.now()-this.lastPoll>=(busy?1500:5000))void this.tick();},500);this.timer.unref();void this.receiveLoop();void this.tick();}
  kick(){if(this.closed)return;if(this.working){this.rekick=true;return;}void this.tick();}
  async receiveLoop(){
-  if(this.receiving)return;this.receiving=true;
+  if(this.receiving||(this.lock&&!this.lock.held))return;this.receiving=true;
   try{while(!this.closed&&this.journal.state.enabled&&this.journal.state.credentials){
    const started=Date.now();
    try{const polled=await this.request('/poll',{wait:LONG_POLL_SECONDS});if(this.closed)break;this.online=true;this.issue=null;
@@ -97,7 +102,7 @@ class PhoneChannel{
   this.journal.change(x=>{x.profileSignature=this.profileSignature();});
   this.emit('profile-'+crypto.randomUUID(),{type:'profile',...(requestId?{requestId}:{}),...profile,hubCaps:HUB_CAPS.filter(c=>c==='workbench'?!!this.assistant.workbench:c==='session_cards'?typeof this.assistant.sessionCards==='function':c==='learning_video'?!!this.assistant.videos:c==='session_chat'||c==='file_preview'?this.sessionChat.available():true),watching:this.watchingCount(),switching:!!this.assistant.switching});
  }
- async tick(){const s=this.journal.state;if(this.working||this.closed||!s.enabled||!s.credentials)return;this.working=true;this.lastPoll=Date.now();
+ async tick(){if(this.lock&&!this.lock.held)return;const s=this.journal.state;if(this.working||this.closed||!s.enabled||!s.credentials)return;this.working=true;this.lastPoll=Date.now();
  try{
   // 长等待循环在跑时由它收消息；单独调用 tick（测试、旧路径）时自己取一次。
   if(!this.receiving){const polled=await this.request('/poll');if(this.closed||!s.enabled)return;this.online=true;this.issue=null;await this.ingest(polled.messages||[]);}
@@ -152,10 +157,10 @@ class PhoneChannel{
   if(this.supports('workbench')&&this.assistant.workbench&&(this.assistant.store?.get('workbench.revision')||0)!==s.workbenchSignature)this.sendWorkbench();
   if(this.supports('memo'))this.sendMemos();
   if(this.supports('podcast'))this.sendPodcasts();
-  for(const n of this.assistant.notifications({limit:200}).notifications){if(s.notices.includes(n.id)||n.createdAt<s.created)continue;await this.reply('notice-'+crypto.createHash('sha256').update(n.id).digest('hex').slice(0,32),n.kind==='memory-update'||n.kind==='reminder'||n.kind==='memo-digest'||n.kind==='podcast'||n.kind?.startsWith('daily-')?n.text:'关注任务「'+n.title+'」有新进展：\n'+n.text,{notice:true,...(n.kind==='reminder'?{reminder:true}:{}),...(n.kind?.startsWith('daily-')?{daily:n.kind.slice(6)}:{})});this.journal.change(x=>x.notices.push(n.id));if(n.kind?.startsWith('daily-'))this.sendWorkbench();}
+  for(const n of this.assistant.notifications({limit:200}).notifications){if(s.notices.includes(n.id)||n.createdAt<s.created)continue;this.journal.change(x=>x.notices.push(n.id));await this.reply('notice-'+crypto.createHash('sha256').update(n.id).digest('hex').slice(0,32),n.kind==='memory-update'||n.kind==='reminder'||n.kind==='memo-digest'||n.kind==='podcast'||n.kind?.startsWith('daily-')?n.text:'关注任务「'+n.title+'」有新进展：\n'+n.text,{notice:true,...(n.kind==='reminder'?{reminder:true}:{}),...(n.kind?.startsWith('daily-')?{daily:n.kind.slice(6)}:{})});if(n.kind?.startsWith('daily-'))this.sendWorkbench();}
   if(this.sessionChat.watches.size)try{await this.sessionChat.push();}catch(e){console.warn('[phone] session live',e.message);}
   await this.flush(4);
- }catch(e){this.online=false;this.issue=e.message;}finally{this.working=false;if(this.rekick&&!this.closed){this.rekick=false;setTimeout(()=>void this.tick(),0);}}}
+ }catch(e){this.online=false;this.issue=e.message;}finally{this.working=false;if(this.closed)this.lock?.release();if(this.rekick&&!this.closed){this.rekick=false;setTimeout(()=>void this.tick(),0);}}}
  // Serialize only the short native submission, never wait for an old answer.
  // This worker is independent of answer/TTS work and keeps receiving new photos.
  startPhotoDispatch(){
@@ -194,7 +199,11 @@ class PhoneChannel{
    this.log({id:row.id,role:'delivery',state:'unresolved',text:row.issue});
   }
  }
- async flush(limit=8){for(const row of this.journal.state.outbox.filter(r=>!r.sent).slice(0,limit)){await this.request('/send',{method:'POST',body:{id:row.id,payload:row.payload}});this.journal.change(()=>{row.sent=true;});}}
+ // 2026-10-15：队首一条被中继以 409（同编号内容不同）拒收，原实现每轮重试同一条，后面 186 条（含 119 份工作台快照约 7MB）堵了一天半。
+ // 中继明确拒收（400/409/413）的消息不可能再送达，记下原因跳过；工作台是整份快照，积压时只发最新一份。
+ async flush(limit=8){const pending=this.journal.state.outbox.filter(r=>!r.sent),snapshots=pending.filter(r=>WORKBENCH_SNAPSHOT.test(r.id));
+  if(snapshots.length>1)this.journal.change(()=>{for(const r of snapshots.slice(0,-1)){r.sent=true;r.skipped='superseded';}});
+  for(const row of this.journal.state.outbox.filter(r=>!r.sent).slice(0,limit)){try{await this.request('/send',{method:'POST',body:{id:row.id,payload:row.payload}});}catch(e){if(![400,409,413].includes(e.status)){this.sendIssue=e.message;throw e;}console.warn('[phone] relay refused',row.id.slice(0,48),e.status);this.refused.push({id:row.id,status:e.status,at:Date.now()});this.refused=this.refused.slice(-20);this.journal.change(()=>{row.sent=true;row.skipped=e.status;});continue;}this.journal.change(()=>{row.sent=true;});this.lastSentAt=Date.now();this.sendIssue=null;}}
   async transcribeRow(row){
    this.journal.change(()=>{row.state='transcribing';row.t={...row.t,asrStart:Date.now()};});
    try{const heard=(await this.transcribe(row.pcm)).trim();if(!heard)throw Error('没有听清，请再说一次');this.emit('transcript-'+row.id,{type:'transcript',requestId:row.id,text:heard,auto:true});
@@ -234,7 +243,7 @@ class PhoneChannel{
   const pages=require('./html-snapshot').answerHtmlFiles(text,{roots:this.imageRoots});if(!pages.length)return;
   const work=(async()=>{for(const [n,page]of pages.entries()){try{const html=require('node:fs').readFileSync(page.file,'utf8');if(html.length<=3*1024*1024)this.emit(id+'-page-'+n,{type:'html',originId:id,name:page.caption,html,...extra});const images=await this.renderHtml(page.file);images.forEach((b,i)=>this.emit(id+'-html-'+n+'-'+i,{type:'image',originId:id,png:b.toString('base64'),caption:'网页：'+page.caption+(images.length>1?'（'+(i+1)+'/'+images.length+'）':''),...extra}));}catch(e){this.emit(id+'-html-error-'+n,{type:'status',text:'网页「'+page.caption+'」暂时没能转成图片，可在电脑上打开。'});}}await this.flush().catch(()=>{});this.kick?.();})();
   this.htmlWork=work;}
- pause(){this.journal.change(s=>{s.enabled=false;});clearInterval(this.timer);this.timer=null;this.online=false;return this.status();}
- close(){this.closed=true;clearInterval(this.timer);}
+ pause(){if(!this.own())throw Error('另一个 Hub 进程正在负责手机连接，请等它退出后再试');this.journal.change(s=>{s.enabled=false;});clearInterval(this.timer);this.timer=null;this.online=false;return this.status();}
+ close(){this.closed=true;clearInterval(this.timer);clearTimeout(this.lockTimer);this.lockTimer=null;if(!this.working)this.lock?.release();}
 }
 module.exports={PhoneChannel};

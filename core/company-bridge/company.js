@@ -14,6 +14,8 @@ const { AssistantStore } = require('../hub-assistant/store');
 const { claimTimers, ownsTimers } = require('../hub-assistant/timer-owner');
 const { BridgeLink } = require('./link');
 const { receiptPromptFingerprint } = require('./receipt-reader');
+// 反方向（这台电脑上的 CodeAgent 用 ask_home 向家里求助）由 ask-home.js 处理，共用这条通道和数据库。
+const { AskHome } = require('./ask-home');
 
 const PURPOSE = 'company-bridge';
 // 历代默认说明：没改过的老设置里存的就是它们，读设置时换成当前默认。
@@ -159,7 +161,8 @@ class CompanyBridge {
     this.store.db.exec('CREATE TABLE IF NOT EXISTS bridge_threads(id TEXT PRIMARY KEY,payload TEXT NOT NULL,state TEXT NOT NULL,open INTEGER NOT NULL DEFAULT 0,updated INTEGER NOT NULL)');
     ensureOpenColumn(this.store.db, t => ['queued', 'running'].includes(deriveState(t)));
     this.link = new BridgeLink({ side: 'company', store: this.store, fetchImpl: deps.fetchImpl, now: () => this.now() });
-    this.busy = null; this.advanceBusy = null; this.timer = null; this.nextPullAt = 0; this.lastPullAt = 0;
+    this.busy = null; this.advanceBusy = null; this.deliverBusy = null; this.timer = null; this.nextPullAt = 0; this.lastPullAt = 0;
+    this.askHome = new AskHome({ bridge: this, deps });
     if (!deps.noTimer) claimTimers(this.store);
   }
   now() { return this.deps.now ? this.deps.now() : Date.now(); }
@@ -193,7 +196,7 @@ class CompanyBridge {
     if (c.state !== 'paired') return { intervalSeconds: ACTIVE_POLL_MS / 1000, active: false, activeUntil: null };
     const recent = this.store.get('pollActivity');
     const activeUntil = recent?.gen === c.gen ? recent.until : null;
-    const active = activeUntil > this.now() || this.openThreads().some(t => t.gen === c.gen) || this.link.pendingOutbox() > 0;
+    const active = activeUntil > this.now() || this.openThreads().some(t => t.gen === c.gen) || this.askHome.openThreads().length > 0 || this.link.pendingOutbox() > 0;
     return { intervalSeconds: active ? ACTIVE_POLL_MS / 1000 : this.settings().pollSeconds, active, activeUntil: activeUntil > this.now() ? activeUntil : null };
   }
   tightenPoll() {
@@ -216,7 +219,9 @@ class CompanyBridge {
   }
   patchRound(t, round, patch) { return this.saveThread({ ...t, rounds: t.rounds.map(x => x.round === round ? { ...x, ...patch } : x) }); }
 
+  sessionPlan(request) { return this.askHome.sessionPlan(request); }
   start() {
+    if (!this.askHome.server) void this.askHome.start().catch(e => console.warn('[company-bridge] ask-home', e.message));
     if (this.deps.noTimer || this.timer) return;
     this.timer = setInterval(() => { void this.tick().catch(e => console.warn('[company-bridge] tick', e.message)); }, 5000);
     this.timer.unref?.();
@@ -241,6 +246,11 @@ class CompanyBridge {
       if (!this.advanceBusy) this.advanceBusy = this.advance().finally(() => { this.advanceBusy = null; });
       await this.advanceBusy;
     }
+    // 家里对 ask_home 的回复：和「自动作答」开关无关，配对了就送。
+    if (this.link.paired()) {
+      if (!this.deliverBusy) this.deliverBusy = this.askHome.deliver().finally(() => { this.deliverBusy = null; });
+      await this.deliverBusy;
+    }
   }
   checkNow() { this.nextPullAt = 0; return this.tick({ force: true }).then(() => this.status()); }
 
@@ -253,13 +263,14 @@ class CompanyBridge {
   }
   unpair() { this.cancelOpen('已解除配对'); this.link.unpair(); this.changed(); return this.status(); }
   // 解除或重新配对：没答完的问题作废，答完的也不会再发给新的对端（发送前核对代次）。
-  cancelOpen(why) { for (const t of this.openThreads()) this.saveThread({ ...t, state: 'cancelled', cancelNote: why }); }
+  cancelOpen(why) { this.askHome.cancelOpen(why); for (const t of this.openThreads()) this.saveThread({ ...t, state: 'cancelled', cancelNote: why }); }
 
   receive(message) {
     if (message.type === 'welcome') {
       if (this.link.completeAsCompany(message)) this.notify('配对已完成', 'AI特战队专用功能已接通。');
       return;
     }
+    if (this.askHome.receive(message)) return;
     if (message.type !== 'ask' && message.type !== 'followup') return;
     const id = String(message.thread || '').slice(0, 40);
     if (!/^[A-Za-z0-9-]{3,40}$/.test(id)) return;
@@ -476,11 +487,12 @@ class CompanyBridge {
       net: { lastOkAt: st.lastOkAt || null, lastError: st.lastError || null, gate: st.gate || null, peerSeen: st.peerSeen || null },
       nextPullAt: this.nextPullAt, now: this.now(), polling: this.polling(),
       threads: this.threads().map(t => ({ ...t, session: t.sessionId ? { open: !!this.deps.getSession(t.sessionId), busy: this.sessionBusy(t.sessionId) } : null })),
+      askHome: this.askHome.status(),
     };
   }
   notify(title, text, sessionId = null) { try { this.deps.onNotify?.({ title: 'AI特战队 · ' + title, text, sessionId }); } catch {} }
   changed() { try { this.deps.onChanged?.(); } catch {} }
-  close() { clearInterval(this.timer); this.timer = null; try { this.store.close(); } catch {} }
+  close() { clearInterval(this.timer); this.timer = null; this.askHome.close(); try { this.store.close(); } catch {} }
 }
 
 module.exports = { CompanyBridge, DEFAULT_INSTRUCTIONS, V1_INSTRUCTIONS, V2_INSTRUCTIONS, V3_INSTRUCTIONS, PURPOSE, userTurnsFromTranscript, sourceVerdict, stripCode, deriveState };

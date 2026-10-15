@@ -134,6 +134,10 @@ function buildIsolatedHubEnv(dataDir, extraEnv = {}, baseEnv = process.env, {
     // 默认写作根指向用户真实的写作工坊，测试实例必须圈进临时目录；
     // 文风 skill 默认跟 CLAUDE_HUB_HOME_DIR 走，上面已经隔离。
     CLAUDE_HUB_WRITING_ROOT: requestedWritingRoot || path.join(resolvedDataDir, 'writing'),
+    // 2026-10-15：无线页常驻助理会读本机 wireless-sim 接入包、派会话，并能跑真实合并脚本推送阿里云。
+    // 测试实例默认不定时检查、接入包目录圈进临时目录；要测它的用例显式传 CLAUDE_HUB_WIRELESS_HOME。
+    CLAUDE_HUB_WIRELESS_TIMER: safeExtraEnv.CLAUDE_HUB_WIRELESS_TIMER || '0',
+    CLAUDE_HUB_WIRELESS_HOME: safeExtraEnv.CLAUDE_HUB_WIRELESS_HOME || path.join(resolvedDataDir, 'wireless-home'),
     DEEPSEEK_API_KEY: allowExternalState && requestedKey ? requestedKey : '',
     CLAUDE_HUB_E2E_WINDOW_MODE: windowMode,
   };

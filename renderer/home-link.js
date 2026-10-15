@@ -11,6 +11,7 @@
   const call = async (channel, payload) => { const r = await ipcRenderer.invoke(channel, payload); if (r && r.ok === false) throw new Error(r.error || '操作未完成'); return r; };
   const toast = m => (window.__hubToast ? window.__hubToast(m) : console.log(m));
   const STATE = { queued: ['排队', 'wait'], running: ['CodeAgent 在处理', 'run'], replied: ['已回执', 'ok'], failed: ['没答上', 'bad'], cancelled: ['已作废', ''] };
+  const ASK_STATE = { sent: ['已发出', 'wait'], received: ['家里已收到', 'wait'], running: ['家里在处理', 'run'], replied: ['已回复', 'ok'], error: ['家里没答上', 'bad'], cancelled: ['已作废', ''] };
 
   const css = `
   .hl-dialog{position:fixed;inset:0;margin:auto;height:fit-content;max-height:calc(100vh - 40px);overflow:auto;width:min(760px,calc(100vw - 40px));padding:0;border:1px solid var(--border-subtle,#e3e1ea);border-radius:14px;background:var(--surface-raised,#fff);color:var(--fg-default,#1f2330);box-shadow:0 24px 60px rgba(30,24,60,.22);font:inherit}
@@ -89,6 +90,22 @@
         <details><summary class="hl-muted">看问答</summary>${rounds}</details></div>`;
     }).join('');
   }
+  // 这台电脑上的 CodeAgent 用 ask_home 向家里求助的记录（2026-10-15）。
+  function askHomeView() {
+    const list = data.askHome || [];
+    if (!list.length) return '<p class="hl-muted">还没有向家里求助过。Hub 打开的 CodeAgent 会话带有 ask_home 工具，遇到难题时它会自己用，也可以直接对它说「问一下家里」。</p>';
+    return list.slice(0, 30).map(t => {
+      const last = t.rounds[t.rounds.length - 1] || {};
+      const [label, tone] = ASK_STATE[t.state] || [t.state, ''];
+      const undelivered = t.rounds.some(r => (r.reply || r.error) && !r.delivered);
+      const rounds = t.rounds.map(r => `<div><b>第 ${r.round} 轮</b> <span class="hl-muted">${r.chars ? r.chars + ' 字 · ' : ''}问于 ${clock(r.sentAt)}${r.replyAt ? ' · 回复 ' + clock(r.replyAt) : ''}${r.meta?.agent ? ' · ' + (r.meta.agent === 'codex' ? 'Codex' : 'Claude') : ''}${r.meta?.fallbackReason ? '（Claude ' + esc(r.meta.fallbackReason) + '）' : ''}${r.meta?.companyAsks ? ' · 回公司查证据 ' + r.meta.companyAsks + ' 次' : ''}</span>${r.error ? ` <span class="hl-pill bad">${esc(r.error)}</span>` : ''}${r.deliveryError ? ` <span class="hl-pill bad">${esc(r.deliveryError)}</span>` : ''}
+        <pre>${esc(r.question)}</pre>${r.reply ? `<pre>${esc(r.reply)}</pre>` : ''}</div>`).join('');
+      return `<div class="hl-item"><div class="hl-row"><span class="hl-pill ${tone}">${label}</span><b>${esc(t.id)}</b><span>${esc(t.title)}</span>${undelivered ? '<span class="hl-muted">等会话停下再送</span>' : ''}
+        <span style="flex:1"></span><button class="hl-link" data-hl="open:${esc(t.sessionId)}">${t.session?.open ? '打开会话' : '找回会话'}</button></div>
+        <div class="hl-muted">来自会话「${esc(t.session?.title || t.sessionTitle || t.sessionId)}」 · ${t.rounds.length} 轮 · 发起 ${clock(t.createdAt)}${last.note && !last.reply ? ' · ' + esc(last.note) : ''}</div>
+        <details><summary class="hl-muted">看问答</summary>${rounds}</details></div>`;
+    }).join('');
+  }
   function render() {
     if (!dialog || !data) return;
     const paired = data.link.state === 'paired';
@@ -97,6 +114,7 @@
     body.innerHTML = `${paired ? netView() + pollingView() : `<div class="hl-sec" style="border:0;margin:0;padding:0">${pairingView()}</div>${data.link.state === 'waiting-welcome' ? netView() : ''}`}
       ${paired ? `<div class="hl-sec" data-hl-sec="settings"><h3>设置</h3>${settingsView()}</div>
       <div class="hl-sec"><h3>任务记录</h3>${threadsView()}</div>
+      <div class="hl-sec" data-hl-sec="ask-home"><h3>向家里求助</h3><p class="hl-muted">每次求助和追问的正文必须少于 2 万字（超了不发）；家里优先用 Claude 作答，不可用时换 Codex，回复自动送回发起的会话。</p>${askHomeView()}</div>
       <div class="hl-sec hl-row"><span class="hl-muted" style="flex:1">配对于 ${clock(data.link.pairedAt)}。解除后需要对端重新生成配对码。</span><button class="hl-btn" data-hl="unpair">解除配对</button></div>` : ''}`;
     // 正在改设置时别把输入框刷掉
     if (keep) body.querySelector('[data-hl-sec="settings"]').replaceWith(keep);

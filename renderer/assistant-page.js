@@ -126,6 +126,15 @@ function createAssistantPage({ document, window, ipcRenderer, openSession, close
     if (atBottom || !list.dataset.painted) { scroll.scrollTop = scroll.scrollHeight; list.dataset.painted = '1'; }
   }
   const ago = at => { if (!at) return ''; const m = Math.round((Date.now() - at) / 60000); return m < 1 ? '刚刚' : m < 60 ? m + ' 分钟前' : m < 1440 ? Math.round(m / 60) + ' 小时前' : Math.round(m / 1440) + ' 天前'; };
+  // 「已连接」只说明能收到手机消息；发往手机是否送达单独显示（2026-10-15：发送卡住一天半而这里一直显示已连接）。
+  const deliveryLines = d => {
+    if (!d) return '';
+    const out = [];
+    if (d.pending) out.push(`<p class="ap-line"${d.stuck ? ' style="color:var(--warn,#b45309)"' : ''}>待送达 ${d.pending} 条，最早一条等了 ${esc(ago(d.oldestAt) === '刚刚' ? '不到 1 分钟' : ago(d.oldestAt).replace('前', ''))}${d.issue ? '：' + esc(d.issue) : ''}</p>`);
+    out.push(`<p class="ap-dim">${d.lastSentAt ? '最近送达 ' + ago(d.lastSentAt) : '本次启动后还没有发往手机的消息'}</p>`);
+    if (d.refused?.length) out.push(`<p class="ap-dim">中继拒收已跳过 ${d.refused.length} 条（最近 ${ago(d.refused[d.refused.length - 1].at)}，代码 ${d.refused[d.refused.length - 1].status}）</p>`);
+    return out.join('');
+  };
   const STATES = { idle: '空闲', running: '处理中', waiting: '等待中', 'not-created': '未启动' };
   async function paintStatus() {
     const box = page?.querySelector('.ap-status'); if (!box || !statusOpen) return;
@@ -141,7 +150,7 @@ function createAssistantPage({ document, window, ipcRenderer, openSession, close
         <div class="ap-row"><button type="button" data-ap="memory">打开记忆</button><button type="button" data-ap="workbench">工作档案</button></div></section>
       <section><h3>待提醒</h3>${(st.reminders||[]).length ? st.reminders.map(r => `<p class="ap-line">${esc(new Date(r.at).toLocaleString('zh-CN', { timeZone: TZ, month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false }))} ${esc(r.text)}</p>`).join('') : '<p class="ap-dim">没有。对助理说「下午三点提醒我开会」即可。</p>'}</section>
       <section><h3>关注的任务</h3>${st.followed.length ? st.followed.map(w => `<p class="ap-line">${esc(w.title)}${w.state ? ` <span class="ap-dim">${esc(w.state)}</span>` : ''}</p>`).join('') : '<p class="ap-dim">没有。对助理说「帮我盯着…」即可关注。</p>'}</section>
-      <section><h3>手机</h3><p class="ap-kv"><b>${phone?.ok === false || !phone ? '未连接' : phone.connected ? '已连接' : phone.enabled ? '连接中' : '未开启'}</b><span>${phone?.phoneApp ? 'App ' + esc(phone.phoneApp) : ''}</span></p>
+      <section><h3>手机</h3><p class="ap-kv"><b>${phone?.ok === false || !phone ? '未连接' : phone.waitingForPreviousHub ? '等旧窗口退出' : phone.connected ? '已连接' : phone.enabled ? '连接中' : '未开启'}</b><span>${phone?.phoneApp ? 'App ' + esc(phone.phoneApp) : ''}</span></p>${deliveryLines(phone?.delivery)}
         <div class="ap-row"><button type="button" data-ap="phone">手机连接</button></div></section>`;
   }
   async function refreshDesk() { try { desk = (await call('assistant:dialog-log', { limit: 1 })).desk; } catch {} render(); }

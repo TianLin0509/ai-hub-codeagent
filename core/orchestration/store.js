@@ -3,6 +3,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const Ledger = require('./ledger');
+const { renameWithRetrySync } = require('../claude-project-trust');
 
 const SAFE = /^[a-zA-Z0-9_-]{1,255}$/;
 function directory(dataDir, meetingId) {
@@ -17,7 +18,8 @@ function atomicWrite(file, content) {
   const tmp = `${file}.${process.pid}.${Date.now()}.tmp`;
   const fd = fs.openSync(tmp, 'w');
   try { fs.writeFileSync(fd, content, 'utf8'); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
-  fs.renameSync(tmp, file);
+  // Windows：读方（或杀毒扫描）开着账本时覆盖改名会短暂报 EPERM，按全局约定有界重试（同 web-risk-guard）。
+  renameWithRetrySync(tmp, file, { retries: 20 });
 }
 function load(dataDir, meetingId) {
   try {

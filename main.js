@@ -2126,8 +2126,11 @@ try {
       // CodeAgent 的原生记录是 Claude 格式，按 Claude 读最终回答。
       readFinals: meta => { const r = live.read({ ...meta, id: meta.id || meta.hubId, kind: 'claude' }); return r && r.available ? r.records : []; },
       readReceipt: (meta, round) => require('./core/company-bridge/receipt-reader').readCompanyReceipt(meta, round),
+      // 「问家里」的 MCP 和命令行由 Hub 自己的程序以 Node 方式运行（公司版脚本在 app.asar 里，系统 node 读不到）。
+      nodeExecutable: process.execPath,
     });
     companyBridgeService.start();
+    sessionManager.setExtraMcpProvider(({ kind, opts, id }) => companyBridgeService.sessionPlan({ kind, opts, id }));
   }
   if (companyBridgeService) {
     require('./main/ipc/company-bridge-handlers').registerCompanyBridgeIpc(ipcMain, companyBridgeService, {

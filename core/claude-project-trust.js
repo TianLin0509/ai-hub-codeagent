@@ -9,6 +9,8 @@ const _renameSleepCell = new Int32Array(new SharedArrayBuffer(4));
 
 function renameWithRetrySync(source, target, options = {}) {
   const fsImpl = options.fsImpl || fs;
+  // 调用方可收窄错误集合；既有调用仍沿用原来的三类临时占用错误。
+  const retryCodes = options.retryCodes || TRANSIENT_RENAME_CODES;
   const retries = Number.isInteger(options.retries) ? Math.max(0, options.retries) : 80;
   const retryDelayMs = Number.isFinite(options.retryDelayMs) ? Math.max(0, options.retryDelayMs) : 15;
   const sleep = options.sleep || (ms => { if (ms > 0) Atomics.wait(_renameSleepCell, 0, 0, ms); });
@@ -17,7 +19,7 @@ function renameWithRetrySync(source, target, options = {}) {
       fsImpl.renameSync(source, target);
       return attempt;
     } catch (error) {
-      if (!error || !TRANSIENT_RENAME_CODES.has(error.code) || attempt >= retries) throw error;
+      if (!error || !retryCodes.has(error.code) || attempt >= retries) throw error;
       sleep(retryDelayMs);
     }
   }
