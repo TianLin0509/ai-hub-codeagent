@@ -20,6 +20,13 @@ const URL_RE = /\bhttps?:\/\/[\w\-.~]+(?::\d+)?(?:[\/?#][^\s<>"'`\\]*)?/g;
 const FILE_URL_RE = /\bfile:\/\/[^\s<>"'`]+/gi;
 const PREVIEW_PATH_RE = /\.(?:html?|md|markdown|png|jpe?g|gif|webp|bmp|svg|pdf|csv|tsv|json|jsonl|js|ts|jsx|tsx|mjs|cjs|py|go|rs|java|c|cpp|h|hpp|cs|txt|log|ya?ml|toml|ini|cfg|conf|sh|bat|ps1|xml|sql|r|rb|php|swift|kt|lua|zig|asm|css|scss|less)$/i;
 const HUB_IMG_PATH_RE = /(?:[A-Za-z]:)?[\\/][^\s]*[\\/]\.ai-hub-community[\\/]images[\\/][^\s]+?\.(?:png|jpe?g|gif|webp|bmp)/gi;
+// 文件名里允许空格和中文，Windows 路径的匹配是贪心的：「…设计-claude1.html（v1.1，开着…」会把「v1.1」里的 .1
+// 当成扩展名，链接吞掉后面的文字、点开打不开（2026-10-16 用户截图）。匹配串中间出现常见扩展名、后面还跟着别的字时，
+// 收口规则：整串在磁盘上存在就保留；否则从长到短找第一个存在的「到某个常见扩展名为止」；都不存在时，
+// 在第一个后面紧跟中文、全角标点或空白的常见扩展名处收口。网络路径不在这里同步查磁盘（会卡界面）。
+const KNOWN_EXT_SOURCE = PREVIEW_PATH_RE.source.slice(PREVIEW_PATH_RE.source.indexOf('(?:') + 3, PREVIEW_PATH_RE.source.lastIndexOf(')'))
+  + '|zip|7z|rar|gz|tar|docx?|pptx?|xlsx?|exe|msi|mp4|mov|mp3|wav|ipynb|mat|npy|npz|h5|pkl|pt|onnx|db|sqlite|epub';
+const KNOWN_EXT_END_RE = new RegExp(`\\.(?:${KNOWN_EXT_SOURCE})(?![A-Za-z0-9_-])`, 'gi');
 
 const REL_PATH_CACHE = new Map();
 const REL_PATH_CACHE_MAX = 256;
@@ -249,6 +256,31 @@ function _resolveRelPathIfExists(cwd, relPath, opts = {}) {
   return absPath;
 }
 
+// 一段 Windows 路径匹配实际该收到哪里（见 KNOWN_EXT_END_RE 的说明）。返回保留的字符数。
+function _windowsPathLength(match, opts = {}) {
+  const cuts = [];
+  KNOWN_EXT_END_RE.lastIndex = 0;
+  let k;
+  while ((k = KNOWN_EXT_END_RE.exec(match))) {
+    const end = k.index + k[0].length;
+    if (end < match.length) cuts.push(end);
+  }
+  if (!cuts.length) return match.length;
+  const local = value => {
+    const p = _repairLocalPathCandidate(_cleanPathCandidate(value));
+    return p && !_isNetworkPath(p) ? p : null;
+  };
+  const full = local(match);
+  if (!full) return match.length;
+  if (_existsQuiet(full, opts)) return match.length;
+  for (let i = cuts.length - 1; i >= 0; i -= 1) {
+    const p = local(match.slice(0, cuts[i]));
+    if (p && _existsQuiet(p, opts)) return cuts[i];
+  }
+  const prose = cuts.find(end => /^[\s　-〿＀-￯一-鿿]/.test(match.slice(end)));
+  return prose || match.length;
+}
+
 function _addCandidate(candidates, start, end, openPath, isUrl = false) {
   if (!openPath || end < start) return;
   const overlapsExisting = candidates.some(c => !(end < c.start || start > c.end));
@@ -280,10 +312,11 @@ function collectPathCandidates(text, cwd = null, opts = {}) {
 
   WINDOWS_FILE_PATH_RE.lastIndex = 0;
   while ((m = WINDOWS_FILE_PATH_RE.exec(text))) {
-    const raw = _cleanPathCandidate(m[0]);
+    const length = _windowsPathLength(m[0], opts);
+    const raw = _cleanPathCandidate(m[0].slice(0, length));
     const repaired = _repairLocalPathCandidate(raw);
     if (repaired) {
-      _addCandidate(candidates, m.index, m.index + m[0].length - 1, repaired);
+      _addCandidate(candidates, m.index, m.index + length - 1, repaired);
     }
   }
 

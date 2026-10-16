@@ -937,7 +937,7 @@ sessionListEl.addEventListener('keydown', event => {
     const dormantStateTip = isResumePending
       ? '正在唤醒原生 CLI 与历史上下文'
       : isDormant
-      ? `${s.suspendReason === 'idle-timeout' ? '自动休眠' : '休眠中'}${showUnread ? `，有 ${unreadCount} 条未读` : ''}，点击唤醒`
+      ? `${['idle-timeout', 'company-bridge-idle'].includes(s.suspendReason) ? '自动休眠' : '休眠中'}${showUnread ? `，有 ${unreadCount} 条未读` : ''}，点击唤醒`
       : '';
     const displayTitle = sessionDisplayTitle(s);
     const accessibleSummary = [displayTitle,

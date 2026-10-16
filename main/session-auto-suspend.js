@@ -121,7 +121,7 @@ function createSessionAutoSuspendScheduler(options = {}) {
       reason: AUTO_SUSPEND_REASON,
     });
     if (result && result.count > 0 && logger && typeof logger.log === 'function') {
-      logger.log(`[session-auto-suspend] requested ${result.count} session(s) after ${idleMs}ms idle`);
+      logger.log(`[session-auto-suspend] requested ${result.count} session(s) after ${idleMs}ms idle: ${(result.requested || []).map(id => String(id).slice(0, 8)).join(',')}`);
     }
     return result;
   }

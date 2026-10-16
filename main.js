@@ -1823,7 +1823,14 @@ sessionAutoSuspendScheduler = createSessionAutoSuspendScheduler({
     meetingManager,
     studyBridge,
   }),
-  logger: console,
+  // 休眠记录同时写进日志文件（2026-10-16）：以前只打在控制台，公司那边查日志以为 Hub 没有自动休眠。
+  logger: (() => {
+    const write = require('./core/window-keep-rendering.js').createWindowEventLog(path.join(getHubDataDir(), 'logs', 'session-suspend.log'), { logger: {} });
+    return {
+      log: (...args) => { console.log(...args); write('auto-suspend', { message: args.join(' ') }); },
+      warn: (...args) => { console.warn(...args); write('auto-suspend-warn', { message: args.join(' ') }); },
+    };
+  })(),
 });
 
 // 自动休眠预演。参数与后台巡检完全一致（复用 scheduler 内部的 sweepOptions），
@@ -2122,6 +2129,10 @@ try {
     companyBridgeService = new CompanyBridge({ ...bridgeDeps,
       // 剪贴板图片在 sendToPty 往 CodeAgent 粘贴前统一清掉（core/company-bridge/clipboard-guard.js）。
       sendPrompt: (sessionId, text, clientSubmissionId) => bridgeDeps.sendPrompt(sessionId, text, clientSubmissionId),
+      // 答完的通道会话按追问规律和内存余量休眠（core/company-bridge/session-care.js）；底线由 suspendSession 的排除项保证。
+      suspendSession: (id, opts) => sessionManager.suspendSession(id, opts),
+      // 最后一次往这个会话终端输入的时间（人打字或 Hub 发送）；只看输入，CLI 界面自己的重绘不算活动。
+      sessionInputAt: id => Number(sessionManager.sessions?.get(id)?.lastInputAt) || 0,
       fallbackCwd: os.homedir(),
       isDirectory: p => { try { return fs.statSync(p).isDirectory(); } catch { return false; } },
       // CodeAgent 的原生记录是 Claude 格式，按 Claude 读最终回答。

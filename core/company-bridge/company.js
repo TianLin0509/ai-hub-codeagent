@@ -13,7 +13,9 @@ const { randomUUID } = require('node:crypto');
 const { AssistantStore } = require('../hub-assistant/store');
 const { claimTimers, ownsTimers } = require('../hub-assistant/timer-owner');
 const { BridgeLink } = require('./link');
-const { receiptPromptFingerprint } = require('./receipt-reader');
+const { receiptPromptFingerprint, transcriptHasRequest } = require('./receipt-reader');
+// 2026-10-16：通道会话按追问规律和内存余量收放（session-care.js，设计见该文件开头）。
+const care = require('./session-care');
 // 反方向（这台电脑上的 CodeAgent 用 ask_home 向家里求助）由 ask-home.js 处理，共用这条通道和数据库。
 const { AskHome } = require('./ask-home');
 // 2026-10-15：设置菜单的隐藏入口（unlock.js）与放行页自动点击（gate-pass.js）。
@@ -61,6 +63,12 @@ const MAX_CODE_RUN = 12;
 const MAX_CODE_TOTAL = 30;
 // 发出后会话停下、却一直没读到回答：判定没答上，告诉家里。
 const NO_ANSWER_MS = 10 * 60000;
+// 发出后多久核实「提问真的写进了 CodeAgent 的记录」；刚发出这段时间里 hook 可能还没到，也按「在干活」占名额。
+const VERIFY_MS = 3 * 60000;
+const STARTUP_GRACE_MS = 3 * 60000;
+// 家里报「发问方还在活动」的有效期。
+const ASKER_TTL_MS = 15 * 60000;
+const CARE_EVERY_MS = 60000;
 // 收回答前核对：CodeAgent 收到的那条消息里得有本题编号。剪贴板里的图片会顶掉粘贴进去的问题（2026-10-15 公司真机），
 // 这时它答的是图片，不能发回家；自动重发，连着被顶掉 2 次就报错让人清空剪贴板后重试。
 const MAX_HIJACK = 2;
@@ -297,6 +305,14 @@ class CompanyBridge {
       return;
     }
     if (this.askHome.receive(message)) return;
+    // 家里报：这些问题的发问会话还在活动（追问可能性大，答完的会话保温加倍）。
+    if (message.type === 'asker') {
+      if (message.gen && message.gen !== this.link.gen()) return;
+      const threads = (Array.isArray(message.threads) ? message.threads : []).map(String).filter(id => /^[A-Za-z0-9-]{3,40}$/.test(id)).slice(0, 200);
+      this.store.set('askerActive', { at: this.now(), threads });
+      return;
+    }
+    if (message.type === 'recollect') { void this.recollect(message).catch(e => console.warn('[company-bridge] recollect', e.message)); return; }
     if (message.type !== 'ask' && message.type !== 'followup') return;
     const id = String(message.thread || '').slice(0, 40);
     if (!/^[A-Za-z0-9-]{3,40}$/.test(id)) return;
@@ -340,13 +356,64 @@ class CompanyBridge {
       if (t.gen !== gen) { this.saveThread({ ...t, state: 'cancelled', cancelNote: '属于上一次配对' }); continue; }
       if (t.state === 'running') await this.collect(t);
     }
-    let free = s.maxParallel - this.openThreads().filter(x => x.state === 'running').length;
-    for (const t of this.openThreads().filter(x => x.state === 'queued').sort((a, b) => a.createdAt - b.createdAt)) {
+    // 名额只算真在干活的（2026-10-16）：会话在忙，或刚发出、hook 还没到。回答已写完只等核对、停在两轮之间的不占——
+    // 以前它们照样占着，新问题排了一个半小时（Q-1016-06/07/08）。
+    let free = s.maxParallel - this.openThreads().filter(x => x.state === 'running' && this.roundWorking(x)).length;
+    // 已有会话的线索（追问、改写）先派：不用新开会话、不多占内存；同类按到达先后。
+    const queue = this.openThreads().filter(x => x.state === 'queued')
+      .sort((a, b) => (Number(!!b.sessionId) - Number(!!a.sessionId)) || a.createdAt - b.createdAt);
+    for (const t of queue) {
       if (free <= 0) break;
       if (t.sessionId && this.sessionBusy(t.sessionId)) continue; // 追问时原会话还在忙（例如改写上一轮），等它停下
       await this.dispatch(t);
       free -= 1;
     }
+    this.careSessions();
+  }
+  roundWorking(t) {
+    if (t.sessionId && this.sessionBusy(t.sessionId)) return true;
+    const r = t.rounds.find(x => roundPhase(x) === 'running');
+    return !!r && this.now() - (r.sentAt || 0) < STARTUP_GRACE_MS;
+  }
+
+  // 答完的通道会话按追问规律与内存余量休眠（session-care.js）；休眠保留记录，追问时 dispatch 会按编号恢复。
+  careSessions() {
+    if (!this.deps.suspendSession || this.now() - (this.lastCareAt || 0) < CARE_EVERY_MS) return;
+    this.lastCareAt = this.now();
+    const all = this.threads(300);
+    const keep = care.learnKeepWarm(all);
+    const asker = this.store.get('askerActive') || {};
+    const askerFresh = asker.at && this.now() - asker.at < ASKER_TTL_MS ? new Set(asker.threads || []) : new Set();
+    const bySession = new Map();
+    for (const t of all) {
+      if (!t.sessionId || t.state === 'cancelled') continue;
+      if (t.state === 'queued' || t.state === 'running') { bySession.set(t.sessionId, null); continue; } // 在途：不收
+      if (bySession.get(t.sessionId) === null) continue;
+      const last = t.rounds[t.rounds.length - 1] || {};
+      const idleSince = last.replyAt || last.failedAt || t.updatedAt || 0;
+      const prev = bySession.get(t.sessionId);
+      if (!prev || idleSince > prev.idleSince) bySession.set(t.sessionId, { sessionId: t.sessionId, threadId: t.id, idleSince, askerActive: askerFresh.has(t.id) });
+    }
+    // 有人在这个会话的终端里直接打过字（用户自己接着用），从那时算起：看实际活动，不只看回执时间。
+    const candidates = [...bySession.values()].filter(c => c && this.deps.getSession(c.sessionId) && !this.sessionBusy(c.sessionId))
+      .map(c => ({ ...c, idleSince: Math.max(c.idleSince, Number(this.deps.sessionInputAt?.(c.sessionId)) || 0) }));
+    const memory = this.deps.memory ? this.deps.memory() : care.memoryNow();
+    this.careState = { keepWarmMinutes: Math.round(keep.ms / 60000), samples: keep.samples, learned: keep.learned,
+      freePercent: Math.round(memory.ratio * 100), warm: candidates.length, at: this.now() };
+    for (const p of care.planRelease({ candidates, keepWarmMs: keep.ms, now: this.now(), memory })) {
+      let result;
+      try { result = this.deps.suspendSession(p.sessionId, { reason: 'company-bridge-idle', minIdleMs: 60000, excludePinned: true, excludeFocused: true, excludeMeeting: true }); }
+      catch (error) { result = { ok: false, message: error.message }; }
+      this.careLog(`${result?.ok ? 'suspend' : 'skip'} ${p.threadId} session=${String(p.sessionId).slice(0, 8)} ${p.reason}${result?.ok ? '' : '；跳过：' + (result?.message || result?.error || '未知')}`);
+    }
+  }
+  careLog(line) {
+    try {
+      const fs = require('node:fs'), dir = path.join(this.deps.dataDir, 'logs'), file = path.join(dir, 'company-session-care.log');
+      fs.mkdirSync(dir, { recursive: true });
+      try { if (fs.statSync(file).size > 256 * 1024) fs.renameSync(file, file + '.1'); } catch { /* 还没有文件 */ }
+      fs.appendFileSync(file, `${new Date(this.now()).toISOString()} ${line}\n`, 'utf8');
+    } catch { /* 日志写不了不影响收放 */ }
   }
 
   promptFor(t, r, s) {
@@ -415,6 +482,22 @@ class CompanyBridge {
       if (missing) { this.patchRound(t, r.round, { sentAt: null, resent: true, sendUncertain: null }); return; }
     }
     if (!final || final.id === r.baseline) {
+      // 发出 3 分钟后会话停着、还没有回答：核实提问真的写进了记录（Q-1016-02 第 5 轮发给了已退出的 CodeAgent，干等 30 分钟）。
+      // 没写进去就重发一次（dispatch 会按需恢复会话）；重发后仍没写进去，直接报出来。
+      if (!r.landed && this.now() - r.sentAt > VERIFY_MS) {
+        const meta = this.deps.getSession(t.sessionId) || this.deps.getSessionMetadata?.(t.sessionId);
+        let landed = null;
+        try { landed = (this.deps.transcriptHasRequest || transcriptHasRequest)(meta, { ...r, threadId: t.id }); } catch { landed = null; }
+        if (landed === true) t = this.patchRound(t, r.round, { landed: true });
+        else if (landed === false) {
+          if (!r.resent) {
+            this.patchRound(t, r.round, { sentAt: null, resent: true, sendUncertain: null });
+            this.notify('提问没送进去，重发一次', `${t.id} 第 ${r.round} 轮：发出 3 分钟后 CodeAgent 的记录里还没有这条提问`, t.sessionId);
+            return;
+          }
+          return this.failRound(t, r, '提问没能送进公司的 CodeAgent（重发一次后它的记录里仍没有这条提问）；可在「AI特战队专用功能」里点重试，或追问重发');
+        }
+      }
       if (this.now() - r.sentAt > NO_ANSWER_MS && !this.deps.getSession(t.sessionId)) return this.failRound(t, r, '会话已关闭，没有读到回答');
       if (this.now() - r.sentAt > NO_ANSWER_MS * 3) return this.failRound(t, r, '会话停下了，但一直没读到回答');
       return;
@@ -450,6 +533,10 @@ class CompanyBridge {
       this.patchRound(t, r.round, { rewriteAsked: true, rewrite: true, sentAt: null, firstDraftChars: text.length });
       return;
     }
+    await this.sendReply(t, r, text, receipt ? { userMessageId: receipt.userMessageId, sourceMessageIds: receipt.records.map(record => record.messageId) } : {});
+  }
+  // 把一轮的回答发回家：删超限的源码、截长、核对代次，落账和入发件箱同一个事务。collect 和补收共用。
+  async sendReply(t, r, text, extraMeta = {}) {
     let removed = 0;
     if (sourceVerdict(text).tooMuch) {
       // 先删成段的；零散的小段累计仍超限，就把所有代码行都换掉。
@@ -461,14 +548,13 @@ class CompanyBridge {
     const fresh = this.thread(t.id);
     if (!fresh || fresh.state === 'cancelled' || fresh.gen !== this.link.gen()) return;
     const session = this.deps.getSession(t.sessionId);
-    const meta = { model: session?.currentModel?.id || session?.model || null, elapsedSec: Math.round((this.now() - (r.firstSentAt || r.sentAt)) / 1000), codeLinesRemoved: removed, rewritten: !!r.rewriteAsked,
-      ...(receipt ? { userMessageId: receipt.userMessageId, sourceMessageIds: receipt.records.map(record => record.messageId) } : {}) };
+    const meta = { model: session?.currentModel?.id || session?.model || null, elapsedSec: Math.round((this.now() - (r.firstSentAt || r.sentAt || r.receivedAt || this.now())) / 1000), codeLinesRemoved: removed, rewritten: !!r.rewriteAsked, ...extraMeta };
     // 回答落账和回执入发件箱放在同一个事务：要么都成，要么都不成（下一轮再收）。之后发件箱负责重发。
     const item = this.link.prepare('reply', { thread: t.id, gen: fresh.gen, round: r.round, text, meta });
     this.store.db.exec('BEGIN IMMEDIATE');
     try {
       this.link.enqueue(item);
-      this.saveThread({ ...fresh, everAnswered: true, rounds: fresh.rounds.map(x => x.round === r.round ? { ...x, reply: text, replyAt: this.now(), meta } : x) });
+      this.saveThread({ ...fresh, everAnswered: true, rounds: fresh.rounds.map(x => x.round === r.round ? { ...x, reply: text, replyAt: this.now(), meta, error: null } : x) });
       this.store.db.exec('COMMIT');
     } catch (error) {
       this.store.db.exec('ROLLBACK');
@@ -480,6 +566,30 @@ class CompanyBridge {
     this.notify(pending ? '回执待发送' : '已回执', pending
       ? `${t.id} 第 ${r.round} 轮已保存；连接恢复后会自动发送。`
       : `${t.id} 第 ${r.round} 轮：${short(text, 60)}`, t.sessionId);
+  }
+  // 家里要求「补收」（2026-10-16）：这一轮报了没答上或迟迟没回执，但公司会话里其实写了回答——直接把这一轮发出之后
+  // 最新的那条回答取回，不让 CodeAgent 重答。已经有回答的，原样再发一次（家里可能没收到）。取回的文字开头注明来历。
+  async recollect(message) {
+    const t = this.thread(String(message.thread || ''));
+    if (!t || t.state === 'cancelled' || t.gen !== this.link.gen() || (message.gen && message.gen !== t.gen)) return;
+    const r = t.rounds.find(x => x.round === Number(message.round));
+    if (!r) return;
+    if (r.reply) return this.sendReply(t, r, r.reply, { ...(r.meta || {}), resentReply: true });
+    if (t.sessionId && this.sessionBusy(t.sessionId)) {
+      void this.link.send('status', { thread: t.id, gen: t.gen, round: r.round, state: 'running', note: '补收：公司会话还在作答，答完会照常回执' }).catch(() => {});
+      return;
+    }
+    const meta = t.sessionId && (this.deps.getSession(t.sessionId) || this.deps.getSessionMetadata?.(t.sessionId));
+    const since = (r.firstSentAt || r.sentAt || r.receivedAt || 0) - 5000;
+    const finals = meta && this.deps.readFinals ? this.deps.readFinals(meta) : [];
+    const latest = [...(finals || [])].reverse().find(f => (f.timestamp || 0) >= since && f.id !== r.baseline);
+    if (!latest) {
+      void this.link.send('status', { thread: t.id, gen: t.gen, round: r.round, state: 'error', note: '补收不到：公司会话里这一轮发出之后没有新的回答，可以追问重问' }).catch(() => {});
+      return;
+    }
+    const note = '（补收：这是公司会话在这一轮发出之后写下的最新回答，按家里要求直接取回，没有逐条核对它对应哪条提问。）';
+    this.notify('补收', `${t.id} 第 ${r.round} 轮：已从公司会话取回最新回答`, t.sessionId);
+    return this.sendReply(this.thread(t.id) || t, r, note + '\n\n' + String(latest.text || '').trim(), { recollected: true });
   }
   // ok：收到的消息里有本题编号；hijacked：这一轮之后只收到过带图片、却没有编号的消息；unknown：读不到记录，照旧处理。
   promptCheck(t, r) {
@@ -514,6 +624,7 @@ class CompanyBridge {
       nextPullAt: this.nextPullAt, now: this.now(), polling: this.polling(),
       threads: this.threads().map(t => ({ ...t, session: t.sessionId ? { open: !!this.deps.getSession(t.sessionId), busy: this.sessionBusy(t.sessionId) } : null })),
       askHome: this.askHome.status(),
+      care: this.careState || null,
     };
   }
   notify(title, text, sessionId = null) { try { this.deps.onNotify?.({ title: 'AI特战队 · ' + title, text, sessionId }); } catch {} }

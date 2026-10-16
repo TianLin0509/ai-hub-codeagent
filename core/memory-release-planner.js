@@ -22,11 +22,12 @@ const APP_NAMES = {
   'chrome.exe': 'Chrome', 'msedge.exe': 'Edge', 'msedgewebview2.exe': 'Edge WebView（微信、Office 等内嵌网页）',
   'quark.exe': '夸克', 'weixin.exe': '微信', 'wechat.exe': '微信', 'wechatappex.exe': '微信小程序/内置网页',
   'code.exe': 'VS Code', 'explorer.exe': '资源管理器', 'powerpnt.exe': 'PowerPoint', 'winword.exe': 'Word',
-  'excel.exe': 'Excel', 'claude.exe': 'Claude Code', 'codex.exe': 'Codex', 'clash-verge.exe': 'Clash Verge',
+  'excel.exe': 'Excel', 'claude.exe': 'Claude Code', 'codex.exe': 'Codex', 'codeagentcli.exe': 'CodeAgent', 'clash-verge.exe': 'Clash Verge',
   'verge-mihomo.exe': 'Clash 内核', 'firefox.exe': 'Firefox', 'qq.exe': 'QQ', 'dingtalk.exe': '钉钉',
 };
 const SCRIPT_HOSTS = new Set(['python.exe', 'pythonw.exe', 'node.exe', 'powershell.exe', 'pwsh.exe', 'cmd.exe', 'java.exe', 'javaw.exe']);
-const CLI_NAMES = new Set(['claude.exe', 'codex.exe']);
+// 公司版的 CodeAgent（codeagentcli.exe，每个会话另带一个 serve 子进程）同样认领与识别孤儿（2026-10-16）。
+const CLI_NAMES = new Set(['claude.exe', 'codex.exe', 'codeagentcli.exe']);
 
 function lower(value) { return String(value || '').toLowerCase(); }
 

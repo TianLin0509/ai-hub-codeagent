@@ -21,6 +21,11 @@ function bodyText(row) {
 // 第 4、6 轮是「[Image #0]## 成员追问…」+ 看图块，第 2 轮的改写请求是「[Image #0][Image #1][Image #2]（编号…」
 // + 3 个失败块；提问本身一字不差，回执却判成对不上。先比原文，比不上再去掉占位符和看图块比。
 const CLIPBOARD_ANALYSIS = '\n[已分析用户附件图片]';
+// 2026-10-16 公司真机 Q-1016-05 第 2 轮：答到一半公司 Hub 重启，CodeAgent 恢复会话后自己补了一句「继续」
+// （type=user、isUserPrompt、无合成标记），把被打断的那一轮接着做完；这句被当成了新提问，回答随之被算到它名下，
+// 本轮报「其他用户输入的答案不会作为本轮回执」。只有续跑字样、没有别的内容的输入，算作当前请求的延续；
+// 人在终端里敲「继续」也是同一个意思。带了任何其他内容的输入仍按新提问处理（防串题的原规则不变）。
+const BARE_CONTINUE = /^(?:继续|请继续|继续吧|接着做|continue|go on|keep going)[。.!！]?$/i;
 function withoutClipboardImages(text) {
   if (!/\[Image #\d+\]/.test(text)) return [];
   const at = text.indexOf(CLIPBOARD_ANALYSIS);
@@ -66,6 +71,8 @@ function readCompanyReceipt(meta, request) {
         const toolId = text.match(/<tool-use-id>\s*([^<]+?)\s*<\/tool-use-id>/)?.[1];
         if (toolId && toolOwners.has(toolId)) owner = toolOwners.get(toolId);
         current = owner;
+      } else if (current && BARE_CONTINUE.test(promptText(text).trim())) {
+        // 只有「继续」二字的输入是同一件事的延续，不是新提问（见 BARE_CONTINUE）。归属沿父节点或当前请求。
       } else if (!row.turnCompanion && !isSyntheticUserEntry(row, text)) {
         requestRoot = true;
         if (!userGroups.has(row.uuid)) {
@@ -132,4 +139,32 @@ function readCompanyReceipt(meta, request) {
     text: records.map(record => record.text).join('\n\n') };
 }
 
-module.exports = { readCompanyReceipt, receiptPromptFingerprint };
+// 提问有没有真的写进 CodeAgent 的记录（2026-10-16 公司真机 Q-1016-02 第 5 轮：发给了一个已经退出的 CodeAgent，
+// 提问根本没写进去，以前只在「记录文件不存在」时才重发，干等 30 分钟判失败）。
+// 搜同一项目目录里发送之后改过的全部 .jsonl：CLI 恢复后可能换了记录文件，不能只看绑定的那一个。
+// 返回 true（找到）/ false（目录在、没找到）/ null（不知道记录在哪，不下结论）。
+function transcriptHasRequest(meta, request, fsModule = fs) {
+  const bound = meta?.transcriptPath;
+  if (!bound || !request?.sentAt) return null;
+  const dir = require('node:path').dirname(bound);
+  let names;
+  try { names = fsModule.readdirSync(dir).filter(name => name.endsWith('.jsonl')); } catch { return null; }
+  const since = request.sentAt - 5000;
+  for (const name of names) {
+    const file = require('node:path').join(dir, name);
+    try { if (fsModule.statSync(file).mtimeMs < since) continue; } catch { continue; }
+    let raw;
+    try { raw = fsModule.readFileSync(file, 'utf8'); } catch { continue; }
+    for (const line of raw.split('\n')) {
+      if (!line.includes('"user"')) continue;
+      let row; try { row = JSON.parse(line); } catch { continue; }
+      if (row?.type !== 'user' || isToolResultEntry(row)) continue;
+      const at = Date.parse(row.timestamp) || 0;
+      if (at && at < since) continue;
+      if (matchesRequest({ text: bodyText(row), at }, request)) return true;
+    }
+  }
+  return false;
+}
+
+module.exports = { readCompanyReceipt, receiptPromptFingerprint, transcriptHasRequest };
