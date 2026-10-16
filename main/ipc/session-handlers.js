@@ -542,33 +542,77 @@ function registerSessionIpc(ipcMain, deps) {
         activeSessions: personalActive, models: personalModels.models, modelsProbedAt: personalModels.probedAt || null } };
   }
   // 一键获取模型权限：后台起这个账号的 CodeAgent 读 /model 菜单（core/codeagent-model-probe.js），一次只跑一个。
+  // v2.1.6（2026-10-16 用户「按计划推进」）：新添加的号登录完成、导入本机已登录的号、以及从没获取过的号（含个人账号），
+  // Hub 自动在后台获取一次，不用手动点；每个号每次运行 Hub 只自动试一次，失败了仍可手动点「获取」。
   let codeagentProbeChain = Promise.resolve();
-  ipcMain.handle('codeagent-pool:probe', (_event, payload) => {
+  const codeagentProbing = new Set();
+  const codeagentAutoTried = new Set();
+  function probeCodeAgentAccount(id) {
     const run = async () => {
-      const { getHubDataDir } = require('../../core/data-dir');
-      const pool = require('../../core/codeagent-pool');
-      const probe = require('../../core/codeagent-model-probe');
-      const config = require('../../core/codeagent-config').resolveCodeAgentConfig(process.env);
-      const dataDir = getHubDataDir();
-      let configDir, file;
-      if (payload?.id === 'personal') { configDir = config.configDir; file = pool.personalModelsFile(dataDir); }
-      else {
-        const account = codeagentPoolAccounts().find(a => a.id === payload?.id);
-        if (!account) throw new Error('号池里没有这个账号');
-        if (account.state !== 'ready') throw new Error('这个号需要先重新登录');
-        configDir = account.dir; file = require('path').join(account.dir, probe.MODELS_FILE);
-      }
-      const result = await probe.probeModels({ command: config.command, configDirEnv: config.configDirEnv, configDir, cwd: pool.probeCwd(dataDir) });
-      if (!result.ok) throw new Error(result.error);
-      probe.writeProbed(file, result);
-      return { ...codeagentPoolStatus(), probed: { id: payload.id, models: result.models } };
+      codeagentProbing.add(id);
+      try {
+        const { getHubDataDir } = require('../../core/data-dir');
+        const pool = require('../../core/codeagent-pool');
+        const probe = require('../../core/codeagent-model-probe');
+        const config = require('../../core/codeagent-config').resolveCodeAgentConfig(process.env);
+        const dataDir = getHubDataDir();
+        let configDir, file;
+        if (id === 'personal') { configDir = config.configDir; file = pool.personalModelsFile(dataDir); }
+        else {
+          const account = codeagentPoolAccounts().find(a => a.id === id);
+          if (!account) throw new Error('号池里没有这个账号');
+          if (account.state !== 'ready') throw new Error('这个号需要先重新登录');
+          configDir = account.dir; file = require('path').join(account.dir, probe.MODELS_FILE);
+        }
+        const result = await probe.probeModels({ command: config.command, configDirEnv: config.configDirEnv, configDir, cwd: pool.probeCwd(dataDir) });
+        if (!result.ok) throw new Error(result.error);
+        probe.writeProbed(file, result);
+        return result.models;
+      } finally { codeagentProbing.delete(id); }
     };
     const next = codeagentProbeChain.then(run, run);
     codeagentProbeChain = next.catch(() => {});
-    return next.catch(error => ({ ok: false, error: error.message }));
+    return next;
+  }
+  function autoProbeCodeAgentAccount(id) {
+    if (codeagentAutoTried.has(id) || codeagentProbing.has(id)) return;
+    codeagentAutoTried.add(id);
+    codeagentProbing.add(id);
+    sendToRenderer('codeagent-pool:changed', { id, probing: true });
+    probeCodeAgentAccount(id)
+      .then(models => sendToRenderer('codeagent-pool:changed', { id, ok: true, models, auto: true }))
+      .catch(error => sendToRenderer('codeagent-pool:changed', { id, ok: false, error: error.message, auto: true }));
+  }
+  // 号主在登录窗口里登录完成前凭证文件还不存在：每 3 秒看一次，最多 10 分钟，出现了就自动获取模型权限。
+  function autoProbeAfterLogin(id) {
+    codeagentAutoTried.delete(id);
+    const deadline = Date.now() + 10 * 60 * 1000;
+    const tick = () => {
+      let account = null;
+      try { account = codeagentPoolAccounts().find(a => a.id === id); } catch { return; }
+      if (!account) return;
+      if (account.state === 'ready') { sendToRenderer('codeagent-pool:changed', { id, loggedIn: true }); autoProbeCodeAgentAccount(id); return; }
+      if (Date.now() < deadline) setTimeout(tick, 3000).unref?.();
+    };
+    setTimeout(tick, 3000).unref?.();
+  }
+  // 列表里从没获取过模型权限的号（含个人账号）自动补一次。
+  function autoProbeMissing(status) {
+    if (!status || status.ok === false) return;
+    if (status.personal && status.personal.present && !status.personal.modelsProbedAt) autoProbeCodeAgentAccount('personal');
+    for (const a of status.accounts || []) {
+      if (a.state === 'ready' && !a.sameAsPersonal && !a.duplicateOf && !a.modelsProbedAt) autoProbeCodeAgentAccount(a.id);
+    }
+  }
+  ipcMain.handle('codeagent-pool:probe', (_event, payload) => {
+    const id = payload?.id;
+    return probeCodeAgentAccount(id)
+      .then(models => ({ ...codeagentPoolStatus(), probed: { id, models } }))
+      .catch(error => ({ ok: false, error: error.message }));
   });
   ipcMain.handle('codeagent-pool:list', () => {
-    try { return codeagentPoolStatus(); } catch (error) { return { ok: false, error: error.message }; }
+    try { const status = codeagentPoolStatus(); autoProbeMissing(status); return { ...status, probing: [...codeagentProbing] }; }
+    catch (error) { return { ok: false, error: error.message }; }
   });
   ipcMain.handle('codeagent-pool:add', (_event, payload) => {
     try {
@@ -576,6 +620,7 @@ function registerSessionIpc(ipcMain, deps) {
       const pool = require('../../core/codeagent-pool');
       const id = pool.addAccount(getHubDataDir(), { note: payload && payload.note });
       pool.openLoginWindow(getHubDataDir(), id, require('../../core/codeagent-config').resolveCodeAgentConfig(process.env));
+      autoProbeAfterLogin(id);
       return { ...codeagentPoolStatus(), added: id };
     } catch (error) { return { ok: false, error: error.message }; }
   });
@@ -591,7 +636,8 @@ function registerSessionIpc(ipcMain, deps) {
       const { getHubDataDir } = require('../../core/data-dir');
       const personalDir = require('../../core/codeagent-config').resolveCodeAgentConfig(process.env).configDir;
       const id = require('../../core/codeagent-pool').importLocal(getHubDataDir(), payload?.dir, { note: payload?.note, personalDir });
-      return { ...codeagentPoolStatus(), added: id };
+      autoProbeCodeAgentAccount(id);
+      return { ...codeagentPoolStatus(), added: id, probing: [...codeagentProbing] };
     } catch (error) { return { ok: false, error: error.message }; }
   });
   ipcMain.handle('codeagent-pool:login', (_event, payload) => {
@@ -600,6 +646,7 @@ function registerSessionIpc(ipcMain, deps) {
       const pool = require('../../core/codeagent-pool');
       if (!pool.readRegistry(getHubDataDir()).accounts.some(a => a.id === payload?.id)) throw new Error('号池里没有这个账号');
       pool.openLoginWindow(getHubDataDir(), payload.id, require('../../core/codeagent-config').resolveCodeAgentConfig(process.env));
+      autoProbeAfterLogin(payload.id);
       return codeagentPoolStatus();
     } catch (error) { return { ok: false, error: error.message }; }
   });

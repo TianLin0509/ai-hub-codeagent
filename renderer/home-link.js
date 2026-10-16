@@ -127,7 +127,7 @@
   // 会话数一键刷新（本机 Hub 里进行中的，休眠不算）；模型权限一键获取（后台读每个号自己的 /model 菜单，见 core/codeagent-model-probe.js）。
   const probing = new Set();
   function modelCell(id, models, probedAt) {
-    const busy = probing.has(id);
+    const busy = probing.has(id) || (pool && Array.isArray(pool.probing) && pool.probing.includes(id));
     const list = models && models.length ? esc(models.join('、')) : '<span class="hl-muted">未获取</span>';
     const when = probedAt ? `<div class="hl-muted">获取于 ${clock(probedAt)}</div>` : '';
     return `${list}${when}<button class="hl-link" data-hl="pool-probe:${esc(id)}"${busy ? ' disabled' : ''}>${busy ? '获取中…' : '获取'}</button>`;
@@ -283,6 +283,12 @@
     addMenuEntry();
     window.__homeLinkOpen = open;
     ipcRenderer.on('bridge:changed', () => { if (dialog?.open) void load().catch(() => {}); });
+    // 号池：自动获取模型权限开始/结束、新号登录完成时刷新表格
+    ipcRenderer.on('codeagent-pool:changed', (_e, change) => {
+      if (change && change.auto && change.ok) toast(`已自动获取模型权限：${(change.models || []).join('、')}`);
+      if (change && change.auto && change.ok === false) toast('自动获取模型权限没成功：' + change.error + '（可在表里手动点「获取」）');
+      if (dialog?.open && tab === 'pool') void loadPool();
+    });
     ipcRenderer.on('bridge:notification', (_e, n) => { if (n?.text) toast(n.title + '：' + n.text); });
   }
   // 隐藏入口：设置菜单开着时记下连续敲的字母（只看字母，不拦截按键）；在输入框、终端里打字不算，菜单关了就清空。
