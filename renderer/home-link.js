@@ -7,6 +7,7 @@
 (() => {
   const { ipcRenderer } = require('electron');
   let dialog = null, data = null, editing = false, pool = null, poolTimer = null;
+  let tab = (() => { try { return localStorage.getItem('hub.homeLink.tab') === 'pool' ? 'pool' : 'link'; } catch { return 'link'; } })();
   const esc = v => String(v ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const clock = at => at ? new Date(at).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false }) : '—';
   const ago = at => { if (!at) return '还没有'; const m = Math.round((Date.now() - Date.parse(at)) / 60000); return m <= 1 ? '刚刚' : m < 60 ? m + ' 分钟前' : clock(at); };
@@ -42,6 +43,14 @@
   .hl-item:last-child{border-bottom:0}
   .hl-pill{font-size:11px;padding:1px 8px;border-radius:999px;background:#eef0f5;color:#4b5a70;margin-right:6px}
   .hl-pill.run{background:#e8f0ff;color:#315acb}.hl-pill.ok{background:#e7f6ec;color:#1d7a3e}.hl-pill.bad{background:#fdecea;color:#b42318}
+  .hl-tabs{display:flex;gap:4px;padding:0 20px;border-bottom:1px solid var(--border-subtle,#eceaf2)}
+  .hl-tab{border:0;background:transparent;font:inherit;font-size:13px;padding:8px 12px;cursor:pointer;color:var(--fg-muted,#6b7080);border-bottom:2px solid transparent;margin-bottom:-1px}
+  .hl-tab.on{color:var(--brand,#5b5bd6);border-bottom-color:var(--brand,#5b5bd6);font-weight:600}
+  .hl-table{width:100%;border-collapse:collapse;margin-top:10px;font-size:13px}
+  .hl-table th{text-align:left;font-weight:600;font-size:12px;color:var(--fg-muted,#6b7080);padding:6px 8px;border-bottom:1px solid var(--border-subtle,#eceaf2)}
+  .hl-table td{padding:8px;border-bottom:1px solid var(--border-subtle,#f0eef5);vertical-align:top}
+  .hl-table td.hl-num{font-variant-numeric:tabular-nums;text-align:center}
+  .hl-table .hl-link{padding-left:0;display:block}
   .hl-item details{margin-top:4px}.hl-item pre{white-space:pre-wrap;max-height:220px;overflow:auto;background:var(--surface-sunken,#f6f5fa);padding:8px;border-radius:8px;font:12px/1.6 inherit;margin:4px 0}`;
 
   function pairingView() {
@@ -114,25 +123,41 @@
   }
   // CodeAgent 号池（core/codeagent-pool.js，2026-10-16）：与配对无关，解锁了这个入口就能管理。
   const POOL_STATE = { ready: ['可用', 'ok'], 'login-required': ['等待号主登录', 'run'], expired: ['登录已过期', 'bad'], unreadable: ['凭证读不了', 'bad'] };
+  // 账号与号池页签（2026-10-16 用户要求）：一张表看全本机的账号——个人账号和号池里每个号的状态、模型权限、进行中会话数。
+  // 会话数一键刷新（本机 Hub 里进行中的，休眠不算）；模型权限一键获取（后台读每个号自己的 /model 菜单，见 core/codeagent-model-probe.js）。
+  const probing = new Set();
+  function modelCell(id, models, probedAt) {
+    const busy = probing.has(id);
+    const list = models && models.length ? esc(models.join('、')) : '<span class="hl-muted">未获取</span>';
+    const when = probedAt ? `<div class="hl-muted">获取于 ${clock(probedAt)}</div>` : '';
+    return `${list}${when}<button class="hl-link" data-hl="pool-probe:${esc(id)}"${busy ? ' disabled' : ''}>${busy ? '获取中…' : '获取'}</button>`;
+  }
   function poolView() {
     if (!pool) return '<p class="hl-muted">号池状态读取中…</p>';
     if (pool.ok === false) return `<div class="hl-banner bad"><span>号池状态读取失败：${esc(pool.error)}</span></div>`;
+    const personal = pool.personal || {};
+    const method = m => m === 'idaas' ? '账号密码登录' : m === 'devuc' ? '浏览器登录' : '';
+    const personalRow = `<tr data-hl-account="personal"><td><b>${esc(personal.accountLabel || (personal.present ? '已登录' : '未登录'))}</b><div class="hl-muted">个人账号</div></td><td></td>
+      <td><span class="hl-pill ${personal.present ? 'ok' : 'bad'}">${personal.present ? '可用' : '未登录'}</span><div class="hl-muted">${esc(method(personal.method))}</div></td>
+      <td>${modelCell('personal', personal.models, personal.modelsProbedAt)}</td><td class="hl-num">${Number(personal.activeSessions) || 0}</td><td></td></tr>`;
     const rows = (pool.accounts || []).map(a => {
       let [label, tone] = POOL_STATE[a.state] || [a.state, ''];
-      if (a.state === 'ready' && a.sameAsPersonal) [label, tone] = ['和个人账号是同一个号，不参与挑号', 'bad'];
-      else if (a.state === 'ready' && a.duplicateOf) [label, tone] = ['和号池里另一条是同一个号，不参与挑号', 'bad'];
-      const method = a.method === 'idaas' ? '账号密码登录' : a.method === 'devuc' ? '浏览器登录' : '';
-      const expiry = a.state === 'ready' && a.expiresAt && a.method === 'idaas' ? ` · ${clock(new Date(a.expiresAt).toISOString())} 到期，到期请号主重登` : '';
+      if (a.state === 'ready' && a.sameAsPersonal) [label, tone] = ['和个人账号同号，不参与挑号', 'bad'];
+      else if (a.state === 'ready' && a.duplicateOf) [label, tone] = ['和号池里另一条同号，不参与挑号', 'bad'];
+      const expiry = a.state === 'ready' && a.expiresAt && a.method === 'idaas' ? ` · ${clock(new Date(a.expiresAt).toISOString())} 到期` : '';
       const relogin = a.state !== 'ready' ? `<button class="hl-link" data-hl="pool-login:${esc(a.id)}">${a.state === 'login-required' ? '再开一次登录窗口' : '重新登录'}</button>` : '';
-      return `<div class="hl-item"><div class="hl-row"><span class="hl-pill ${tone}">${esc(label)}</span><b>${esc(a.accountLabel || '还没登录')}</b><span>${esc(a.note || '')}</span>
-        <span style="flex:1"></span><span class="hl-muted">进行中会话 ${Number(a.activeSessions) || 0}</span>${relogin}<button class="hl-link" data-hl="pool-remove:${esc(a.id)}">移出号池</button></div>
-        <div class="hl-muted">${esc(method)}${expiry}${a.models && a.models.length ? ' · 可用模型 ' + esc(a.models.join('、')) : ''}</div></div>`;
+      return `<tr data-hl-account="${esc(a.id)}"><td><b>${esc(a.accountLabel || '还没登录')}</b><div class="hl-muted">号池</div></td><td>${esc(a.note || '')}</td>
+        <td><span class="hl-pill ${tone}">${esc(label)}</span><div class="hl-muted">${esc(method(a.method))}${esc(expiry)}</div></td>
+        <td>${modelCell(a.id, a.models, a.modelsProbedAt)}</td><td class="hl-num">${Number(a.activeSessions) || 0}</td>
+        <td>${relogin}<button class="hl-link" data-hl="pool-remove:${esc(a.id)}">移出号池</button></td></tr>`;
     }).join('');
-    const personal = pool.personal || {};
-    return `<p class="hl-muted">新建 CodeAgent 会话时可在「用量账号」里选号池：Hub 优先挑没有进行中会话的号，整段会话固定用它。号主要在这台电脑上登录一次（账号密码方式，在弹出的命令行窗口里输入，Hub 不保存密码）。号池里的号不要执行退出登录——退出会注销服务器上的这次登录，所有用它的会话一起掉线；要停用请点「移出号池」。</p>
-      <div class="hl-muted">个人账号：${esc(personal.accountLabel || (personal.present ? '已登录' : '未登录'))}（不在号池里，照常使用）</div>
-      ${rows || '<p class="hl-muted">号池里还没有账号。</p>'}
-      <div class="hl-row" style="margin-top:8px"><input data-hl-f="pool-note" maxlength="24" placeholder="备注：谁的号，例如 张工" style="width:220px"><button class="hl-btn primary" data-hl="pool-add">添加号池账号</button></div>
+    const empty = (pool.accounts || []).length ? '' : '<p class="hl-muted">号池里还没有账号：在下面添加，或导入本机已登录的号。</p>';
+    return `<div class="hl-row"><button class="hl-btn" data-hl="pool-refresh">刷新会话数</button><button class="hl-btn" data-hl="pool-probe-all"${probing.size ? ' disabled' : ''}>${probing.size ? '获取中…' : '一键获取全部模型权限'}</button></div>
+      <div class="hl-muted" style="margin-top:6px">会话数是本机 Hub 里进行中的会话（休眠的不算）${pool.checkedAt ? '，刷新于 ' + clock(pool.checkedAt) : ''}。获取模型权限会在后台打开该号的 CodeAgent 读它自己的模型菜单，每个号约 10–20 秒，不发消息、不耗额度。</div>
+      <table class="hl-table"><thead><tr><th>账号</th><th>备注</th><th>状态</th><th>模型权限</th><th>进行中会话</th><th></th></tr></thead><tbody>${personalRow}${rows}</tbody></table>
+      ${empty}
+      <div class="hl-sec"><h3>添加号池账号</h3><div class="hl-muted">号主在这台电脑上登录一次（弹出命令行窗口，输入 W3 用户名和密码，Hub 不保存密码）。号池里的号不要执行退出登录——退出会注销服务器上的这次登录，所有用它的会话一起掉线；要停用请点「移出号池」。</div>
+      <div class="hl-row" style="margin-top:8px"><input data-hl-f="pool-note" maxlength="24" placeholder="备注：谁的号，例如 张工" style="width:220px"><button class="hl-btn primary" data-hl="pool-add">添加号池账号</button></div></div>
       ${localView()}`;
   }
   // 本机已经登好的 CodeAgent 目录（用户目录下的 .cac*）：同一台电脑上凭证可以直接用，点「导入」就进号池，不用重新登录。
@@ -144,13 +169,19 @@
       return `<div class="hl-row hl-item"><b>${esc(c.name)}</b><span>${esc(c.accountLabel || '')}</span><span class="hl-muted">${c.method === 'idaas' ? '账号密码登录' : c.method === 'devuc' ? '浏览器登录' : ''}</span>
         <span style="flex:1"></span>${why ? `<span class="hl-muted">${esc(why)}</span>` : `<button class="hl-btn" data-hl="pool-import:${esc(c.dir)}">导入号池</button>`}</div>`;
     }).join('');
-    return `<div style="margin-top:12px"><b>本机已登录的 CodeAgent 目录</b><div class="hl-muted">同一台电脑上已经登好的号可以直接导入，不用重新登录。导入后别在原目录执行退出登录，否则号池里这份也会一起掉线。</div>${rows}</div>`;
+    return `<div class="hl-sec"><h3>本机已登录的 CodeAgent 目录</h3><div class="hl-muted">同一台电脑上已经登好的号可以直接导入，不用重新登录。导入后别在原目录执行退出登录，否则号池里这份也会一起掉线。</div>${rows}</div>`;
+  }
+  function repaintPool() {
+    const sec = dialog && dialog.querySelector('[data-hl-sec="pool"] .hl-pool-body');
+    if (!sec) return;
+    const note = sec.querySelector('[data-hl-f="pool-note"]'); const keep = note && note.value;
+    sec.innerHTML = poolView();
+    if (keep) sec.querySelector('[data-hl-f="pool-note"]').value = keep;
   }
   async function loadPool() {
     try { pool = await ipcRenderer.invoke('codeagent-pool:list'); } catch (error) { pool = { ok: false, error: error.message }; }
     try { const local = await ipcRenderer.invoke('codeagent-pool:local'); if (pool && local && local.ok) pool.local = local.candidates; } catch { /* 扫描失败不影响号池列表 */ }
-    const sec = dialog && dialog.querySelector('[data-hl-sec="pool"] .hl-pool-body');
-    if (sec) { const note = sec.querySelector('[data-hl-f="pool-note"]'); const keep = note && note.value; sec.innerHTML = poolView(); if (keep) sec.querySelector('[data-hl-f="pool-note"]').value = keep; }
+    repaintPool();
     // 有号在等登录时每 3 秒看一次凭证有没有出现
     clearTimeout(poolTimer);
     if (dialog?.open && (pool?.accounts || []).some(a => a.state === 'login-required')) poolTimer = setTimeout(() => void loadPool(), 3000);
@@ -161,12 +192,16 @@
     const paired = data.link.state === 'paired';
     const body = dialog.querySelector('.hl-body');
     const keep = editing && paired ? body.querySelector('[data-hl-sec="settings"]') : null;
+    dialog.querySelectorAll('[data-hl^="tab:"]').forEach(b => b.classList.toggle('on', b.dataset.hl === 'tab:' + tab));
+    if (tab === 'pool') {
+      body.innerHTML = `<div data-hl-sec="pool"><div class="hl-pool-body">${poolView()}</div></div>`;
+      return;
+    }
     body.innerHTML = `${paired ? netView() + pollingView() : `<div class="hl-sec" style="border:0;margin:0;padding:0">${pairingView()}</div>${data.link.state === 'waiting-welcome' ? netView() : ''}`}
       ${paired ? `<div class="hl-sec" data-hl-sec="settings"><h3>设置</h3>${settingsView()}</div>
       <div class="hl-sec"><h3>任务记录</h3>${threadsView()}</div>
       <div class="hl-sec" data-hl-sec="ask-home"><h3>向家里求助</h3><p class="hl-muted">每次求助和追问的正文必须少于 2 万字（超了不发）；家里优先用 Claude 作答，不可用时换 Codex，回复自动送回发起的会话。</p>${askHomeView()}</div>
-      <div class="hl-sec hl-row"><span class="hl-muted" style="flex:1">配对于 ${clock(data.link.pairedAt)}。解除后需要对端重新生成配对码。</span><button class="hl-btn" data-hl="unpair">解除配对</button></div>` : ''}
-      <div class="hl-sec" data-hl-sec="pool"><h3>CodeAgent 号池</h3><div class="hl-pool-body">${poolView()}</div></div>`;
+      <div class="hl-sec hl-row"><span class="hl-muted" style="flex:1">配对于 ${clock(data.link.pairedAt)}。解除后需要对端重新生成配对码。</span><button class="hl-btn" data-hl="unpair">解除配对</button></div>` : ''}`;
     // 正在改设置时别把输入框刷掉
     if (keep) body.querySelector('[data-hl-sec="settings"]').replaceWith(keep);
     dialog.querySelector('.hl-state').textContent = { none: '未配对', 'waiting-welcome': '等待确认', paired: data.settings.enabled ? '已接通 · 自动作答' : '已接通 · 作答已关' }[data.link.state] || data.link.state;
@@ -176,6 +211,18 @@
   async function act(name, button) {
     const [verb, arg] = name.split(/:(.*)/s);
     if (verb === 'close') { dialog.close(); return; }
+    if (verb === 'tab') { tab = arg === 'pool' ? 'pool' : 'link'; try { localStorage.setItem('hub.homeLink.tab', tab); } catch {} render(); if (tab === 'pool') void loadPool(); return; }
+    if (verb === 'pool-probe' || verb === 'pool-probe-all') {
+      const ids = verb === 'pool-probe' ? [arg] : ['personal', ...(pool?.accounts || []).filter(a => a.state === 'ready' && !a.sameAsPersonal && !a.duplicateOf).map(a => a.id)];
+      ids.forEach(id => probing.add(id)); repaintPool();
+      for (const id of ids) {
+        try { const r = await call('codeagent-pool:probe', { id }); pool = { ...r, local: pool?.local }; toast(`已获取模型权限：${(r.probed?.models || []).join('、')}`); }
+        catch (error) { toast('获取模型权限失败：' + error.message); }
+        finally { probing.delete(id); repaintPool(); }
+      }
+      return;
+    }
+    if (verb === 'pool-refresh') { await loadPool(); toast('会话数已刷新'); return; }
     if (verb === 'open') {
       try { await call('bridge:open-session', { sessionId: arg }); dialog.close(); await window.__hubOpenSession?.(arg); }
       catch (error) { toast('打开会话失败：' + error.message); }
@@ -214,7 +261,8 @@
     if (!dialog) {
       const style = document.createElement('style'); style.textContent = css; document.head.append(style);
       dialog = document.createElement('dialog'); dialog.className = 'hl-dialog'; dialog.id = 'home-link-dialog';
-      dialog.innerHTML = `<div class="hl-head"><strong>AI特战队专用功能 <span class="hl-muted hl-state"></span></strong><button class="hl-x" data-hl="close" title="关闭">×</button></div><div class="hl-body"></div>`;
+      dialog.innerHTML = `<div class="hl-head"><strong>AI特战队专用功能 <span class="hl-muted hl-state"></span></strong><button class="hl-x" data-hl="close" title="关闭">×</button></div>
+        <div class="hl-tabs" role="tablist"><button class="hl-tab" data-hl="tab:link" role="tab">通道</button><button class="hl-tab" data-hl="tab:pool" role="tab">账号与号池</button></div><div class="hl-body" style="padding-top:12px"></div>`;
       document.body.append(dialog);
       dialog.addEventListener('click', e => { const b = e.target.closest('[data-hl]'); if (b) void act(b.dataset.hl, b); });
       dialog.addEventListener('input', e => { if (e.target.closest('[data-hl-sec="settings"]')) editing = true; });

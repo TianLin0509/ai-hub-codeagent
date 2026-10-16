@@ -1393,6 +1393,12 @@ class SessionManager extends EventEmitter {
       account = accounts.find(a => a.id === opts.codeagentPoolAccount);
       if (!account) throw new Error('这个会话用的号池账号已移出号池，接不上原来的对话；请新建会话');
       if (account.state !== 'ready') throw new Error(`号池账号 ${pool.label(account)} 需要号主重新登录，登录后再打开这个会话`);
+    } else if (opts.codeagentPoolPick) {
+      // 手动选择：用户在启动中心点名的号
+      account = accounts.find(a => a.id === opts.codeagentPoolPick);
+      if (!account) throw new Error('选的号池账号已不在号池里，请重新选择');
+      if (account.state !== 'ready') throw new Error(`号池账号 ${pool.label(account)} 需要号主重新登录，未启动会话`);
+      if (account.sameAsPersonal || account.duplicateOf) throw new Error(`号池账号 ${pool.label(account)} 和别的号重复，不能单独使用`);
     } else {
       if (!accounts.length) throw new Error('号池里还没有账号：到「AI特战队专用功能」里添加号池账号');
       account = pool.pickAccount(accounts, { model: opts.codeagentModelPick === true ? opts.model : '' });

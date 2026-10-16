@@ -84,25 +84,37 @@ function accountState(creds, now = Date.now()) {
 
 function listAccounts(dataDir, { activeCounts = {}, personalAccountId = '', now = Date.now(), fsModule = fs } = {}) {
   const { accounts } = readRegistry(dataDir);
-  const models = require('./codeagent-models');
   const seen = new Map();
   return accounts.map(a => {
     const dir = accountDir(dataDir, a.id);
     const creds = readCredentials(dir, fsModule);
     const state = accountState(creds, now);
-    const configured = models.configuredModels(dir, fsModule);
+    const configured = accountModels(dir, fsModule);
     const duplicateOf = creds.accountId && seen.get(creds.accountId);
     if (creds.accountId && !seen.has(creds.accountId)) seen.set(creds.accountId, a.id);
     return {
       id: a.id, note: a.note, createdAt: a.createdAt, lastAssignedAt: a.lastAssignedAt, dir,
       state, method: creds.method || null, accountLabel: maskAccountId(creds.accountId), expiresAt: creds.expiresAt || null,
       models: configured.models, modelsAuthoritative: configured.authoritative, defaultModel: configured.defaultModel || '',
+      modelsProbedAt: configured.probedAt || null,
       activeSessions: Number(activeCounts[a.id]) || 0,
       sameAsPersonal: !!(creds.accountId && personalAccountId && creds.accountId === personalAccountId),
       duplicateOf: duplicateOf || null,
     };
   });
 }
+
+// 一个配置目录能用的模型：优先用「一键获取模型权限」从它自己的 /model 菜单读到的（core/codeagent-model-probe.js），
+// 没获取过时退回配置文件里的账号清单。
+function accountModels(dir, fsModule = fs, probedFile = null) {
+  const probe = require('./codeagent-model-probe');
+  const probed = probe.readProbed(probedFile || path.join(dir, probe.MODELS_FILE));
+  if (probed) return { models: probed.models, defaultModel: probed.defaultModel, authoritative: true, probedAt: probed.at };
+  const configured = require('./codeagent-models').configuredModels(dir, fsModule);
+  return { ...configured, probedAt: null };
+}
+function personalModelsFile(dataDir) { return path.join(poolRoot(dataDir), 'personal-models.json'); }
+function probeCwd(dataDir) { return path.join(poolRoot(dataDir), 'probe-cwd'); }
 
 function label(account) {
   if (!account) return '';
@@ -291,6 +303,7 @@ function importLocal(dataDir, sourceDir, { note = '', personalDir = '', env = pr
 }
 
 module.exports = {
+  accountModels, personalModelsFile, probeCwd,
   localCandidates, importLocal,
   openLoginWindow,
   POOL_DIR, poolRoot, accountDir, readRegistry, maskAccountId, readCredentials, accountState,

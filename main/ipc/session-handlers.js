@@ -505,7 +505,16 @@ function registerSessionIpc(ipcMain, deps) {
   ipcMain.handle('codeagent:models', (_event, payload) => {
     try {
       const { getHubDataDir } = require('../../core/data-dir');
-      if (payload && payload.account === 'pool') return { options: require('../../core/codeagent-pool').poolModelOptions(getHubDataDir(), codeagentPoolAccounts()) };
+      const pool = require('../../core/codeagent-pool');
+      const asOptions = ids => ids.map(id => ({ id, label: require('../../core/codeagent-models').modelLabel(id), source: 'account' }));
+      if (payload && payload.account === 'pool' && payload.poolAccount) {
+        const account = codeagentPoolAccounts().find(a => a.id === payload.poolAccount);
+        return { options: account ? asOptions(account.models) : [] };
+      }
+      if (payload && payload.account === 'pool') return { options: pool.poolModelOptions(getHubDataDir(), codeagentPoolAccounts()) };
+      // 个人账号：一键获取过模型权限就用读到的菜单，否则沿用原来的清单
+      const probed = require('../../core/codeagent-model-probe').readProbed(pool.personalModelsFile(getHubDataDir()));
+      if (probed) return { options: asOptions(probed.models) };
       return { options: require('../../core/codeagent-config').localModelOptions(getHubDataDir()) };
     } catch (error) { return { options: [], error: error.message }; }
   });
@@ -518,14 +527,46 @@ function registerSessionIpc(ipcMain, deps) {
       personalAccountId: pool.readCredentials(personalDir).accountId });
   }
   function codeagentPoolStatus() {
+    const { getHubDataDir } = require('../../core/data-dir');
     const pool = require('../../core/codeagent-pool');
     const personalDir = require('../../core/codeagent-config').resolveCodeAgentConfig(process.env).configDir;
     const personal = pool.readCredentials(personalDir);
+    const personalModels = pool.accountModels(personalDir, undefined, pool.personalModelsFile(getHubDataDir()));
     const accounts = codeagentPoolAccounts().map(({ dir, ...rest }) => rest);
-    return { ok: true, accounts,
+    // 本机各账号进行中的 CodeAgent 会话数（休眠的不算）：个人账号 = 没有号池标记的 CodeAgent 会话
+    const personalActive = sessionManager.getAllSessions().filter(s => /^codeagent(?:-resume)?$/.test(String(s.kind || ''))
+      && !s.codeagentPoolAccount && s.status !== 'dormant' && s.status !== 'closed').length;
+    return { ok: true, accounts, checkedAt: new Date().toISOString(),
       usable: accounts.filter(a => a.state === 'ready' && !a.sameAsPersonal && !a.duplicateOf).length,
-      personal: { accountLabel: pool.maskAccountId(personal.accountId), method: personal.method || null, present: !!personal.present } };
+      personal: { accountLabel: pool.maskAccountId(personal.accountId), method: personal.method || null, present: !!personal.present,
+        activeSessions: personalActive, models: personalModels.models, modelsProbedAt: personalModels.probedAt || null } };
   }
+  // 一键获取模型权限：后台起这个账号的 CodeAgent 读 /model 菜单（core/codeagent-model-probe.js），一次只跑一个。
+  let codeagentProbeChain = Promise.resolve();
+  ipcMain.handle('codeagent-pool:probe', (_event, payload) => {
+    const run = async () => {
+      const { getHubDataDir } = require('../../core/data-dir');
+      const pool = require('../../core/codeagent-pool');
+      const probe = require('../../core/codeagent-model-probe');
+      const config = require('../../core/codeagent-config').resolveCodeAgentConfig(process.env);
+      const dataDir = getHubDataDir();
+      let configDir, file;
+      if (payload?.id === 'personal') { configDir = config.configDir; file = pool.personalModelsFile(dataDir); }
+      else {
+        const account = codeagentPoolAccounts().find(a => a.id === payload?.id);
+        if (!account) throw new Error('号池里没有这个账号');
+        if (account.state !== 'ready') throw new Error('这个号需要先重新登录');
+        configDir = account.dir; file = require('path').join(account.dir, probe.MODELS_FILE);
+      }
+      const result = await probe.probeModels({ command: config.command, configDirEnv: config.configDirEnv, configDir, cwd: pool.probeCwd(dataDir) });
+      if (!result.ok) throw new Error(result.error);
+      probe.writeProbed(file, result);
+      return { ...codeagentPoolStatus(), probed: { id: payload.id, models: result.models } };
+    };
+    const next = codeagentProbeChain.then(run, run);
+    codeagentProbeChain = next.catch(() => {});
+    return next.catch(error => ({ ok: false, error: error.message }));
+  });
   ipcMain.handle('codeagent-pool:list', () => {
     try { return codeagentPoolStatus(); } catch (error) { return { ok: false, error: error.message }; }
   });

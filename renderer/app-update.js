@@ -117,7 +117,7 @@
     const s = state, latest = s.latest, plan = s.plan;
     const versions = `<div class="au-versions"><div class="au-ver"><small>当前版本</small><b>v${esc(s.current)}</b></div>`
       + (latest && plan && plan.kind !== 'none' ? `<span class="au-arrow">→</span><div class="au-ver"><small>新版本</small><b>v${esc(latest.version)}</b></div>`
-        + `<div class="au-plan"><b>${plan.kind === 'incremental' ? '增量更新' : '完整安装包'} · ${mb(plan.bytes)}</b>${esc(plan.reason)}</div>` : '')
+        + `<div class="au-plan"><b>${plan.kind === 'incremental' ? '程序更新（不含运行库）' : '完整安装包'} · ${mb(plan.bytes)}</b>${esc(plan.reason)}</div>` : '')
       + '</div>';
     let body = versions, foot = '';
     if (s.phase === 'checking') {

@@ -85,8 +85,17 @@
   // CodeAgent 号池（core/codeagent-pool.js）：号池里有可用的号时才显示「用量账号」，普通同事看到的和以前一样。
   const CODEAGENT_ACCOUNT_KEY = 'hub.codeagent.account';
   let codeagentPool = { usable: 0, accounts: [], personal: {} };
-  let codeagentAccount = (() => { try { return localStorage.getItem(CODEAGENT_ACCOUNT_KEY) === 'pool' ? 'pool' : 'personal'; } catch { return 'personal'; } })();
-  const codeagentUsesPool = () => codeagentAccount === 'pool' && codeagentPool.usable > 0;
+  // 三种：personal 个人账号；pool 号池自动挑号；pool-manual 号池里手动选一个号（2026-10-16 用户要求）。
+  const CODEAGENT_POOL_PICK_KEY = 'hub.codeagent.poolPick';
+  let codeagentAccount = (() => { try { const v = localStorage.getItem(CODEAGENT_ACCOUNT_KEY); return v === 'pool' || v === 'pool-manual' ? v : 'personal'; } catch { return 'personal'; } })();
+  let codeagentPoolPick = (() => { try { return localStorage.getItem(CODEAGENT_POOL_PICK_KEY) || ''; } catch { return ''; } })();
+  const usablePoolAccounts = () => (codeagentPool.accounts || []).filter(a => a.state === 'ready' && !a.sameAsPersonal && !a.duplicateOf);
+  const codeagentUsesPool = () => (codeagentAccount === 'pool' || codeagentAccount === 'pool-manual') && codeagentPool.usable > 0;
+  const codeagentManualPick = () => {
+    if (codeagentAccount !== 'pool-manual' || !codeagentUsesPool()) return '';
+    const list = usablePoolAccounts();
+    return (list.find(a => a.id === codeagentPoolPick) || list[0] || {}).id || '';
+  };
   let codexBackend = 'subscription';
   // DeepSeek 接入：上次选的方式（Hub 配置记住，默认 Token Plan）+ 两条线各自是否有 Key。
   let deepseekRoute = deepseekProfile.DEFAULT_ROUTE;
@@ -983,18 +992,31 @@
     const select = document.getElementById('new-session-codeagent-account');
     const note = document.getElementById('new-session-codeagent-account-note');
     const show = selectedKind === 'codeagent' && codeagentPool.usable > 0;
+    const pickField = document.getElementById('new-session-codeagent-pool-field');
+    const pickSelect = document.getElementById('new-session-codeagent-pool');
     if (field) field.hidden = !show;
     if (note) note.hidden = !show;
+    const manual = show && codeagentAccount === 'pool-manual';
+    if (pickField) pickField.hidden = !manual;
     if (!show || !select) return;
     const personal = codeagentPool.personal || {};
+    const modelsText = list => (list && list.length ? list.join('、') : '模型未获取');
     const html = `<option value="personal">${escapeHtml('个人账号' + (personal.accountLabel ? ' · ' + personal.accountLabel : ''))}</option>`
-      + `<option value="pool">${escapeHtml(`号池 · AI 特战队（${codeagentPool.usable} 个号，优先没有会话的号）`)}</option>`;
+      + `<option value="pool">${escapeHtml(`号池 · 自动路由（${codeagentPool.usable} 个号，优先没有会话的号）`)}</option>`
+      + `<option value="pool-manual">${escapeHtml('号池 · 手动选择')}</option>`;
     if (select.dataset.built !== html) { select.innerHTML = html; select.dataset.built = html; }
-    select.value = codeagentUsesPool() ? 'pool' : 'personal';
+    select.value = codeagentUsesPool() ? codeagentAccount : 'personal';
     select.disabled = submitting;
-    if (note) note.textContent = codeagentUsesPool()
-      ? '号池：创建时挑一个没有进行中会话的号，整段会话固定用它；模型菜单是号池里各号能用的模型。'
-      : '个人账号：用你自己登录的 CodeAgent，和以前一样。';
+    if (manual && pickSelect) {
+      const options = usablePoolAccounts().map(a => `<option value="${escapeHtml(a.id)}">${escapeHtml(`${a.accountLabel}${a.note ? '（' + a.note + '）' : ''} · ${modelsText(a.models)} · ${a.activeSessions || 0} 个会话`)}</option>`).join('');
+      if (pickSelect.dataset.built !== options) { pickSelect.innerHTML = options; pickSelect.dataset.built = options; }
+      pickSelect.value = codeagentManualPick();
+      pickSelect.disabled = submitting;
+    }
+    if (note) note.textContent = !codeagentUsesPool()
+      ? '个人账号：用你自己登录的 CodeAgent，和以前一样。'
+      : manual ? '号池 · 手动选择：用你在右边选的号，整段会话固定用它；模型菜单是这个号能用的模型。'
+      : '号池 · 自动路由：创建时挑一个没有进行中会话的号，整段会话固定用它；模型菜单是号池里各号能用的模型。';
   }
 
   function paintTuning() {
@@ -1289,7 +1311,10 @@
   function summaryText() {
     const parts = [KIND_LABELS[selectedKind] || selectedKind];
     if (selectedKind === 'codex' && codexBackend !== 'api') {const p=codexAccounts.find(x=>x.id===codexAccountId);parts.push(p?(p.email||p.label||p.id):'读取账号中');}
-    if (selectedKind === 'codeagent' && codeagentUsesPool()) parts.push('号池（自动挑号）');
+    if (selectedKind === 'codeagent' && codeagentUsesPool()) {
+      const pick = usablePoolAccounts().find(a => a.id === codeagentManualPick());
+      parts.push(pick ? `号池 · ${pick.accountLabel}${pick.note ? '（' + pick.note + '）' : ''}` : '号池（自动挑号）');
+    }
     if (selectedKind === 'deepseek-claude') parts.push(deepseekProfile.ROUTES[deepseekRoute].label);
     const tuning = tuningTag();
     if (tuning) parts.push(tuning);
@@ -1498,7 +1523,7 @@
     // CodeAgent：已知模型 + 本机回答里实际出现过的模型（如公司的 deepseek… 内部名）。
     if (base === 'codeagent') return ipcRenderer.invoke('codeagent-pool:list').then(status => {
       if (status && status.ok !== false) codeagentPool = status;
-    }).catch(() => {}).then(() => ipcRenderer.invoke('codeagent:models', { account: codeagentUsesPool() ? 'pool' : 'personal' })).then(result => {
+    }).catch(() => {}).then(() => ipcRenderer.invoke('codeagent:models', { account: codeagentUsesPool() ? 'pool' : 'personal', poolAccount: codeagentManualPick() || undefined })).then(result => {
       if (result && Array.isArray(result.options) && result.options.length) setRuntimeModelOptions('codeagent', result.options);
       return result;
     }).catch(error => { console.warn('[codeagent-models]', error.message); return null; });
@@ -1526,7 +1551,11 @@
     });
     if (selectedKind === 'deepseek-claude') opts.deepseekRoute = deepseekRoute;
     if (selectedKind === 'codeagent') opts.codeagentModelPick = modelTouchedByUser;
-    if (selectedKind === 'codeagent' && codeagentUsesPool()) opts.codeagentAccount = 'pool';
+    if (selectedKind === 'codeagent' && codeagentUsesPool()) {
+      opts.codeagentAccount = 'pool';
+      const pick = codeagentManualPick();
+      if (pick) opts.codeagentPoolPick = pick;
+    }
     return opts;
   }
 
@@ -1639,8 +1668,15 @@
       void saveDeepseekRoute(event.target.value).then(paint);
       paint();
     });
+    document.getElementById('new-session-codeagent-pool')?.addEventListener('change', event => {
+      codeagentPoolPick = event.target.value;
+      try { localStorage.setItem(CODEAGENT_POOL_PICK_KEY, codeagentPoolPick); } catch { /* 隐私模式 */ }
+      setError('');
+      paint();
+      void loadModelCatalog('codeagent').then(paint);
+    });
     document.getElementById('new-session-codeagent-account')?.addEventListener('change', event => {
-      codeagentAccount = event.target.value === 'pool' ? 'pool' : 'personal';
+      codeagentAccount = ['pool', 'pool-manual'].includes(event.target.value) ? event.target.value : 'personal';
       try { localStorage.setItem(CODEAGENT_ACCOUNT_KEY, codeagentAccount); } catch { /* 隐私模式 */ }
       setError('');
       paint();
