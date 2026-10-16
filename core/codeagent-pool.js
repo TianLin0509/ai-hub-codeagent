@@ -242,7 +242,56 @@ function openLoginWindow(dataDir, id, config, { env = process.env, spawnFn = req
   return { fixture: false };
 }
 
+// 本机已经登好的 CodeAgent 配置目录（用户目录下 .cac* 里有凭证的）。凭证用本机本用户的 DPAPI 加密，
+// 同一台电脑、同一个 Windows 用户下换个目录照样能用，所以可以直接导入号池，不必重新登录。
+// 隔离测试可用 AI_HUB_CODEAGENT_POOL_SCAN_ROOT 指定扫描目录（必须同时有独立数据目录）。
+function scanRoot(env = process.env) {
+  if (env.CLAUDE_HUB_DATA_DIR && env.AI_HUB_CODEAGENT_POOL_SCAN_ROOT) return env.AI_HUB_CODEAGENT_POOL_SCAN_ROOT;
+  return env.USERPROFILE || env.HOME || require('os').homedir();
+}
+
+function localCandidates(dataDir, { personalDir = '', env = process.env, now = Date.now(), fsModule = fs } = {}) {
+  const root = scanRoot(env);
+  let names = [];
+  try { names = fsModule.readdirSync(root, { withFileTypes: true }).filter(d => d.isDirectory() && /^\.cac[\w.-]*$/i.test(d.name)).map(d => d.name); }
+  catch { return []; }
+  const inPool = new Set(listAccounts(dataDir, { now, fsModule }).map(a => a.accountLabel && readCredentials(a.dir, fsModule).accountId).filter(Boolean));
+  const personal = personalDir ? readCredentials(personalDir, fsModule) : { present: false };
+  const out = [];
+  for (const name of names.sort()) {
+    const dir = path.join(root, name);
+    const creds = readCredentials(dir, fsModule);
+    if (!creds.present) continue;
+    const isPersonal = !!personalDir && path.resolve(dir).toLowerCase() === path.resolve(personalDir).toLowerCase();
+    out.push({ dir, name, method: creds.method, accountLabel: maskAccountId(creds.accountId), state: accountState(creds, now),
+      isPersonal, sameAsPersonal: !!(personal.accountId && creds.accountId === personal.accountId),
+      alreadyInPool: inPool.has(creds.accountId) });
+  }
+  return out;
+}
+
+// 导入：新建一个号池账号，把凭证复制过去；顺带复制账号清单（.cac.json）和这个号自己的默认模型，
+// 让模型菜单和挑号马上知道它能用哪些模型。不改原目录，原目录照常可用（不要在原目录执行退出登录）。
+function importLocal(dataDir, sourceDir, { note = '', personalDir = '', env = process.env, now = Date.now(), fsModule = fs } = {}) {
+  const candidate = localCandidates(dataDir, { personalDir, env, now, fsModule })
+    .find(c => path.resolve(c.dir).toLowerCase() === path.resolve(String(sourceDir || '')).toLowerCase());
+  if (!candidate) throw new Error('这个目录不在本机已登录的 CodeAgent 目录里');
+  if (candidate.isPersonal || candidate.sameAsPersonal) throw new Error('这是个人账号，不放进号池');
+  if (candidate.alreadyInPool) throw new Error('这个号已经在号池里');
+  if (candidate.state !== 'ready') throw new Error('这个目录的登录已过期，请先重新登录');
+  const id = addAccount(dataDir, { note: note || candidate.name });
+  const target = accountDir(dataDir, id);
+  fsModule.copyFileSync(path.join(candidate.dir, '.credentials.json'), path.join(target, '.credentials.json'));
+  try { if (!fsModule.existsSync(path.join(target, '.cac.json'))) fsModule.copyFileSync(path.join(candidate.dir, '.cac.json'), path.join(target, '.cac.json')); } catch { /* 没有账号清单 */ }
+  try {
+    const own = JSON.parse(fsModule.readFileSync(path.join(candidate.dir, 'settings.json'), 'utf8'));
+    if (typeof own.model === 'string' && own.model.trim()) fsModule.writeFileSync(path.join(target, 'settings.json'), JSON.stringify({ model: own.model.trim() }, null, 2) + '\n', 'utf8');
+  } catch { /* 原目录没有设置 */ }
+  return id;
+}
+
 module.exports = {
+  localCandidates, importLocal,
   openLoginWindow,
   POOL_DIR, poolRoot, accountDir, readRegistry, maskAccountId, readCredentials, accountState,
   listAccounts, label, pickAccount, markAssigned, addAccount, setNote, removeAccount,

@@ -132,10 +132,23 @@
     return `<p class="hl-muted">新建 CodeAgent 会话时可在「用量账号」里选号池：Hub 优先挑没有进行中会话的号，整段会话固定用它。号主要在这台电脑上登录一次（账号密码方式，在弹出的命令行窗口里输入，Hub 不保存密码）。号池里的号不要执行退出登录——退出会注销服务器上的这次登录，所有用它的会话一起掉线；要停用请点「移出号池」。</p>
       <div class="hl-muted">个人账号：${esc(personal.accountLabel || (personal.present ? '已登录' : '未登录'))}（不在号池里，照常使用）</div>
       ${rows || '<p class="hl-muted">号池里还没有账号。</p>'}
-      <div class="hl-row" style="margin-top:8px"><input data-hl-f="pool-note" maxlength="24" placeholder="备注：谁的号，例如 张工" style="width:220px"><button class="hl-btn primary" data-hl="pool-add">添加号池账号</button></div>`;
+      <div class="hl-row" style="margin-top:8px"><input data-hl-f="pool-note" maxlength="24" placeholder="备注：谁的号，例如 张工" style="width:220px"><button class="hl-btn primary" data-hl="pool-add">添加号池账号</button></div>
+      ${localView()}`;
+  }
+  // 本机已经登好的 CodeAgent 目录（用户目录下的 .cac*）：同一台电脑上凭证可以直接用，点「导入」就进号池，不用重新登录。
+  function localView() {
+    const list = (pool && pool.local) || [];
+    if (!list.length) return '';
+    const rows = list.map(c => {
+      const why = c.isPersonal || c.sameAsPersonal ? '个人账号，不放进号池' : c.alreadyInPool ? '已在号池里' : c.state !== 'ready' ? '登录已过期，先重新登录' : '';
+      return `<div class="hl-row hl-item"><b>${esc(c.name)}</b><span>${esc(c.accountLabel || '')}</span><span class="hl-muted">${c.method === 'idaas' ? '账号密码登录' : c.method === 'devuc' ? '浏览器登录' : ''}</span>
+        <span style="flex:1"></span>${why ? `<span class="hl-muted">${esc(why)}</span>` : `<button class="hl-btn" data-hl="pool-import:${esc(c.dir)}">导入号池</button>`}</div>`;
+    }).join('');
+    return `<div style="margin-top:12px"><b>本机已登录的 CodeAgent 目录</b><div class="hl-muted">同一台电脑上已经登好的号可以直接导入，不用重新登录。导入后别在原目录执行退出登录，否则号池里这份也会一起掉线。</div>${rows}</div>`;
   }
   async function loadPool() {
     try { pool = await ipcRenderer.invoke('codeagent-pool:list'); } catch (error) { pool = { ok: false, error: error.message }; }
+    try { const local = await ipcRenderer.invoke('codeagent-pool:local'); if (pool && local && local.ok) pool.local = local.candidates; } catch { /* 扫描失败不影响号池列表 */ }
     const sec = dialog && dialog.querySelector('[data-hl-sec="pool"] .hl-pool-body');
     if (sec) { const note = sec.querySelector('[data-hl-f="pool-note"]'); const keep = note && note.value; sec.innerHTML = poolView(); if (keep) sec.querySelector('[data-hl-f="pool-note"]').value = keep; }
     // 有号在等登录时每 3 秒看一次凭证有没有出现
@@ -175,6 +188,7 @@
         pool = result; if (field('pool-note')) field('pool-note').value = '';
         toast('已打开登录窗口：请号主在窗口里输入 W3 用户名和密码'); void loadPool();
       }
+      else if (verb === 'pool-import') { pool = await call('codeagent-pool:import', { dir: arg }); toast('已导入号池'); void loadPool(); }
       else if (verb === 'pool-login') { pool = await call('codeagent-pool:login', { id: arg }); toast('已打开登录窗口：请号主在窗口里输入 W3 用户名和密码'); void loadPool(); }
       else if (verb === 'pool-remove') {
         if (!window.confirm('把这个号移出号池？会删掉本机这份登录凭证（不会退出登录，号主那边不受影响）。')) return;

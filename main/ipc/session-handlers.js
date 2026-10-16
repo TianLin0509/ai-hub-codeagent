@@ -538,6 +538,21 @@ function registerSessionIpc(ipcMain, deps) {
       return { ...codeagentPoolStatus(), added: id };
     } catch (error) { return { ok: false, error: error.message }; }
   });
+  ipcMain.handle('codeagent-pool:local', () => {
+    try {
+      const { getHubDataDir } = require('../../core/data-dir');
+      const personalDir = require('../../core/codeagent-config').resolveCodeAgentConfig(process.env).configDir;
+      return { ok: true, candidates: require('../../core/codeagent-pool').localCandidates(getHubDataDir(), { personalDir }) };
+    } catch (error) { return { ok: false, error: error.message }; }
+  });
+  ipcMain.handle('codeagent-pool:import', (_event, payload) => {
+    try {
+      const { getHubDataDir } = require('../../core/data-dir');
+      const personalDir = require('../../core/codeagent-config').resolveCodeAgentConfig(process.env).configDir;
+      const id = require('../../core/codeagent-pool').importLocal(getHubDataDir(), payload?.dir, { note: payload?.note, personalDir });
+      return { ...codeagentPoolStatus(), added: id };
+    } catch (error) { return { ok: false, error: error.message }; }
+  });
   ipcMain.handle('codeagent-pool:login', (_event, payload) => {
     try {
       const { getHubDataDir } = require('../../core/data-dir');
