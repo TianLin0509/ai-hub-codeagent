@@ -602,7 +602,10 @@ async function sendToPtyImpl(sid, prompt, kind, options = {}) {
     if (isCodeAgentKind(kind) && !options.codeagentModelPick) {
       // 冷启动等待期间可能才出现 /model；检查必须在所有等待之后、首个
       // payload 之前。队列内只拒绝 pending，不等它，避免 /model 自锁。
-      await require('./codeagent-model-picker').beforePrompt(sessionManager, sid);
+      await require('./codeagent-model-picker').beforePrompt(sessionManager, sid, {
+        // 当前屏幕上有没有 CodeAgent 的选择框（升级提醒、信任确认、↑↓ 选择底栏）：有就别把正文打进去、回车替人选。
+        isChoiceDialog: text => (require('./group-chat-cli-ready-detector').BLOCKERS.codeagent || []).some(re => re.test(text)),
+      });
     }
     const beforeBufferLength = String(sessionManager.getSessionBuffer(sid) || '').length;
     const beforeWrite = sessionManager.getGroupChatLastActivity(sid);

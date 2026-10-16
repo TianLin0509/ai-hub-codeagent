@@ -437,7 +437,15 @@ async function waitForPick(sid, timeoutMs = 150000) {
 }
 function isPicking(sid) { return pending.has(sid); }
 
-async function beforePrompt(manager, sid, { allowUnready = false } = {}) {
+// 认不出普通输入框时，只要画面不是空白、又没有菜单或选择框，就照常发送（与 1.0.6 一致）。
+// 2026-10-16 同事反馈：CodeAgent 1.2605.05.01（比本机的 1.2615 旧）的画面和规则对不上，2.1.0 起每条消息都被退回，
+// CLI 里直接打字却能发。闸门的本意是「别把正文打进菜单或选择框」：只在明确看到它们时才拦，不按版本号逐个适配
+// （用户：「输入框不一样就不敢发了，很蠢……我们没法保证所有用户都是最新版本」）。空白屏仍然拦：CLI 还没画出来。
+function screenHasContent(lines) {
+  return lines.some(line => line.trim());
+}
+
+async function beforePrompt(manager, sid, { allowUnready = false, isChoiceDialog = null } = {}) {
   const rejectPending = () => {
     if (isPicking(sid)) throw notSent('CodeAgent 正在切换模型，本条消息未发送；切换完成后再发送。', 'codeagent-model-pick-pending');
   };
@@ -451,17 +459,25 @@ async function beforePrompt(manager, sid, { allowUnready = false } = {}) {
     rejectPending();
     const failure = failures.get(sid);
     const inputReady = promptInputAvailable(lines);
+    const menuOpen = modelDialogVisible(lines);
+    // 选择框只看当前屏幕：整段历史里启动时出现过的框不算（旧版启动弹过一次框，之后会一直被当成还开着）。
+    const choiceOpen = !inputReady && typeof isChoiceDialog === 'function' && !!isChoiceDialog(lines.join('\n'));
+    const usable = inputReady || (!menuOpen && !choiceOpen && screenHasContent(lines));
     if (failure) {
-      if (inputReady) failures.delete(sid);
-      if (!inputReady || !failure.reported) {
+      // 选模型失败已经提示过一次、菜单也关了：之后的消息照常发，不再一直退回。
+      if (usable) failures.delete(sid);
+      if (!usable || !failure.reported) {
         failure.reported = true;
-        throw notSent(failureMessage(failure.result, inputReady));
+        throw notSent(failureMessage(failure.result, usable));
       }
     }
-    if (modelDialogVisible(lines)) throw notSent(
+    if (menuOpen) throw notSent(
       'CodeAgent 当前仍在模型选择界面，本条消息未发送；请点“后台”退出菜单，恢复普通输入框后再发送。', 'codeagent-model-menu-open');
-    if (!inputReady && !allowUnready) throw notSent(
+    if (choiceOpen) throw notSent(
+      'CodeAgent 正在等你在终端里做选择，本条消息未发送；请点“后台”处理完后再发送。', 'cli-choice-pending');
+    if (!usable && !allowUnready) throw notSent(
       '尚未确认 CodeAgent 的普通输入框，本条消息未发送；请等会话启动完成，或点“后台”查看并退出选择菜单后再发送。', 'codeagent-input-not-ready');
+    if (!inputReady && usable && !allowUnready) console.warn(`[codeagent] ${String(sid).slice(0, 8)} input frame not recognized; sending (no menu or choice dialog on screen)`);
   } catch (error) {
     if (error.notSent) throw error;
     throw notSent(`无法确认 CodeAgent 当前输入位置，本条消息未发送：${error?.message || String(error)}`, 'codeagent-input-check-failed');

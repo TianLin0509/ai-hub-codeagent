@@ -1,6 +1,6 @@
 # 公司内网：用内部 Code Agent 跑 AI Hub
 
-适用：公司内网不能使用 Claude Code、Codex 等外部 CLI，只有公司自研的编码 CLI（下文称 **Code Agent**，命令 `codeagent`，后端可选 GLM、MiniMax 等模型）。固定基线：**v2.1.1**（上游 1.6.504）。
+适用：公司内网不能使用 Claude Code、Codex 等外部 CLI，只有公司自研的编码 CLI（下文称 **Code Agent**，命令 `codeagent`，后端可选 GLM、MiniMax 等模型）。固定基线：**v2.1.1**（上游 1.6.505）。
 
 ## 结论
 
