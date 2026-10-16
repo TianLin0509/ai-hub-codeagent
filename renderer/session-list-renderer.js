@@ -941,6 +941,7 @@ sessionListEl.addEventListener('keydown', event => {
       : '';
     const displayTitle = sessionDisplayTitle(s);
     const accessibleSummary = [displayTitle,
+      s.codeagentPoolAccount ? `号池账号 ${s.codeagentPoolLabel || ''}` : '',
       s.currentModel ? (s.currentModel.displayName || s.currentModel.id) : '',
       ctxPct != null ? `Ctx ${ctxPct}%` : '',
       anyWarning,
@@ -951,7 +952,10 @@ sessionListEl.addEventListener('keydown', event => {
         : (showUnread ? (s.replyReadyText || s.lastOutputPreview || '有完成结果尚未查看') : '')),
     ].filter(Boolean).join(' · ');
     div.setAttribute('aria-label', accessibleSummary);
-    div.innerHTML = '<span class="sl-title">' + _warningHtml(anyWarning) + escapeHtml(displayTitle) + '</span>'
+    // 号池会话：标题前一个「池」字（放在标题格里，不占卡片的列），悬停看用的是哪个号（core/codeagent-pool.js）。
+    const poolHtml = s.codeagentPoolAccount
+      ? `<span class="sl-pool" title="${escapeHtml('号池账号 · ' + (s.codeagentPoolLabel || s.codeagentPoolAccount))}">池</span>` : '';
+    div.innerHTML = '<span class="sl-title">' + _warningHtml(anyWarning) + poolHtml + escapeHtml(displayTitle) + '</span>'
       + _sessionKindHtml(s.kind, modelTxt, isDormant && !isResumePending && !issue ? 'dorm' : dotCls, dormantStateTip || runtimeTruthSummary(runtimeTruth), s.currentModel?.id || '')
       + timeHtml(s, showUnread ? Math.max(1, unreadCount) : 0);
     if (child) div.className += ' child';

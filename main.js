@@ -3722,6 +3722,12 @@ app.whenReady().then(async () => {
       codeagentHookTargets.push({ dir: codeagentConfig.configDir, settingsOptions });
     }
   } catch (error) { console.warn('[codeagent-hooks] skipped:', error.message); }
+  // CodeAgent 号池（core/codeagent-pool.js）：每个号的配置目录在启动会话前按同样方式部署 Hub 的 hook。
+  sessionManager.deployCodeAgentHooks = dir => {
+    const result = ensureClaudeHookIntegration({ claudeDir: dir, sourceScriptsDir: hookSourceScriptsDir, logger: console,
+      settingsOptions: { events: require('./core/codeagent-config').HOOK_EVENTS, manageStatusLine: false, managePermissionMode: false } });
+    if (result.errors.length) throw new Error(result.errors.join('；'));
+  };
   // settings.json can be rewritten by Claude settings/plugin changes while the
   // Hub keeps running. A one-time boot merge is therefore insufficient: the
   // screenshot incident had UserPromptSubmit=[] and no Hub Stop hook five

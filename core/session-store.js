@@ -136,6 +136,9 @@ function _buildSessionPayload(hubId, data) {
     codeagentRequestedModel: typeof data.codeagentRequestedModel === 'string' ? data.codeagentRequestedModel : null,
     codeagentModelPick: typeof data.codeagentModelPick === 'boolean' ? data.codeagentModelPick : null,
     codeagentForkSourceSessionId: typeof data.codeagentForkSourceSessionId === 'string' ? data.codeagentForkSourceSessionId : null,
+    // 号池会话用的是号池里哪个号（core/codeagent-pool.js）；恢复时回到同一个号的配置目录。
+    codeagentPoolAccount: typeof data.codeagentPoolAccount === 'string' ? data.codeagentPoolAccount : null,
+    codeagentPoolLabel: typeof data.codeagentPoolLabel === 'string' ? data.codeagentPoolLabel : null,
     effort: typeof data.effort === 'string' ? data.effort : null,
     contextPct: typeof data.contextPct === 'number' ? data.contextPct : null,
     contextUsed: typeof data.contextUsed === 'number' ? data.contextUsed : null,

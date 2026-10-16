@@ -102,6 +102,8 @@ function planSessionFork({ source, siblingPool = [], meeting = null, rendererTit
     kind = isDeepSeek ? 'deepseek' : sourceKind.startsWith('deepseek-claude') ? 'deepseek-claude' : sourceKind.startsWith('codeagent') ? 'codeagent' : 'claude';
     // 模型元数据随分支展示，CLI 的当前模型由原生分支恢复，不再次自动操作 /model。
     if (kind === 'codeagent') opts.codeagentModelPick = false;
+    // 号池会话的历史在那个号的目录里，分支也留在同一个号。
+    if (kind === 'codeagent' && source.codeagentPoolAccount) opts.codeagentPoolAccount = source.codeagentPoolAccount;
     // DeepSeek on Claude Code 的分支沿用同一条接入方式。
     if (kind === 'deepseek-claude' && source.deepseekRoute) opts.deepseekRoute = source.deepseekRoute;
     opts.forkCCSessionId = nativeSessionId;

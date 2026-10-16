@@ -1372,6 +1372,44 @@ class SessionManager extends EventEmitter {
     return opts;
   }
 
+  // 号池里各号此刻有几个进行中的会话（休眠的不算），挑号时优先没有会话的号。
+  codeagentPoolActiveCounts() {
+    const counts = {};
+    for (const s of this.sessions.values()) {
+      const id = s && s.info && s.info.codeagentPoolAccount;
+      if (!id || s.info.status === 'dormant' || s.info.status === 'closed') continue;
+      counts[id] = (counts[id] || 0) + 1;
+    }
+    return counts;
+  }
+
+  _resolveCodeAgentPool(opts, personalConfig) {
+    const pool = require('./codeagent-pool');
+    const dataDir = getHubDataDir();
+    const personal = pool.readCredentials(personalConfig.configDir);
+    const accounts = pool.listAccounts(dataDir, { activeCounts: this.codeagentPoolActiveCounts(), personalAccountId: personal.accountId });
+    let account;
+    if (opts.codeagentPoolAccount) {
+      account = accounts.find(a => a.id === opts.codeagentPoolAccount);
+      if (!account) throw new Error('这个会话用的号池账号已移出号池，接不上原来的对话；请新建会话');
+      if (account.state !== 'ready') throw new Error(`号池账号 ${pool.label(account)} 需要号主重新登录，登录后再打开这个会话`);
+    } else {
+      if (!accounts.length) throw new Error('号池里还没有账号：到「AI特战队专用功能」里添加号池账号');
+      account = pool.pickAccount(accounts, { model: opts.codeagentModelPick === true ? opts.model : '' });
+      if (!account) throw new Error('号池里暂时没有可用的号（需要号主重新登录，或没有所选模型的权限），未启动会话');
+    }
+    const cwd = opts.cwd || process.env.USERPROFILE || process.env.HOME || '';
+    const override = pool.projectCredentialsOverride(cwd);
+    if (override) throw new Error(`工作目录里有 ${override}，CodeAgent 会优先用它登录，号池选的号不会生效；请换一个工作目录`);
+    const sync = pool.syncSharedConfig(personalConfig.configDir, account.dir);
+    if (sync.errors.length) console.warn(`[codeagent-pool] ${account.id} 同步配置：${sync.errors.join('；')}`);
+    if (typeof this.deployCodeAgentHooks === 'function') {
+      try { this.deployCodeAgentHooks(account.dir); } catch (error) { console.warn(`[codeagent-pool] ${account.id} hook：${error.message}`); }
+    }
+    if (!opts.codeagentPoolAccount) pool.markAssigned(dataDir, account.id);
+    return { account, label: pool.label(account) };
+  }
+
   _createSession(kind = 'powershell', opts = {}) {
     if (this._isShuttingDown || this.restartPending) {
       throw new Error('Hub is shutting down; refusing to create a new PTY');
@@ -1464,7 +1502,13 @@ class SessionManager extends EventEmitter {
     const sessionEnv = { ...process.env };
     applyInteractiveTerminalEnv(sessionEnv, { truecolor: isPtyAgent && (isClaude || isDeepSeekClaude || isCodexRuntime || isCodeAgent) });
     let codexProfile = null;
-    const codeagentConfig = isCodeAgent ? require('./codeagent-config').resolveCodeAgentConfig(process.env) : null;
+    let codeagentConfig = isCodeAgent ? require('./codeagent-config').resolveCodeAgentConfig(process.env) : null;
+    // 号池（core/codeagent-pool.js）：新建时挑一个号，恢复/分支时回到原来那个号；换的只是配置目录。
+    let codeagentPool = null;
+    if (isCodeAgent && (opts.codeagentAccount === 'pool' || opts.codeagentPoolAccount)) {
+      codeagentPool = this._resolveCodeAgentPool(opts, codeagentConfig);
+      codeagentConfig = { ...codeagentConfig, configDir: codeagentPool.account.dir };
+    }
 
     if (isClaude) {
       const cv = getConfigValues();
@@ -2036,6 +2080,7 @@ class SessionManager extends EventEmitter {
       ...(isDeepSeekClaude ? { effort: CLAUDE_EFFORT_LEVELS.has(opts.effort) ? opts.effort : DEEPSEEK_CLAUDE_DEFAULT_EFFORT } : {}),
       ...(isCodeAgent && require('./codeagent-config').EFFORTS.includes(opts.effort) ? { effort: opts.effort } : {}),
       // 身份待绑定：main.js 的 hook 路由据此接受第一个 hook 上报的原生 id（见 codeagentIdentityPending）。
+      ...(codeagentPool ? { codeagentPoolAccount: codeagentPool.account.id, codeagentPoolLabel: codeagentPool.label } : {}),
       ...(isCodeAgent ? { codeagentConfigDir: codeagentConfig.configDir, codeagentIdentityPending: !codeagentLaunch.sessionId,
         codeagentForkSourceSessionId: opts.forkCCSessionId || opts.codeagentForkSourceSessionId || undefined,
         codeagentModelPick: shouldPickCodeAgentModel(opts) } : {}),
@@ -3350,7 +3395,9 @@ class SessionManager extends EventEmitter {
     if (isCodeAgentKind(runtimeKind)) {
       // 原地重拉开一个新的 CLI 进程（同 Claude）。它不认 --session-id，新身份要等 hook 上报：
       // 先清掉旧绑定并标记待绑定，否则新进程的 hook 会因 id 不同被当成外来会话丢弃。
-      const config = require('./codeagent-config').resolveCodeAgentConfig(process.env);
+      // 号池会话的配置目录是它那个号的目录（环境变量随 PTY 选项保留，这里的 config 也要一致）。
+      const config = { ...require('./codeagent-config').resolveCodeAgentConfig(process.env),
+        ...(s.info && s.info.codeagentConfigDir ? { configDir: s.info.codeagentConfigDir } : {}) };
       // 原地重拉是一个全新的 CodeAgent 进程，按当前规则重新写进系统提示（同 Claude）。
       const relaunchRules = this.hubRulesSystemPrompt({}, s.info && s.info.purpose);
       if (s.info) s.info.hubRulesSystem = relaunchRules ? { version: relaunchRules.version, label: relaunchRules.label } : undefined;
@@ -3533,6 +3580,7 @@ class SessionManager extends EventEmitter {
       ...(info.bottomed !== undefined ? { bottomed: info.bottomed } : {}),
       ...(info.ccSessionId !== undefined ? { ccSessionId: info.ccSessionId } : {}),
       ...(info.codeagentForkSourceSessionId ? { codeagentForkSourceSessionId: info.codeagentForkSourceSessionId } : {}),
+      ...(info.codeagentPoolAccount ? { codeagentPoolAccount: info.codeagentPoolAccount, codeagentPoolLabel: info.codeagentPoolLabel || '' } : {}),
       ...(info.transcriptPath !== undefined ? { transcriptPath: info.transcriptPath } : {}),
       ...(info.codexSid !== undefined ? { codexSid: info.codexSid } : {}),
       ...(info.codexSessionsRoot !== undefined ? { codexSessionsRoot: info.codexSessionsRoot } : {}),

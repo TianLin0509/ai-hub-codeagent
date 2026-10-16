@@ -125,6 +125,7 @@ function buildSessionResumeMeta(session, overrides = {}) {
     model: sessionModelId(session),
     ...(/^codeagent(?:-resume)?$/.test(session.kind) ? { codeagentModelPick: session.codeagentModelPick === true } : {}),
     ...(session.codeagentForkSourceSessionId ? { codeagentForkSourceSessionId: session.codeagentForkSourceSessionId } : {}),
+    ...(session.codeagentPoolAccount ? { codeagentPoolAccount: session.codeagentPoolAccount, codeagentPoolLabel: session.codeagentPoolLabel || '' } : {}),
     effort: session.effort || null,
     codexSid: session.codexSid || null,
     acpSid: session.acpSid || null,

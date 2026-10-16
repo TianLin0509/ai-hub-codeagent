@@ -6,7 +6,7 @@
 // 解锁时没有输入框、没有提示，菜单里只是多了这一项。
 (() => {
   const { ipcRenderer } = require('electron');
-  let dialog = null, data = null, editing = false;
+  let dialog = null, data = null, editing = false, pool = null, poolTimer = null;
   const esc = v => String(v ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const clock = at => at ? new Date(at).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false }) : '—';
   const ago = at => { if (!at) return '还没有'; const m = Math.round((Date.now() - Date.parse(at)) / 60000); return m <= 1 ? '刚刚' : m < 60 ? m + ' 分钟前' : clock(at); };
@@ -112,6 +112,37 @@
         <details><summary class="hl-muted">看问答</summary>${rounds}</details></div>`;
     }).join('');
   }
+  // CodeAgent 号池（core/codeagent-pool.js，2026-10-16）：与配对无关，解锁了这个入口就能管理。
+  const POOL_STATE = { ready: ['可用', 'ok'], 'login-required': ['等待号主登录', 'run'], expired: ['登录已过期', 'bad'], unreadable: ['凭证读不了', 'bad'] };
+  function poolView() {
+    if (!pool) return '<p class="hl-muted">号池状态读取中…</p>';
+    if (pool.ok === false) return `<div class="hl-banner bad"><span>号池状态读取失败：${esc(pool.error)}</span></div>`;
+    const rows = (pool.accounts || []).map(a => {
+      let [label, tone] = POOL_STATE[a.state] || [a.state, ''];
+      if (a.state === 'ready' && a.sameAsPersonal) [label, tone] = ['和个人账号是同一个号，不参与挑号', 'bad'];
+      else if (a.state === 'ready' && a.duplicateOf) [label, tone] = ['和号池里另一条是同一个号，不参与挑号', 'bad'];
+      const method = a.method === 'idaas' ? '账号密码登录' : a.method === 'devuc' ? '浏览器登录' : '';
+      const expiry = a.state === 'ready' && a.expiresAt && a.method === 'idaas' ? ` · ${clock(new Date(a.expiresAt).toISOString())} 到期，到期请号主重登` : '';
+      const relogin = a.state !== 'ready' ? `<button class="hl-link" data-hl="pool-login:${esc(a.id)}">${a.state === 'login-required' ? '再开一次登录窗口' : '重新登录'}</button>` : '';
+      return `<div class="hl-item"><div class="hl-row"><span class="hl-pill ${tone}">${esc(label)}</span><b>${esc(a.accountLabel || '还没登录')}</b><span>${esc(a.note || '')}</span>
+        <span style="flex:1"></span><span class="hl-muted">进行中会话 ${Number(a.activeSessions) || 0}</span>${relogin}<button class="hl-link" data-hl="pool-remove:${esc(a.id)}">移出号池</button></div>
+        <div class="hl-muted">${esc(method)}${expiry}${a.models && a.models.length ? ' · 可用模型 ' + esc(a.models.join('、')) : ''}</div></div>`;
+    }).join('');
+    const personal = pool.personal || {};
+    return `<p class="hl-muted">新建 CodeAgent 会话时可在「用量账号」里选号池：Hub 优先挑没有进行中会话的号，整段会话固定用它。号主要在这台电脑上登录一次（账号密码方式，在弹出的命令行窗口里输入，Hub 不保存密码）。号池里的号不要执行退出登录——退出会注销服务器上的这次登录，所有用它的会话一起掉线；要停用请点「移出号池」。</p>
+      <div class="hl-muted">个人账号：${esc(personal.accountLabel || (personal.present ? '已登录' : '未登录'))}（不在号池里，照常使用）</div>
+      ${rows || '<p class="hl-muted">号池里还没有账号。</p>'}
+      <div class="hl-row" style="margin-top:8px"><input data-hl-f="pool-note" maxlength="24" placeholder="备注：谁的号，例如 张工" style="width:220px"><button class="hl-btn primary" data-hl="pool-add">添加号池账号</button></div>`;
+  }
+  async function loadPool() {
+    try { pool = await ipcRenderer.invoke('codeagent-pool:list'); } catch (error) { pool = { ok: false, error: error.message }; }
+    const sec = dialog && dialog.querySelector('[data-hl-sec="pool"] .hl-pool-body');
+    if (sec) { const note = sec.querySelector('[data-hl-f="pool-note"]'); const keep = note && note.value; sec.innerHTML = poolView(); if (keep) sec.querySelector('[data-hl-f="pool-note"]').value = keep; }
+    // 有号在等登录时每 3 秒看一次凭证有没有出现
+    clearTimeout(poolTimer);
+    if (dialog?.open && (pool?.accounts || []).some(a => a.state === 'login-required')) poolTimer = setTimeout(() => void loadPool(), 3000);
+  }
+
   function render() {
     if (!dialog || !data) return;
     const paired = data.link.state === 'paired';
@@ -121,12 +152,13 @@
       ${paired ? `<div class="hl-sec" data-hl-sec="settings"><h3>设置</h3>${settingsView()}</div>
       <div class="hl-sec"><h3>任务记录</h3>${threadsView()}</div>
       <div class="hl-sec" data-hl-sec="ask-home"><h3>向家里求助</h3><p class="hl-muted">每次求助和追问的正文必须少于 2 万字（超了不发）；家里优先用 Claude 作答，不可用时换 Codex，回复自动送回发起的会话。</p>${askHomeView()}</div>
-      <div class="hl-sec hl-row"><span class="hl-muted" style="flex:1">配对于 ${clock(data.link.pairedAt)}。解除后需要对端重新生成配对码。</span><button class="hl-btn" data-hl="unpair">解除配对</button></div>` : ''}`;
+      <div class="hl-sec hl-row"><span class="hl-muted" style="flex:1">配对于 ${clock(data.link.pairedAt)}。解除后需要对端重新生成配对码。</span><button class="hl-btn" data-hl="unpair">解除配对</button></div>` : ''}
+      <div class="hl-sec" data-hl-sec="pool"><h3>CodeAgent 号池</h3><div class="hl-pool-body">${poolView()}</div></div>`;
     // 正在改设置时别把输入框刷掉
     if (keep) body.querySelector('[data-hl-sec="settings"]').replaceWith(keep);
     dialog.querySelector('.hl-state').textContent = { none: '未配对', 'waiting-welcome': '等待确认', paired: data.settings.enabled ? '已接通 · 自动作答' : '已接通 · 作答已关' }[data.link.state] || data.link.state;
   }
-  async function load() { data = await call('bridge:status'); render(); }
+  async function load() { data = await call('bridge:status'); render(); void loadPool(); }
   function field(name) { return dialog.querySelector(`[data-hl-f="${name}"]`); }
   async function act(name, button) {
     const [verb, arg] = name.split(/:(.*)/s);
@@ -138,7 +170,17 @@
     }
     button && (button.disabled = true);
     try {
-      if (verb === 'pair') { data = await call('bridge:pair', { code: field('code').value }); render(); toast('已发出配对请求，等待对端 Hub 确认'); }
+      if (verb === 'pool-add') {
+        const result = await call('codeagent-pool:add', { note: field('pool-note')?.value || '' });
+        pool = result; if (field('pool-note')) field('pool-note').value = '';
+        toast('已打开登录窗口：请号主在窗口里输入 W3 用户名和密码'); void loadPool();
+      }
+      else if (verb === 'pool-login') { pool = await call('codeagent-pool:login', { id: arg }); toast('已打开登录窗口：请号主在窗口里输入 W3 用户名和密码'); void loadPool(); }
+      else if (verb === 'pool-remove') {
+        if (!window.confirm('把这个号移出号池？会删掉本机这份登录凭证（不会退出登录，号主那边不受影响）。')) return;
+        pool = await call('codeagent-pool:remove', { id: arg }); void loadPool();
+      }
+      else if (verb === 'pair') { data = await call('bridge:pair', { code: field('code').value }); render(); toast('已发出配对请求，等待对端 Hub 确认'); }
       else if (verb === 'check') { data = await call('bridge:check-now'); render(); }
       else if (verb === 'gate') { toast('放行页已打开：点完允许后关掉那个窗口'); data = await call('bridge:open-gate'); render(); }
       else if (verb === 'retry') { data = await call('bridge:retry', { id: arg }); render(); }
@@ -162,7 +204,7 @@
       document.body.append(dialog);
       dialog.addEventListener('click', e => { const b = e.target.closest('[data-hl]'); if (b) void act(b.dataset.hl, b); });
       dialog.addEventListener('input', e => { if (e.target.closest('[data-hl-sec="settings"]')) editing = true; });
-      dialog.addEventListener('close', () => { editing = false; });
+      dialog.addEventListener('close', () => { editing = false; clearTimeout(poolTimer); });
     }
     if (!dialog.open) dialog.showModal();
     void load().catch(e => toast('AI特战队专用功能状态读取失败：' + e.message));

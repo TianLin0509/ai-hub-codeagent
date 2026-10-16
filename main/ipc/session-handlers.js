@@ -502,11 +502,66 @@ function registerSessionIpc(ipcMain, deps) {
 
   // 公司电脑上装了 CodeAgent 时，新建会话 / 群聊默认用它（只查文件是否存在，不代表已登录）。
   // CodeAgent 模型菜单：已知模型 + 本机回答里实际出现过的模型（core/codeagent-models.js）。
-  ipcMain.handle('codeagent:models', () => {
+  ipcMain.handle('codeagent:models', (_event, payload) => {
     try {
       const { getHubDataDir } = require('../../core/data-dir');
+      if (payload && payload.account === 'pool') return { options: require('../../core/codeagent-pool').poolModelOptions(getHubDataDir(), codeagentPoolAccounts()) };
       return { options: require('../../core/codeagent-config').localModelOptions(getHubDataDir()) };
     } catch (error) { return { options: [], error: error.message }; }
+  });
+  // CodeAgent 号池（core/codeagent-pool.js）：列表、添加（开登录窗口）、重新登录、备注、移出。
+  function codeagentPoolAccounts() {
+    const { getHubDataDir } = require('../../core/data-dir');
+    const pool = require('../../core/codeagent-pool');
+    const personalDir = require('../../core/codeagent-config').resolveCodeAgentConfig(process.env).configDir;
+    return pool.listAccounts(getHubDataDir(), { activeCounts: sessionManager.codeagentPoolActiveCounts(),
+      personalAccountId: pool.readCredentials(personalDir).accountId });
+  }
+  function codeagentPoolStatus() {
+    const pool = require('../../core/codeagent-pool');
+    const personalDir = require('../../core/codeagent-config').resolveCodeAgentConfig(process.env).configDir;
+    const personal = pool.readCredentials(personalDir);
+    const accounts = codeagentPoolAccounts().map(({ dir, ...rest }) => rest);
+    return { ok: true, accounts,
+      usable: accounts.filter(a => a.state === 'ready' && !a.sameAsPersonal && !a.duplicateOf).length,
+      personal: { accountLabel: pool.maskAccountId(personal.accountId), method: personal.method || null, present: !!personal.present } };
+  }
+  ipcMain.handle('codeagent-pool:list', () => {
+    try { return codeagentPoolStatus(); } catch (error) { return { ok: false, error: error.message }; }
+  });
+  ipcMain.handle('codeagent-pool:add', (_event, payload) => {
+    try {
+      const { getHubDataDir } = require('../../core/data-dir');
+      const pool = require('../../core/codeagent-pool');
+      const id = pool.addAccount(getHubDataDir(), { note: payload && payload.note });
+      pool.openLoginWindow(getHubDataDir(), id, require('../../core/codeagent-config').resolveCodeAgentConfig(process.env));
+      return { ...codeagentPoolStatus(), added: id };
+    } catch (error) { return { ok: false, error: error.message }; }
+  });
+  ipcMain.handle('codeagent-pool:login', (_event, payload) => {
+    try {
+      const { getHubDataDir } = require('../../core/data-dir');
+      const pool = require('../../core/codeagent-pool');
+      if (!pool.readRegistry(getHubDataDir()).accounts.some(a => a.id === payload?.id)) throw new Error('号池里没有这个账号');
+      pool.openLoginWindow(getHubDataDir(), payload.id, require('../../core/codeagent-config').resolveCodeAgentConfig(process.env));
+      return codeagentPoolStatus();
+    } catch (error) { return { ok: false, error: error.message }; }
+  });
+  ipcMain.handle('codeagent-pool:note', (_event, payload) => {
+    try {
+      const { getHubDataDir } = require('../../core/data-dir');
+      require('../../core/codeagent-pool').setNote(getHubDataDir(), payload?.id, payload?.note);
+      return codeagentPoolStatus();
+    } catch (error) { return { ok: false, error: error.message }; }
+  });
+  ipcMain.handle('codeagent-pool:remove', (_event, payload) => {
+    try {
+      const { getHubDataDir } = require('../../core/data-dir');
+      const active = sessionManager.codeagentPoolActiveCounts()[payload?.id] || 0;
+      if (active) throw new Error(`还有 ${active} 个会话在用这个号，先关掉或让它们休眠再移出`);
+      require('../../core/codeagent-pool').removeAccount(getHubDataDir(), payload?.id);
+      return codeagentPoolStatus();
+    } catch (error) { return { ok: false, error: error.message }; }
   });
   // CodeAgent 换模型：在它自己的 /model 菜单里选（core/codeagent-model-picker.js）。交互模式不认 --model，
   // 以前「带 --model 重开」在公司真机上不生效（2026-10-14 同事反馈选了 MiniMax 仍是 GLM）。

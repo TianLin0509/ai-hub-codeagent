@@ -33,6 +33,8 @@ const RESUME_META_FIELDS = [
   'currentModel',
   'codeagentModelPick',
   'codeagentForkSourceSessionId',
+  'codeagentPoolAccount',
+  'codeagentPoolLabel',
   'effort',
   'contextPct',
   'contextUsed',
@@ -298,6 +300,7 @@ function handlePersistSessions(list, meetingList, deps) {
     if (authoritative?.deepseekRoute && !session.deepseekRoute) session.deepseekRoute = authoritative.deepseekRoute;
     if (typeof authoritative?.codeagentModelPick === 'boolean') session.codeagentModelPick = authoritative.codeagentModelPick;
     if (authoritative?.codeagentForkSourceSessionId) session.codeagentForkSourceSessionId = authoritative.codeagentForkSourceSessionId;
+    if (authoritative?.codeagentPoolAccount) { session.codeagentPoolAccount = authoritative.codeagentPoolAccount; session.codeagentPoolLabel = authoritative.codeagentPoolLabel || ''; }
     const previous = previousSessionsById.get(session.hubId);
     const changed = !previous
       || typeof previous.updatedAt !== 'number'

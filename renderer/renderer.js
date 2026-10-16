@@ -5087,7 +5087,7 @@ function mountFloatingInput(sessionId, termContainer, terminal, pane = {}) {
       modelChip.classList.toggle('switching', !!rail.model.pending);
       modelChip.title = webRoute
         ? '通过 ChatGPT 网页回答，本地 Codex 执行工具。点击调整网页档位或打开专用设置。'
-        : `${rail.model.id || rail.model.label}${session?.codeagentActualModel && session.codeagentActualModel !== rail.model.id ? ` · 最近一轮实际是 ${session.codeagentActualModel}` : ''} — 点击切换模型`;
+        : `${rail.model.id || rail.model.label}${session?.codeagentActualModel && session.codeagentActualModel !== rail.model.id ? ` · 最近一轮实际是 ${session.codeagentActualModel}` : ''}${session?.codeagentPoolAccount ? ` · 号池账号 ${session.codeagentPoolLabel || ''}` : ''} — 点击切换模型`;
       modelChip.disabled = false;
       const logoClass = `composer-model-logo ${modelClass(rail.model.id)}`.trim();
       if (modelChipLogo.className !== logoClass) modelChipLogo.className = logoClass;
@@ -9275,6 +9275,7 @@ ipcRenderer.on('session-updated', (_e, { session }) => {
   if (session.codeagentRequestedModel) local.codeagentRequestedModel = session.codeagentRequestedModel;
   if (typeof session.codeagentModelPick === 'boolean') local.codeagentModelPick = session.codeagentModelPick;
   if (session.codeagentForkSourceSessionId) local.codeagentForkSourceSessionId = session.codeagentForkSourceSessionId;
+  if (session.codeagentPoolAccount) { local.codeagentPoolAccount = session.codeagentPoolAccount; local.codeagentPoolLabel = session.codeagentPoolLabel || ''; }
   let persistModel = false;
   if (session.currentModel && session.currentModel.id) {
     const previousModelId = local.currentModel && local.currentModel.id;
@@ -9396,6 +9397,7 @@ function persistWorkscene(flush = false) {
         currentModel: s.currentModel || null,
         ...(typeof s.codeagentModelPick === 'boolean' ? { codeagentModelPick: s.codeagentModelPick } : {}),
         ...(s.codeagentForkSourceSessionId ? { codeagentForkSourceSessionId: s.codeagentForkSourceSessionId } : {}),
+        ...(s.codeagentPoolAccount ? { codeagentPoolAccount: s.codeagentPoolAccount, codeagentPoolLabel: s.codeagentPoolLabel || '' } : {}),
         effort: s.effort || null,
         contextPct: typeof s.contextPct === 'number' ? s.contextPct : null,
         contextUsed: typeof s.contextUsed === 'number' ? s.contextUsed : null,
@@ -9757,6 +9759,7 @@ sessionImmersive = require('./session-immersive').createSessionImmersiveControll
         currentModel: resolvedModel,
         ...(typeof meta.codeagentModelPick === 'boolean' ? { codeagentModelPick: meta.codeagentModelPick } : {}),
         ...(meta.codeagentForkSourceSessionId ? { codeagentForkSourceSessionId: meta.codeagentForkSourceSessionId } : {}),
+        ...(meta.codeagentPoolAccount ? { codeagentPoolAccount: meta.codeagentPoolAccount, codeagentPoolLabel: meta.codeagentPoolLabel || '' } : {}),
         effort: meta.effort || null,
         contextPct: typeof meta.contextPct === 'number' ? meta.contextPct : null,
         contextUsed: typeof meta.contextUsed === 'number' ? meta.contextUsed : null,
