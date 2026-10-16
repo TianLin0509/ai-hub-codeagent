@@ -10,6 +10,7 @@ const { migrateCodexSession } = require('../../core/codex-session-migrator.js');
 const { buildSessionResumeMeta } = require('../../core/session-capabilities.js');
 const { buildClaudeModelSnapshot } = require('../../core/claude-model-catalog.js');
 const { createCodexModelCatalogService } = require('../codex-model-catalog-service.js');
+const { isCodeAgentKind } = require('../../core/ai-kinds.js');
 
 // Claude CLI 的 --resume 按 cwd 分桶查找 transcript。DeepSeek 仅有迁移前、
 // 携带 ccSessionId 的旧会话走这套；当前 DeepSeek 与 Codex 一样改写 rollout cwd。
@@ -37,9 +38,11 @@ function configuredCodexHome(config = {}, requestedId = null) {
   return path.resolve(raw);
 }
 
+// 公司 CodeAgent 是 Claude Code 的翻版：记录同格式、同样按 cwd 分桶（在它自己配置目录的 projects/ 下，
+// 查找见 core/claude-transcript-locator.js），--resume 也只在当前目录的桶里找，所以归档时和 Claude 一样搬记录。
 function isLegacyClaudeTranscriptSession(session) {
   const kind = baseKind(session && session.kind);
-  return kind === 'claude' || (kind === 'deepseek' && !!session.ccSessionId && !session.codexSid);
+  return kind === 'claude' || isCodeAgentKind(kind) || (kind === 'deepseek' && !!session.ccSessionId && !session.codexSid);
 }
 
 function isCodexTranscriptSession(session) {
@@ -92,17 +95,22 @@ function registerWorkspaceIpc(ipcMain, deps) {
 
   function toResumeMeta(session, cwd, workspaceLabel) {
     const isGemini = typeof session.kind === 'string' && session.kind.replace(/-resume$/, '') === 'gemini';
-    return buildSessionResumeMeta(session, {
+    const meta = buildSessionResumeMeta(session, {
       cwd,
       workspaceLabel,
       geminiProjectRoot: isGemini ? cwd : (session.geminiProjectRoot || null),
     });
+    // 恢复入口会先读磁盘上的权威会话记录再覆盖传入值（main/ipc/resume-session-handlers.js），
+    // 记录里还是归档前的旧目录：不把新目录作为本次启动覆盖传过去，CLI 会在已经搬走的目录里启动，
+    // 回落到用户主目录、--resume 也找不到记录（2026-10-16 CodeAgent 归档 e2e 发现）。
+    if (meta) meta.launchOverrides = { cwd, workspaceLabel, ...(isGemini ? { geminiProjectRoot: cwd } : {}) };
+    return meta;
   }
 
   function preciseResumeIssue(session) {
     if (allowFallbackResume) return null;
     const kind = String(session && session.kind || '').replace(/-resume$/, '');
-    if (isLegacyClaudeTranscriptSession(session)) return session.ccSessionId ? null : `${session.title || kind} 尚未绑定 Claude session ID`;
+    if (isLegacyClaudeTranscriptSession(session)) return session.ccSessionId ? null : `${session.title || kind} 尚未绑定 ${isCodeAgentKind(kind) ? 'CodeAgent' : 'Claude'} session ID`;
     if (isCodexTranscriptSession(session)) return session.codexSid ? null : `${session.title || kind} 尚未绑定 Codex session ID`;
     if (kind === 'gemini') return session.geminiChatId ? null : `${session.title || kind} 尚未绑定 Gemini chat ID`;
     if (kind === 'kimi') return session.kimiSid ? null : `${session.title || kind} 尚未绑定 Kimi session ID`;
@@ -407,7 +415,7 @@ function registerWorkspaceIpc(ipcMain, deps) {
       }
       for (const ccSessionId of migration.missing) {
         archiveReporter.report('transcript', ccSessionId,
-          '没找到对应的 Claude 对话记录，归档后重连可能是空上下文');
+          '没找到对应的对话记录，归档后重连可能是空上下文');
       }
 
       // Kimi 会校验会话记录的 workDir 与 cwd 是否一致，不迁移就直接

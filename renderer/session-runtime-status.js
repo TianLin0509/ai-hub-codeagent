@@ -26,6 +26,7 @@ function providerLabel(session) {
   if (kind === 'kimi') return 'Kimi';
   if (kind === 'gemini') return 'Antigravity';
   if (kind === 'powershell') return 'PowerShell';
+  if (kind === 'codeagent') return 'CodeAgent';
   return 'AI';
 }
 

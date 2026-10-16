@@ -38,8 +38,16 @@ function withGlobalAccount(existing, config, id, env = process.env, scope) {
   if (config.codexBackend === 'api') throw new Error('当前使用 Codex API，不能切换订阅账号');
   resolveAccount({...config,codexSubscriptionProfile:id},env);
   if (scope !== undefined && !['launch','live'].includes(scope)) throw new Error('账号切换范围无效');
-  return {...existing,providers:{...existing.providers,codex:{...existing.providers?.codex,subscription_profile:id,
+  const next = {...existing,providers:{...existing.providers,codex:{...existing.providers?.codex,subscription_profile:id,
     ...(scope ? {switch_scope:scope} : {})}}};
+  // Both selectors write this one account. Retire the old launch-default copy
+  // on save while retaining model/effort/speed/tool preferences.
+  const saved = existing.launch?.defaults?.codex;
+  if (saved && typeof saved === 'object' && !Array.isArray(saved)) {
+    const {codexProfile, ...tuning} = saved;
+    next.launch = {...existing.launch,defaults:{...existing.launch.defaults,codex:tuning}};
+  }
+  return next;
 }
 
 function resolveRunningAccount(config, active, env = process.env) {
@@ -49,8 +57,7 @@ function resolveRunningAccount(config, active, env = process.env) {
 // History and writer ownership stay with their original home. Only credentials,
 // native config and future new threads follow the selected global account.
 function prepareLaunch(opts, config, env = process.env) {
-  const sessionAccount = opts.codexAccountScope === 'session' && opts.codexProfile && !opts.codexSid && !opts.codexForkSid;
-  const account = resolveAccount(sessionAccount ? { ...config, codexSubscriptionProfile: opts.codexProfile } : config,env);
+  const account = resolveAccount(config,env);
   require('./codex-auth-validation').assertUsableCredential(account.home);
   const oldProfile = config.codexSubscriptionProfiles.find(p => p.id === opts.codexProfile);
   const sid = opts.codexSid || opts.codexForkSid;

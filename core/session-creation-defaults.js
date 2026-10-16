@@ -17,12 +17,7 @@ function creationDefaults(kind, config = {}) {
   if (kind === 'codex') {
     const contextMax = require('./codex-context-window').defaultCodexContextWindow(model);
     if (typeof contextMax === 'number') opts.contextMax = contextMax;
-    const validSavedProfile = (config.codexSubscriptionProfiles || []).some(p => p.id === saved.codexProfile);
-    if (!validSavedProfile) {
-      delete opts.codexProfile;
-      if (config.codexSubscriptionProfile) opts.codexProfile = config.codexSubscriptionProfile;
-    }
-    if (validSavedProfile) opts.codexAccountScope = 'session';
+    if (config.codexSubscriptionProfile) opts.codexProfile = config.codexSubscriptionProfile;
   }
   return opts;
 }

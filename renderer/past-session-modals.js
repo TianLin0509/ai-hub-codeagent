@@ -55,7 +55,8 @@ function nativeTranscriptSessionKey(session) {
   if (kind === 'deepseek' && session.codexSid) {
     return `deepseek:codex:${codexSessionScopeKey(session)}:${session.codexSid}`;
   }
-  if ((kind === 'claude' || kind === 'deepseek') && session.ccSessionId) {
+  // 公司 CodeAgent 和 Claude 一样以 ccSessionId 为原生身份（记录在它自己的配置目录下）。
+  if ((kind === 'claude' || kind === 'deepseek' || kind === 'codeagent') && session.ccSessionId) {
     return `${kind}:cc:${session.ccSessionId}`;
   }
   if (kind === 'codex' && session.codexSid) {

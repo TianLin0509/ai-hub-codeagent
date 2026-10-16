@@ -4,6 +4,14 @@ const {
   DEFAULT_MODEL_BY_KIND,
 } = require("../core/model-options");
 const { ALL_AI_KINDS, getKindLabel } = require("../core/ai-kinds");
+const { kindAllowed } = require("../core/distribution");
+// 造梦师只列本发行版装了的 AI（公司版只有 CodeAgent）；家里版仍以 Codex 打头、默认 Codex。
+function dreamKinds(allowed = kindAllowed) {
+  const kinds = ALL_AI_KINDS.filter(allowed);
+  return kinds.includes("codex") ? ["codex", ...kinds.filter((v) => v !== "codex")] : kinds;
+}
+const DREAM_KINDS = dreamKinds();
+const DEFAULT_DREAM_KIND = DREAM_KINDS[0] || "codex";
 const { formatBeijingDateTime } = require("../core/beijing-time");
 function createMemoryPanel({
   document,
@@ -40,12 +48,12 @@ function createMemoryPanel({
     refreshAgain = false,
     previewEpoch = 0,
     sourcePreview = "";
-  let kind = "codex",
-    model = DEFAULT_MODEL_BY_KIND.codex,
+  let kind = DEFAULT_DREAM_KIND,
+    model = DEFAULT_MODEL_BY_KIND[DEFAULT_DREAM_KIND] || modelOptionsFor(DEFAULT_DREAM_KIND)[0]?.id || "",
     effort = "medium";
   try {
     const s = JSON.parse(localStorage.getItem("hubDreamSelection") || "null");
-    if (s && ALL_AI_KINDS.includes(s.kind)) {
+    if (s && DREAM_KINDS.includes(s.kind)) {
       kind = s.kind;
       model = s.model;
       effort = s.effort;
@@ -212,7 +220,7 @@ function createMemoryPanel({
   }
   function dream() {
     const t = tuning();
-    return `<div class="mp-pagehead"><div><h2>把聊过的事，留给下一次</h2><p>选择昨日之我的对话，交给一个普通 AI session 整理。</p>${projectSelect(false)}</div></div><div class="mp-dream-grid"><div><section class="mp-card"><div class="mp-section-title">素材 session <span>${rows.length} 个可用会话</span></div><div class="mp-sources">${rows.map((s) => `<div class="mp-source"><input type="checkbox" aria-label="选择 ${esc(s.title)}" data-source="${esc(s.key)}" ${selected.has(s.key) ? "checked" : ""}><span><strong>${esc(s.title)}</strong><small>${esc(s.provider)} · ${esc(fmt(s.updatedAt))} · ${s.records} 条记录</small><small>${s.processed ? "该版本已整理" : s.newRecords < s.records ? `约 ${s.newRecords} 条新增，已整理部分只作上文` : "有未整理记录"}${s.stale ? " · 请刷新后再整理" : ""}</small></span><button class="mp-link" data-source-preview="${esc(s.key)}">预览</button></div>`).join("") || '<p class="mp-empty">此项目暂无历史正文。点击右上角刷新，从昨日之我更新素材。</p>'}</div><div class="mp-selection">已选 ${selected.size} 个会话 · 导出新增正文，并附少量已整理上文</div></section><p class="mp-muted">默认勾选最近 3 个未整理会话，可自行修改。只读取历史，不打开素材 session。历史解析可能缺少工具结果或附件，不宣称无损归档。</p>${sourcePreview ? `<details open class="mp-card"><summary>素材预览（历史窗口，完整输入以导出文件为准）</summary><pre class="mp-source-preview">${esc(sourcePreview)}</pre></details>` : ""}</div><div><section class="mp-card mp-settings"><h3>造梦师</h3><label>AI<select id="mp-kind">${["codex", ...ALL_AI_KINDS.filter((v) => v !== "codex")].map((v) => `<option value="${v}" ${v === kind ? "selected" : ""}>${esc(getKindLabel(v))}</option>`).join("")}</select></label><label>模型<select id="mp-model">${!t.modelOptions.some((m) => m.id === model) ? `<option value="" selected>请选择模型（原选择不可用）</option>` : ""}${t.modelOptions.map((m) => `<option value="${esc(m.id)}" ${m.id === model ? "selected" : ""}>${esc(m.label)}</option>`).join("")}</select></label>${t.showEffort ? `<label>思考深度<select id="mp-effort">${!t.effortOptions.some(([v]) => v === effort) ? `<option value="" selected>请选择思考深度</option>` : ""}${t.effortOptions.map(([v, l]) => `<option value="${esc(v)}" ${v === effort ? "selected" : ""}>${esc(l)}</option>`).join("")}</select></label>` : ""}<p class="mp-muted">复用新建 session 的模型与档位。账号跟随 Hub 当前设置。</p><button class="mp-btn primary mp-wide" data-action-mp="start" ${busy || loading || !selected.size ? "disabled" : ""}>${busy ? "正在准备素材…" : "☾ 开始造梦"}</button></section>${data.jobs.slice(0,10).map(job).join("")}</div></div>`;
+    return `<div class="mp-pagehead"><div><h2>把聊过的事，留给下一次</h2><p>选择昨日之我的对话，交给一个普通 AI session 整理。</p>${projectSelect(false)}</div></div><div class="mp-dream-grid"><div><section class="mp-card"><div class="mp-section-title">素材 session <span>${rows.length} 个可用会话</span></div><div class="mp-sources">${rows.map((s) => `<div class="mp-source"><input type="checkbox" aria-label="选择 ${esc(s.title)}" data-source="${esc(s.key)}" ${selected.has(s.key) ? "checked" : ""}><span><strong>${esc(s.title)}</strong><small>${esc(s.provider)} · ${esc(fmt(s.updatedAt))} · ${s.records} 条记录</small><small>${s.processed ? "该版本已整理" : s.newRecords < s.records ? `约 ${s.newRecords} 条新增，已整理部分只作上文` : "有未整理记录"}${s.stale ? " · 请刷新后再整理" : ""}</small></span><button class="mp-link" data-source-preview="${esc(s.key)}">预览</button></div>`).join("") || '<p class="mp-empty">此项目暂无历史正文。点击右上角刷新，从昨日之我更新素材。</p>'}</div><div class="mp-selection">已选 ${selected.size} 个会话 · 导出新增正文，并附少量已整理上文</div></section><p class="mp-muted">默认勾选最近 3 个未整理会话，可自行修改。只读取历史，不打开素材 session。历史解析可能缺少工具结果或附件，不宣称无损归档。</p>${sourcePreview ? `<details open class="mp-card"><summary>素材预览（历史窗口，完整输入以导出文件为准）</summary><pre class="mp-source-preview">${esc(sourcePreview)}</pre></details>` : ""}</div><div><section class="mp-card mp-settings"><h3>造梦师</h3><label>AI<select id="mp-kind">${DREAM_KINDS.map((v) => `<option value="${v}" ${v === kind ? "selected" : ""}>${esc(getKindLabel(v))}</option>`).join("")}</select></label><label>模型<select id="mp-model">${!t.modelOptions.some((m) => m.id === model) ? `<option value="" selected>请选择模型（原选择不可用）</option>` : ""}${t.modelOptions.map((m) => `<option value="${esc(m.id)}" ${m.id === model ? "selected" : ""}>${esc(m.label)}</option>`).join("")}</select></label>${t.showEffort ? `<label>思考深度<select id="mp-effort">${!t.effortOptions.some(([v]) => v === effort) ? `<option value="" selected>请选择思考深度</option>` : ""}${t.effortOptions.map(([v, l]) => `<option value="${esc(v)}" ${v === effort ? "selected" : ""}>${esc(l)}</option>`).join("")}</select></label>` : ""}<p class="mp-muted">复用新建 session 的模型与档位。账号跟随 Hub 当前设置。</p><button class="mp-btn primary mp-wide" data-action-mp="start" ${busy || loading || !selected.size ? "disabled" : ""}>${busy ? "正在准备素材…" : "☾ 开始造梦"}</button></section>${data.jobs.slice(0,10).map(job).join("")}</div></div>`;
   }
   function job(j) {
     const labels = {
@@ -463,4 +471,4 @@ function createMemoryPanel({
   });
   return { open, close };
 }
-module.exports = { createMemoryPanel };
+module.exports = { createMemoryPanel, dreamKinds };

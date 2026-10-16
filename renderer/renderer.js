@@ -8190,6 +8190,22 @@ function activeClaudeBackgroundTasks(tasks) {
   });
 }
 
+// CodeAgent 的上下文圆环：公司 GLM 写进记录的 token 用量全是 0，按用量算不出来；
+// CodeAgent 自己在屏幕右侧 Stats 面板一直显示「Context 32.7k (16%)」，每轮结束时读一次（core/codeagent-screen-stats.js）。
+function applyCodeAgentScreenContext(session, sessionId) {
+  let context = null;
+  try {
+    const lines = terminalActivityMonitor ? terminalActivityMonitor.extractLiveScreenLines(sessionId) : [];
+    context = require('../core/codeagent-screen-stats').parseCodeAgentContext(lines);
+  } catch { context = null; }
+  if (!context) return;
+  session.contextUsed = context.contextUsed;
+  session.contextPct = context.contextPct;
+  session.contextEffectiveMax = context.contextEffectiveMax;
+  if (sessionId === activeSessionId) updateActiveMetricsRow();
+  if (typeof MeetingRoom !== 'undefined' && MeetingRoom.refreshSessionMetrics) MeetingRoom.refreshSessionMetrics(sessionId);
+}
+
 function onReplyCompleteFromHook(sessionId, completedAt = Date.now(), options = {}) {
   const session = sessions.get(sessionId);
   if (!session) return null;
@@ -8204,6 +8220,7 @@ function onReplyCompleteFromHook(sessionId, completedAt = Date.now(), options = 
   // a transcript-sourced preview (very rare). Primary preview is written by
   // the hook-event handler directly from CC's JSONL.
   readTerminalPreview(sessionId);
+  if (/^codeagent/.test(String(session.kind || ''))) applyCodeAgentScreenContext(session, sessionId);
 
   // "Claude is waiting for your input" — classify the tail of the AI's output.
   const w = isWaitingForUser(extractTailLines(sessionId, 40));

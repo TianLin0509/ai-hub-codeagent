@@ -522,7 +522,9 @@ function registerSessionIpc(ipcMain, deps) {
         configDir: session.codeagentConfigDir || null, sendToPty: require('../../core/group-chat-watcher').sendToPty });
     } catch (error) { result = { ok: false, message: error && error.message ? error.message : String(error) }; }
     codeagentModels.appendModelLog(getHubDataDir(), { event: 'pick', session: String(sessionId).slice(0, 8), reason, model: modelId,
-      ok: result.ok, mode: result.mode, confirmed: result.confirmed, restored: (result.restored || []).join('+'), error: result.ok ? '' : result.message });
+      ok: result.ok, mode: result.mode, confirmed: result.confirmed, restored: (result.restored || []).join('+'), menu: (result.menu || []).join('+'), error: result.ok ? '' : result.message });
+    // 菜单里实际能选的模型：新建会话的模型下拉以它为准（core/codeagent-models.js 的 modelOptions）。
+    if (result.menu) { try { codeagentModels.recordMenu(getHubDataDir(), result.menu); } catch { /* 只影响下次的模型下拉，不影响本次选择 */ } }
     if (!result.ok && Array.isArray(result.screen)) {
       try {
         const file = require('path').join(getHubDataDir(), 'logs', 'codeagent-model-picker-last.txt');
@@ -531,7 +533,9 @@ function registerSessionIpc(ipcMain, deps) {
       } catch { /* 只是排查用的附件 */ }
     }
     if (result.ok) {
-      const updated = sessionManager.updateSessionMeta(sessionId, { currentModel: { id: modelId, displayName: codeagentModels.modelLabel(modelId) }, codeagentRequestedModel: undefined, codeagentModelPick: false });
+      const updated = sessionManager.updateSessionMeta(sessionId, { currentModel: { id: modelId, displayName: codeagentModels.modelLabel(modelId) }, codeagentRequestedModel: undefined, codeagentModelPick: false,
+        // 用户明确选中过的模型：CLI 自己退出、Hub 原地重拉时据此再选一次（core/session-manager.js 的 relaunch）。
+        codeagentUserModel: modelId });
       if (updated) sendToRenderer('session-updated', { session: updated });
     }
     return result;

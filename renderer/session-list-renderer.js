@@ -52,8 +52,13 @@ const SESSION_FAMILY_TABS = [
   { key: 'all', label: '全部', hint: '所有会话与群聊' },
   { key: 'claude', label: 'Claude', hint: 'Claude Code（Opus / Fable / Sonnet / Haiku）' },
   { key: 'codex', label: 'Codex', hint: 'Codex CLI（GPT 各版本）' },
+  { key: 'codeagent', label: 'CodeAgent', hint: '公司 CodeAgent（只在装了它的发行版里单列）' },
   { key: 'other', label: '其他', hint: 'Gemini / DeepSeek / Kimi / PowerShell' },
 ];
+// 公司版（发行版限定了 AI 种类且包含 CodeAgent）把 CodeAgent 单列一族；家里版它仍归「其他」，筛选项也不显示。
+const CODEAGENT_FAMILY = (() => {
+  try { const d = require('../core/distribution'); return !!d.allowedKinds && d.kindAllowed('codeagent'); } catch { return false; }
+})();
 const SESSION_FAMILY_KEYS = SESSION_FAMILY_TABS.map(tab => tab.key);
 
 // --- Agent 自建会话的分组收纳 ---------------------------------------------
@@ -81,6 +86,7 @@ function familyOfKind(kind) {
   const base = String(kind || '').replace(/-resume$/, '');
   if (base === 'claude') return 'claude';
   if (base === 'codex') return 'codex';
+  if (base === 'codeagent' && CODEAGENT_FAMILY) return 'codeagent';
   return 'other';
 }
 
@@ -150,6 +156,9 @@ function createSessionListRenderer(options = {}) {
   }
   const modelControl = doc.getElementById?.('session-model-filter');
   if (modelControl) {
+    // 发行版裁掉了某个家族（公司版没有 Claude / Codex）而偏好里还存着它：退回「全部」，免得侧栏空着。
+    const options = [...(modelControl.options || [])];
+    if (options.length && !options.some(option => option.value === modelFilter && !option.hidden)) modelFilter = 'all';
     modelControl.value = modelFilter;
     modelControl.addEventListener('change', () => {
       modelFilter = SESSION_FAMILY_KEYS.includes(modelControl.value) ? modelControl.value : 'all';

@@ -610,6 +610,14 @@ async function sendToPtyImpl(sid, prompt, kind, options = {}) {
     //   随后那个 \r 被追加进同一条队列，很可能与 BP_END 落进 CLI 的同一个 stdin chunk
     //   被当粘贴尾巴吃掉。分片写让队列在最后一片写完时接近空，\r 才可能独立成块。
     const baselineMarker = snapshotPasteMarker(sessionManager, sid);
+    // CodeAgent 收到粘贴会自己读剪贴板，有图片就连同看图结果一起进上下文、回执也对不上：紧挨着粘贴清掉图片，
+    // 只此一次、不放回，同一次复制里的文字留着（core/company-bridge/clipboard-guard.js，2026-10-16 用户定）。
+    if (isCodeAgentKind(kind) && !usedCodexEditorInput) {
+      let clipboard = _deps && _deps.clipboard;
+      if (!clipboard) { try { clipboard = require('electron').clipboard; } catch { clipboard = null; } }
+      const dropped = require('./company-bridge/clipboard-guard').dropImage(clipboard);
+      if (dropped.cleared) console.log(`[group-chat] codeagent(${sid.slice(0, 8)}) cleared a clipboard image before paste${dropped.keptText ? ' (text kept)' : ''}`);
+    }
     if (!usedCodexEditorInput) await writeBracketedPaste(sessionManager, sid, prompt, {
       inlinePieces: isClaudeFamily(kind), // 不让 Claude 把整段标成 <pasted_content>（见 pty-prompt-submit）
       chunkSize: Number(_deps && _deps.bracketedPasteChunkSize) || undefined,

@@ -213,7 +213,7 @@ function observeModel(session, value) {
 function mismatchNotice(mismatch) {
   if (!mismatch) return '';
   return `选的是 ${mismatch.requestedLabel}，CodeAgent 实际用的是 ${mismatch.actual}（可能没有所选模型的权限）。`
-    + '界面已按实际模型显示，之后恢复这个会话也用它；新建会话时可以在模型下拉里选它并「设为默认」。';
+    + '界面已按实际模型显示，之后恢复这个会话也用它；新建会话时请在模型下拉里改选有权限的模型。';
 }
 
 // ---------------------------------------------------------------- 见过的模型（本机）
@@ -242,6 +242,33 @@ function recordObserved(dataDir, value, now = Date.now()) {
   const file = observedPath(dataDir);
   const tmp = `${file}.${process.pid}.tmp`;
   fs.writeFileSync(tmp, JSON.stringify(next, null, 2) + '\n', 'utf8');
+  fs.renameSync(tmp, file);
+  return true;
+}
+
+// ---------------------------------------------------------------- 模型菜单里实际能选的（本机）
+// 2026-10-16 公司真机第 9 轮：账号清单（.cac.json）列了 GLM-5.2-WX-Auto 和 MiniMax-M2.7，CodeAgent 自己的
+// 模型菜单里却只有 GLM-5.2-WX-Auto，搜 MiniMax-M2.7 是「No results found」。菜单才是交互模式下真能选的，
+// 选模型时读到的菜单清单记下来，模型下拉以它为准；清单有变化才写盘。
+const MENU_FILE = 'codeagent-menu-models.json';
+
+function readMenu(dataDir) {
+  if (!dataDir) return [];
+  try {
+    const raw = JSON.parse(fs.readFileSync(path.join(dataDir, MENU_FILE), 'utf8'));
+    return (Array.isArray(raw && raw.models) ? raw.models : []).map(clean).filter(isSafeModelId);
+  } catch { return []; }
+}
+
+function recordMenu(dataDir, labels, now = Date.now()) {
+  const models = [...new Set((Array.isArray(labels) ? labels : []).map(clean).filter(isSafeModelId))];
+  if (!dataDir || !models.length) return false;
+  const before = readMenu(dataDir);
+  if (before.length === models.length && before.every((id, i) => id === models[i])) return false;
+  fs.mkdirSync(dataDir, { recursive: true });
+  const file = path.join(dataDir, MENU_FILE);
+  const tmp = `${file}.${process.pid}.tmp`;
+  fs.writeFileSync(tmp, JSON.stringify({ schema: 1, models, seenAt: now }, null, 2) + '\n', 'utf8');
   fs.renameSync(tmp, file);
   return true;
 }
@@ -307,7 +334,21 @@ function modelOptions(dataDir, { configDir = null, fsModule = fs } = {}) {
     if (options.some(option => option.id.toLowerCase() === entry.id.toLowerCase())) continue;
     options.push({ id: entry.id, label: modelLabel(entry.id), source: 'observed', description: `${entry.id} · 本机 CodeAgent 实际用过` });
   }
-  return options;
+  // Auto 路由背后的具体模型不能直接选：2026-10-16 公司真机 `--model GLM-5.2-WX` 报 401「未识别到用户认证信息」，
+  // 只有 GLM-5.2-WX-Auto 能用。它出现在回答记录（实际模型）和分档配置里，列出来用户一选就失败，所以有「名字-Auto」时去掉它。
+  // 账号清单里明确列出的照留（那是 CodeAgent 自己说这个账号能选的）。
+  const ids = new Set(options.map(option => option.id.toLowerCase()));
+  const listed = options.filter(option => option.source === 'account' || !ids.has(option.id.toLowerCase() + '-auto'));
+  // 读到过 CodeAgent 自己的模型菜单：只列菜单里有的，菜单里有而上面没有的补在后面。
+  const menu = readMenu(dataDir);
+  if (!menu.length) return listed;
+  const inMenu = new Set(menu.map(id => id.toLowerCase()));
+  const kept = listed.filter(option => inMenu.has(option.id.toLowerCase()));
+  for (const id of menu) {
+    if (kept.some(option => option.id.toLowerCase() === id.toLowerCase())) continue;
+    kept.push({ id, label: modelLabel(id), source: 'menu', description: `${id} · CodeAgent 模型菜单里有` });
+  }
+  return kept;
 }
 
 module.exports = {
@@ -324,6 +365,8 @@ module.exports = {
   scanModelNamesInText,
   readObserved,
   recordObserved,
+  readMenu,
+  recordMenu,
   appendModelLog,
   modelOptions,
   contextWindowFor,

@@ -41,7 +41,9 @@
   // Codex 与新版 DeepSeek（同一条 codex runtime）走 -c model_reasoning_effort。
   // 两边的合法枚举不一样：Claude 是固定表，Codex 按模型目录取值（部分模型有 ultra）。
   const EFFORT_KINDS = new Set(['claude', 'codex', 'deepseek', 'codeagent', 'deepseek-claude']);
-  const MCP_KINDS = new Set(['claude', 'codex', 'deepseek', 'codeagent', 'deepseek-claude']);
+  // CodeAgent 不在内：它的 CLI 挡不住用户级 MCP（2026-10-15 公司真机实测 --strict-mcp-config 无效），
+  // 选「精简 / 无」只会把 Hub 自己的工具关掉，用户级 MCP 照样全部加载；所以不给它这个下拉，一律按完整挂载。
+  const MCP_KINDS = new Set(['claude', 'codex', 'deepseek', 'deepseek-claude']);
   // 新建面板上只有一个「DeepSeek」按钮；历史上的 deepseek / deepseek-acp 入口都落到 Claude Code。
   const DEEPSEEK_PANEL_KINDS = new Set(['deepseek', 'deepseek-acp', 'deepseek-claude']);
   const deepseekProfile = require('../core/deepseek-claude-profile.js');
@@ -80,7 +82,6 @@
   const codexCatalogInFlight = new Map();
   let codexAccounts = [];
   let codexAccountId = '';
-  let globalCodexAccountId = '';
   let codexBackend = 'subscription';
   // DeepSeek 接入：上次选的方式（Hub 配置记住，默认 Token Plan）+ 两条线各自是否有 Key。
   let deepseekRoute = deepseekProfile.DEFAULT_ROUTE;
@@ -214,17 +215,16 @@
 
   // 读一次用户设过的默认模型。读不到就保持空表、回落出厂默认值 —— 这条路径
   // 决定的只是"预选哪个"，失败不该挡住新建会话。
-  async function loadHubDefaultModels() {
+  async function loadHubDefaultModels({ refreshAccount = false } = {}) {
     const revision=++configReadRevision;
     try {
       const config = await ipcRenderer.invoke('get-hub-config');
       if (revision !== configReadRevision) return hubDefaultModels;
       hubDefaultModels = (config && config.defaultModels) || {};
       hubLaunchDefaults = readLaunchDefaults(config);
-      if (!accountSaving && revision===configReadRevision) {
+      if ((!accountSaving || refreshAccount) && revision===configReadRevision) {
         codexAccounts=(config.codexSubscriptionProfiles || []).map(p=>({...p,email:config.codexProfileIdentities?.[p.id] || ''}));
-        globalCodexAccountId=config.codexSubscriptionProfile || '';
-        if (!tuningTouchedByUser) codexAccountId=defaultCodexProfile();
+        codexAccountId=config.codexSubscriptionProfile || '';
         codexBackend=config.codexBackend;
         accountReadError='';
       }
@@ -282,7 +282,7 @@
       codexSpeedTier,
       codexTierOptions,
       contextMax,
-      codexProfile: codexAccounts.some(p => p.id === selection.codexProfile) ? selection.codexProfile : defaultCodexProfile(),
+      codexProfile: codexAccountId,
       deepseekRoute: selection.deepseekRoute || configuredDeepseekRoute,
     };
   }
@@ -311,7 +311,6 @@
     if (typeof tuning.contextMax === 'number') opts.contextMax = tuning.contextMax;
     if (kind === 'codex' && codexBackend !== 'api' && tuning.codexProfile) {
       opts.codexProfile = tuning.codexProfile;
-      opts.codexAccountScope = 'session';
     }
     if (kind === 'deepseek-claude') opts.deepseekRoute = tuning.deepseekRoute;
     return opts;
@@ -939,18 +938,12 @@
     });
   }
 
-  function defaultCodexProfile() {
-    const saved = hubLaunchDefaults.codex?.codexProfile;
-    return codexAccounts.some(p => p.id === saved) ? saved : globalCodexAccountId;
-  }
-
   function launchSelection(kind, tuning) {
     const result = { model: tuning.model };
     if (EFFORT_KINDS.has(kind)) result.effort = tuning.effort;
     if (MCP_KINDS.has(kind)) result.mcpProfile = tuning.mcpProfile;
     if (FAST_KINDS.has(kind)) result.fastMode = tuning.fastMode;
     if (CODEX_TIER_KINDS.has(kind)) result.codexSpeedTier = tuning.codexSpeedTier;
-    if (kind === 'codex' && codexBackend !== 'api' && tuning.codexProfile) result.codexProfile = tuning.codexProfile;
     if (kind === 'deepseek-claude') result.deepseekRoute = tuning.deepseekRoute;
     return result;
   }
@@ -958,10 +951,10 @@
   function currentLaunchSelection() {
     return launchSelection(selectedKind, { model: selectedModel, effort: selectedEffort,
       mcpProfile: selectedMcpProfile, fastMode: selectedFastMode, codexSpeedTier: selectedCodexTier,
-      codexProfile: codexAccountId, deepseekRoute });
+      deepseekRoute });
   }
 
-  // Compare every visible field; changing speed alone must enable saving.
+  // Compare saved tuning; the account selector saves immediately on its own.
   function paintDefaultModelButton() {
     const button = document.getElementById('new-session-model-default');
     if (!button) return;
@@ -974,10 +967,10 @@
     button.textContent = defaultsSaving ? '正在保存…' : already ? '整组默认 ✓' : '将整组设为默认';
     button.title = already
       ? '下次新建会话将沿用这组配置'
-      : '保存本组全部选项，下次新建同类 AI 会话时一起恢复';
+      : '保存模型、思考强度、速度和 MCP 等配置；用量账号切换后立即保存';
     const status = document.getElementById('new-session-default-status');
     if (status) status.textContent = defaultsSaving ? '正在保存整组配置' : already
-      ? '新建会话将沿用这组配置' : '当前改动仅用于本次 · 保存后下次沿用';
+      ? '新建会话将沿用这组配置' : '模型等配置仅用于本次 · 保存后下次沿用';
   }
 
   function paintTuning() {
@@ -987,8 +980,9 @@
     const showAccount=selectedKind === 'codex' && codexBackend !== 'api';
     if (accountField) accountField.hidden=!showAccount;
     if (accountNote) {
-      accountNote.hidden=!showAccount || (!accountReadError && !accountSaving && !accountNotice);
-      accountNote.textContent=accountReadError || (accountSaving ? '正在读取所选账号的模型…' : accountNotice);
+      accountNote.hidden=!showAccount;
+      accountNote.textContent=accountReadError || (accountSaving ? '正在切换用量账号…' : accountNotice)
+        || '与账号页同步，切换后用于新建、恢复和重启会话。';
     }
     if (accountSelect) {
       const signature=JSON.stringify(codexAccounts);
@@ -1157,7 +1151,6 @@
       if (hubDefaultModels[selectedKind] && !options.some(o => o.id === hubDefaultModels[selectedKind])) unavailable.push('默认模型');
       if (showEffort && saved.effort && !effortOptionsFor(selectedKind, selectedModel).some(([v]) => v === saved.effort)) unavailable.push('默认思考强度');
       if (showCodexTier && saved.codexSpeedTier && !codexTierOptionsFor(selectedModel).some(([v]) => v === saved.codexSpeedTier)) unavailable.push('默认速度');
-      if (showAccount && saved.codexProfile && !codexAccounts.some(p => p.id === saved.codexProfile)) unavailable.push('默认账号');
       const notices = [];
       if (unavailable.length) notices.push(`${unavailable.join('、')}当前不可用，已显示可用选项，请确认后创建。`);
       if (showFast && selectedFastMode) notices.push('快速模式可能影响回复记录；卡片收不到回复时可关闭。');
@@ -1380,7 +1373,6 @@
       mcpProfile: selectedMcpProfile,
       fastMode: selectedFastMode,
       codexSpeedTier: selectedCodexTier,
-      codexProfile: codexAccountId,
       deepseekRoute,
     });
   }
@@ -1394,7 +1386,6 @@
     selectedMcpProfile = tuning.mcpProfile;
     selectedFastMode = tuning.fastMode;
     selectedCodexTier = tuning.codexSpeedTier;
-    if (kind === 'codex') codexAccountId = tuning.codexProfile;
     if (kind === 'deepseek-claude') deepseekRoute = tuning.deepseekRoute;
   }
 
@@ -1504,7 +1495,6 @@
       mcpProfile: selectedMcpProfile,
       fastMode: selectedFastMode,
       codexSpeedTier: selectedCodexTier,
-      codexProfile: codexAccountId,
     });
     if (selectedKind === 'deepseek-claude') opts.deepseekRoute = deepseekRoute;
     if (selectedKind === 'codeagent') opts.codeagentModelPick = modelTouchedByUser;
@@ -1565,19 +1555,29 @@
     document.getElementById('new-session-account')?.addEventListener('change', async event => {
       if (accountSaving) return;
       const profileId=event.target.value;
-      tuningTouchedByUser = true;
       accountSaving=true;pendingAccountId=profileId;configReadRevision++;accountNotice='';setError('');paint();
       try {
         if (!codexAccounts.some(p => p.id === profileId)) throw new Error('所选账号不可用，请重新选择');
-        codexAccountId=profileId;
-        codexTuningCatalog=null;
-        await loadCodexTuningCatalog({force:true});
+        const result=await ipcRenderer.invoke('codex:set-global-account',{profileId,scope:'launch'});
+        if (!result?.ok) throw new Error(result?.error || '切换用量账号失败');
+        codexAccountId=result.profileId;
+        accountNotice='已与账号页同步；已打开的会话保持原账号。';
       } catch(error) { setError(error.message); }
-      finally { accountSaving=false;pendingAccountId='';paint(); }
+      finally {
+        try {
+          // The broadcast can arrive while this selector is saving. Read back
+          // the canonical value, including another selector's later change.
+          await loadHubDefaultModels({refreshAccount:true});
+          codexTuningCatalog=null;
+          await loadCodexTuningCatalog({force:true});
+        } catch(error) { setError(error.message); }
+        accountSaving=false;pendingAccountId='';paint();
+      }
     });
     ipcRenderer.on('codex-global-account-changed',()=>{
-      if (accountSaving) return;
-      void loadHubDefaultModels().then(()=>loadCodexTuningCatalog()).then(paint).catch(error=>setError(error.message));
+      // A second selector can finish while this one is still loading models.
+      // Never discard that newer account notification.
+      void loadHubDefaultModels({refreshAccount:true}).then(()=>loadCodexTuningCatalog()).then(paint).catch(error=>setError(error.message));
     });
 
     menuEl.querySelectorAll('.new-session-option').forEach(button => {

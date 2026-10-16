@@ -24,6 +24,11 @@
     // 允许的 AI 都有自己的按钮时，「其他」永远是 0（公司版：全部 / CodeAgent / 群聊）。
     if (!allowedKinds.some(isOtherSearchProvider)) document.querySelector('.session-search-chip[data-provider="other"]')?.remove();
     document.querySelectorAll('.session-search-specific-providers').forEach(group => { if (!group.querySelector('[data-provider]')) group.remove(); });
+    // 侧栏模型筛选：去掉没装的 AI 家族；CodeAgent 一族只在发行版里出现（见 session-list-renderer.js 的 CODEAGENT_FAMILY）。
+    document.querySelectorAll('#session-model-filter option').forEach(option => {
+      if (option.value === 'codeagent') option.hidden = !kindAllowed('codeagent');
+      else if (ALL_AI_KINDS.includes(option.value) && !kindAllowed(option.value)) option.remove();
+    });
   }
   // 产品显示名与版本标注（公司版 2026-10-13 起有自己的名字和「内测先锋版」标注，见 target.json）；社区版没改名就不动。
   const { productName, editionBadge } = require('../core/distribution');

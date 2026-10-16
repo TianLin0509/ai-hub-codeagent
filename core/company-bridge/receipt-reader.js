@@ -16,8 +16,22 @@ function bodyText(row) {
   return typeof body === 'string' ? body : Array.isArray(body)
     ? body.filter(b => b?.type === 'text').map(b => b.text || '').join('\n') : '';
 }
+// CodeAgent 粘贴时会读公司电脑的剪贴板，里面有图片就往提问里插「[Image #N]」，再追加一个以
+// 「[已分析用户附件图片]」开头的文字块（看图结果或「图片视觉分析失败」）。2026-10-16 公司真机 Q-1016-01：
+// 第 4、6 轮是「[Image #0]## 成员追问…」+ 看图块，第 2 轮的改写请求是「[Image #0][Image #1][Image #2]（编号…」
+// + 3 个失败块；提问本身一字不差，回执却判成对不上。先比原文，比不上再去掉占位符和看图块比。
+const CLIPBOARD_ANALYSIS = '\n[已分析用户附件图片]';
+function withoutClipboardImages(text) {
+  if (!/\[Image #\d+\]/.test(text)) return [];
+  const at = text.indexOf(CLIPBOARD_ANALYSIS);
+  const bodies = at >= 0 ? [text, text.slice(0, at)] : [text];
+  return bodies.flatMap(body => [/\[Image #\d+\]/g, /\[Image #\d+\] ?/g, /\[Image #\d+\]\s*/g].map(re => body.replace(re, '')));
+}
 function matchesRequest(group, request) {
-  if (request.promptFingerprint) return receiptPromptFingerprint(group.text) === request.promptFingerprint;
+  if (request.promptFingerprint) {
+    if (receiptPromptFingerprint(group.text) === request.promptFingerprint) return true;
+    return withoutClipboardImages(String(group.text || '')).some(text => receiptPromptFingerprint(text) === request.promptFingerprint);
+  }
   // Upgrade compatibility for an already-dispatched round. New dispatches use
   // exact normalized content, not a task number merely quoted in user prose.
   if (!group.at || group.at < (request.sentAt || 0) - 5000) return false;

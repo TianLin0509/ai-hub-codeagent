@@ -1867,9 +1867,6 @@ class SessionManager extends EventEmitter {
           historyStorageHome:opts.codexHistoryStorageHome,
           resolveAccount:()=>{
             const accounts=require('./codex-global-account');
-            if (opts.codexAccountScope === 'session') return {
-              id:ptyProcess.options.accountId,label:info.codexProfileLabel,home:ptyProcess.options.env.CODEX_HOME,
-            };
             return accounts.resolveRunningAccount(accounts.currentConfig(),{
               id:ptyProcess.options.accountId,label:info.codexProfileLabel,
               home:ptyProcess.options.env.CODEX_HOME});
@@ -3483,8 +3480,16 @@ class SessionManager extends EventEmitter {
     }
     // 重置 group-chat 快路径缓存：CLI 是新启动，必须重新走冷启动流程
     s.groupChatReady = false;
-    if (isCodeAgentKind(runtimeKind)) require('./codeagent-model-picker').resetFailure(sessionId);
-    // 原地重拉沿用原生模型；历史选型标记不能变成一次新的 /model 请求。
+    if (isCodeAgentKind(runtimeKind)) {
+      require('./codeagent-model-picker').resetFailure(sessionId);
+      // CodeAgent 交互模式不认 --model，选模型后菜单又会把全局默认恢复原样，所以重拉出来的新进程回到 CLI 默认模型。
+      // 只有用户明确选中过、且当前显示的仍是那个模型时，才再走一次 /model 菜单（随后的第一条消息会等它做完）；
+      // 历史选型标记（codeagentModelPick）和从记录里观察到的默认模型都不会触发。
+      const userModel = s.info && s.info.codeagentUserModel;
+      if (userModel && modelId === userModel && !codeAgentReadOnly(s.info)) {
+        this.emit('codeagent-model-pick', { sessionId, modelId: userModel, reason: 'relaunch' });
+      }
+    }
     return true;
   }
 

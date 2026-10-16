@@ -410,9 +410,6 @@ function registerConfigIpc(ipcMain, deps) {
       const merged = require('../../core/launch-defaults').withLaunchDefaultsInJson(
         existing, payload.kind, payload.selection, {
           availableIds: Array.isArray(payload.available) ? payload.available : null,
-          profileIds: require('../../core/hub-config').normalizeCodexSubscriptionProfiles(
-            existing.providers?.codex?.subscription_profiles,
-          ).map(p => p.id),
         },
       );
       saveConfig(merged);

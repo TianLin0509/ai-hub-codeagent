@@ -1,6 +1,6 @@
 'use strict';
 
-// Defaults are explicit snapshots, separate from temporary choices in an open dialog.
+// Tuning defaults are explicit snapshots; the quota account is shared globally.
 // Model IDs remain in models.defaults for existing callers and older configurations.
 const { MODEL_OPTIONS_BY_KIND } = require('./model-options');
 const { withDefaultModelInJson } = require('./default-model-preference');
@@ -16,7 +16,7 @@ const SPEED = ['standard', 'inherit', 'fast', 'flex'];
 const plain = value => value && typeof value === 'object' && !Array.isArray(value);
 const baseKind = kind => String(kind || '').replace(/-resume$/, '');
 
-function normalizeLaunchDefaults(kind, value, { strict = false, profileIds } = {}) {
+function normalizeLaunchDefaults(kind, value, { strict = false } = {}) {
   const base = baseKind(kind);
   if (!plain(value)) { if (strict) throw new Error('启动配置格式无效'); return {}; }
   const result = {};
@@ -31,8 +31,8 @@ function normalizeLaunchDefaults(kind, value, { strict = false, profileIds } = {
   }
   if (base === 'claude') take('fastMode', v => typeof v === 'boolean');
   if (base === 'codex' || base === 'deepseek') take('codexSpeedTier', v => SPEED.includes(v));
-  if (base === 'codex') take('codexProfile', v => typeof v === 'string' && /^[\w-]{1,80}$/.test(v)
-    && (!profileIds || profileIds.includes(v)));
+  // Ignore legacy account snapshots, including payloads from an older dialog.
+  // Only providers.codex.subscription_profile selects the quota account.
   if (base === 'deepseek-claude') take('deepseekRoute', v => ['tokenplan', 'api'].includes(v));
   return result;
 }
