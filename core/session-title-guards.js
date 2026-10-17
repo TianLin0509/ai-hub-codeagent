@@ -13,6 +13,8 @@ function normalizeTitle(title) {
 // Logo 已标明客户端。只清除旧兜底自动加上的「客户端 · 」；手动名称与正文里的型号保留。
 function sessionDisplayTitle(session, kindLabels = KIND_LABELS) {
   const title = normalizeTitle(session?.title);
+  // AI特战队通道的会话（2026-10-17 用户）：前缀浓缩成「特战」，省出侧栏宽度；v2.1.7 及以前开的旧会话同样显示。
+  if (!session?.userRenamed && /^AI特战队\s*[·・]\s*/.test(title)) return title.replace(/^AI特战队\s*[·・]\s*/, '特战 · ');
   if (!title.includes('·') || session?.userRenamed || isGenericAutoSessionTitle(title, kindLabels)) return title;
   const kinds = resolveKindLabels(kindLabels);
   const labels = [...new Set([...Object.values(kinds), ...Object.keys(kinds)])].filter(Boolean).map(escapeRegExp).join('|');

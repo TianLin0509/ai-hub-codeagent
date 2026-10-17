@@ -102,6 +102,8 @@
         空闲检查间隔<select data-hl-f="pollSeconds">${opt([...new Set([10, 15, 30, 60, 120, s.pollSeconds])].sort((a, b) => a - b).map(x => ({ id: String(x), label: x + ' 秒' })), String(s.pollSeconds))}</select>
         <div class="hl-muted">任务开始后自动每 10 秒检查；结束后保持 10 分钟，随后恢复空闲间隔。</div></div>
       ${parallelView(s, opt)}
+      ${'allowRemoteAdmin' in s ? `<label>远程更新</label><div><select data-hl-f="allowRemoteAdmin"><option value="1"${s.allowRemoteAdmin ? ' selected' : ''}>允许家里远程更新 / 重启这台 Hub</option><option value="0"${s.allowRemoteAdmin ? '' : ' selected'}>不允许</option></select>
+        <div class="hl-muted">只更新到发行源上的正式版本；重启前等手上的任务答完（最长 30 分钟）。${data.hubAdmin?.history?.[0] ? '最近一次：' + esc(data.hubAdmin.history[0].note) + '（' + clock(data.hubAdmin.history[0].at) + '）' : ''}</div></div>` : ''}
       <label>网络放行</label><div><select data-hl-f="autoGate"><option value="0"${s.autoGate ? '' : ' selected'}>手动：被拦时提示我去点放行页</option><option value="1"${s.autoGate ? ' selected' : ''}>自动放行（我已知晓风险）</option></select>
         <div class="hl-muted">自动放行：公司网络弹出放行页时，Hub 在后台替你点「继续访问」并重新连接；连续 3 次没放行就停下提示你，30 分钟后再试。</div></div>
       <label>给 CodeAgent<br>的说明</label><div><textarea rows="8" data-hl-f="instructions">${esc(s.instructions)}</textarea>
@@ -269,7 +271,8 @@
           ...(field('perAccountPeak') ? { maxParallel: Number(field('maxParallel').value), maxParallelIdle: Number(field('maxParallelIdle').value),
             perAccountPeak: Number(field('perAccountPeak').value), perAccountIdle: Number(field('perAccountIdle').value),
             memFloorPct: Number(field('memFloorPct').value), busyHours: field('busyHours').value, usePool: field('usePool').value === '1' } : {}),
-          ...(field('autoGate') ? { autoGate: field('autoGate').value === '1' } : {}) });
+          ...(field('autoGate') ? { autoGate: field('autoGate').value === '1' } : {}),
+          ...(field('allowRemoteAdmin') ? { allowRemoteAdmin: field('allowRemoteAdmin').value === '1' } : {}) });
         editing = false; await load(); toast('AI特战队专用功能设置已保存');
       }
     } catch (error) { toast(error.message); }

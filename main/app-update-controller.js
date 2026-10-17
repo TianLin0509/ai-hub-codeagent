@@ -131,7 +131,8 @@ function createAppUpdateController({ app, config, dataDir, currentVersion, sendT
 
   function dismissLastResult() { delete state.lastResult; return state; }
 
-  return { check, download, cancel, apply, getState: () => state, startBackgroundChecks, dismissLastResult,
+  // 界面弹出提示后就会 dismiss；家里远程更新（core/company-bridge/hub-admin.js）要在通道接通后另读一次本次启动读到的结果。
+  return { check, download, cancel, apply, getState: () => state, startBackgroundChecks, dismissLastResult, lastResult: () => lastResult,
     dispose: () => { clearTimeout(timer); if (abort) abort.abort(); } };
 }
 

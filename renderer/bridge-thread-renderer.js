@@ -94,7 +94,7 @@ function threadBlock(deps, ctx, rows, now = Date.now(), open = false) {
   const account = lastMeta?.poolLabel || lastMeta?.account || '';
   const title = role === 'asker'
     ? `${threadId} · ${partyName(peer, ctx.agent)}${account ? ' · ' + account : ''}`
-    : `为${partyShort(peer)}办事 · ${threadId} · ${partyName(peer, ctx.agent)}`;
+    : `${peer === 'home' ? '特战任务' : '为' + partyShort(peer) + '办事'} · ${threadId} · ${partyName(peer, ctx.agent)}`;
   const chips = [`<span class="bt-chip">${roundsCount} 轮</span>`];
   if (summary?.lastTotal) chips.push(`<span class="bt-chip">全程 ${esc(deps, summary.lastTotal)}</span>`);
   if (summary?.model) chips.push(`<span class="bt-chip">${esc(deps, summary.model)}</span>`);
@@ -211,12 +211,12 @@ function applyBridgeThreads(container, deps, records = {}, now = Date.now()) {
     }
     if (ctx.role === 'answerer') banner = { threadId, peer: ctx.peer, title: ctx.fromTitle, agent: ctx.agent };
   }
-  // 答方会话顶部一条「为家里办事：<发问会话标题>」（一个答方会话只服务一个编号，取最新那串）。
+  // 答方会话顶部一条「特战任务：<发问会话标题>」（公司一端；家里一端替公司作答时写「为公司办事」）。一个答方会话只服务一个编号，取最新那串。
   let bar = container.querySelector(':scope > .bt-banner');
   if (banner) {
     if (!bar) { bar = container.ownerDocument.createElement('div'); bar.className = 'bt-banner'; container.insertBefore(bar, container.firstChild); }
     bar.dataset.peer = banner.peer;
-    bar.innerHTML = `<span class="bt-icon">⇄</span><b>为${partyShort(banner.peer)}办事：</b><span>${esc(deps, banner.title || banner.threadId)}</span>`
+    bar.innerHTML = `<span class="bt-icon">⇄</span><b>${banner.peer === 'home' ? '特战任务' : '为' + partyShort(banner.peer) + '办事'}：</b><span>${esc(deps, banner.title || banner.threadId)}</span>`
       + `<span class="bt-banner-id">${esc(deps, banner.threadId)} · ${esc(deps, partyName(banner.peer, banner.agent))}</span>`;
   } else if (bar) bar.remove();
   return byThread.size;
@@ -264,9 +264,12 @@ function sessionBadge(sessionId, records, now = Date.now()) {
     return { chip, sub, pin, state: s.state, role: 'asker', thread: t.id };
   }
   const s = view.answerSummary(t, now);
-  const who = partyShort(t.bridgePeer);
-  const sub = `为${who}办事 · ${t.id} · ${s.state === 'done' ? `第 ${s.lastRound} 轮已答` : s.state === 'failed' ? '没答上' : s.note || s.label}`;
-  return { chip: `⇄ ${who}`, sub, pin: '', state: s.state, role: 'answerer', thread: t.id };
+  // 公司一端替家里作答（2026-10-17 用户）：会话名已以「特战」开头，侧栏不再写「家里」，标签只放这一轮到哪了。
+  const tezhan = t.bridgePeer === 'home';
+  const progress = s.state === 'done' ? `第 ${s.lastRound} 轮已答` : s.state === 'failed' ? '没答上' : s.note || s.label;
+  const sub = tezhan ? `特战任务 · ${t.id} · ${progress}` : `为${partyShort(t.bridgePeer)}办事 · ${t.id} · ${progress}`;
+  const chip = tezhan ? `⇄ ${s.state === 'done' ? '已答' : s.state === 'failed' ? '没答上' : s.label}` : `⇄ ${partyShort(t.bridgePeer)}`;
+  return { chip, sub, pin: '', state: s.state, role: 'answerer', thread: t.id };
 }
 
 // 按钮的两种做法（2026-10-16 取舍）：「补收」直接调 bridge:recollect（只是请对端取回已写好的回答，不需要会话里的 AI 动脑）；

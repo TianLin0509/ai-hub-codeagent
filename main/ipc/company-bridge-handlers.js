@@ -24,6 +24,8 @@ function registerCompanyBridgeIpc(ipcMain, service, { openGate } = {}) {
     handlers['create-pairing'] = () => service.createPairing();
     handlers['send-pairing'] = () => service.sendPairingToInbox();
     // 通道串里的「补收」按钮（2026-10-16）：和会话里 AI 调 recollect_company 是同一个动作，编号须属于这个会话。
+    // 公司联动面板的「让公司 Hub 更新」（2026-10-17）：和 company_hub_update 工具同一个动作。
+    handlers['hub-admin'] = request => service.hubAdmin({ op: String(request?.op || 'update'), force: request?.force === true });
     handlers.recollect = request => service.recollect(String(request?.sessionId || ''), { thread: String(request?.thread || '') });
   } else {
     handlers.pair = request => service.pair(String(request?.code || ''));

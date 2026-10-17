@@ -128,7 +128,9 @@ function pickAccount(accounts, { model = '' } = {}) {
   const usable = accounts.filter(a => a.state === 'ready' && !a.sameAsPersonal && !a.duplicateOf);
   if (!usable.length) return null;
   const wanted = String(model || '').toLowerCase();
-  const fit = a => !wanted ? 0 : a.models.some(m => m.toLowerCase() === wanted) ? 0 : a.modelsAuthoritative ? 2 : 1;
+  // 没指定模型时（AI特战队通道开的会话）：知道自己有哪些模型的号排前面，清单未知的号放最后——它可能落到没权限的默认模型。
+  const fit = a => !wanted ? (a.modelsAuthoritative && a.models.length ? 0 : 1)
+    : a.models.some(m => m.toLowerCase() === wanted) ? 0 : a.modelsAuthoritative ? 2 : 1;
   const candidates = usable.filter(a => fit(a) < 2);
   if (!candidates.length) return null;
   return candidates.slice().sort((x, y) => fit(x) - fit(y)
@@ -192,10 +194,14 @@ function syncSharedConfig(personalDir, targetDir, fsModule = fs) {
     const next = { ...personal };
     delete next.hooks; delete next.model;
     if (own.hooks) next.hooks = own.hooks;
+    // 定这个号用哪个模型（2026-10-17 公司实测：只有 DeepSeek v4 权限的号开出来报「找不到 GLM」）。
+    // 以前只看配置文件里的账号清单，没读「一键获取模型权限」探测到的清单（hub-models.json），没定下模型时
+    // CodeAgent 退回它自己的默认 GLM。现在探测清单优先；号自己存的模型不在清单里也换掉。
     let model = typeof own.model === 'string' && own.model.trim() ? own.model.trim() : '';
-    if (!model) {
-      const configured = require('./codeagent-models').configuredModels(targetDir, fsModule);
-      if (configured.authoritative && configured.models.length) model = configured.models[0];
+    const known = accountModels(targetDir, fsModule);
+    if (known.authoritative && known.models.length) {
+      const inList = m => !!m && known.models.some(x => x.toLowerCase() === String(m).toLowerCase());
+      if (!inList(model)) model = inList(known.defaultModel) ? known.defaultModel : known.models[0];
     }
     if (model) next.model = model;
     const text = JSON.stringify(next, null, 2) + '\n';

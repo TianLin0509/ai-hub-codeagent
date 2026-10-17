@@ -2138,6 +2138,8 @@ if (require('./core/distribution').featureEnabled('assistant')) try {
 // 家里联动（2026-10-15）：家里 Hub 的 Agent 用「问公司」提问，公司 Hub 新开 CodeAgent 会话去办（查代码、查本机文件与环境，不改动公司电脑），经加密任务通道往返。
 // 自用版是家里一端，公司版是公司一端，其余发行版不启用（core/company-bridge/role.js）。
 let companyBridgeService = null;
+// 一键更新控制器在后面创建（只有发行目标写了下载源才有）；公司一端经它响应家里的远程更新（core/company-bridge/hub-admin.js）。
+let appUpdateControllerRef = null;
 try {
   const bridgeRole = require('./core/company-bridge/role').bridgeRole();
   const bridgeDeps = {
@@ -2187,6 +2189,11 @@ try {
       nodeExecutable: process.execPath,
       // 放行页自动点击（设置里打开后才用）：看不见的窗口，默认会话，和通道请求共用网络状态。
       openHiddenGate: url => require('./core/company-bridge/gate-pass').openHiddenGateWindow(BrowserWindow, url),
+      // 家里远程更新 / 重启（hub-admin.js）：不是安装版时没有控制器，如实回报不能远程更新。
+      appUpdate: () => appUpdateControllerRef,
+      currentVersion: require('./core/distribution').editionVersion || app.getVersion(),
+      relaunch: () => { app.relaunch(); app.quit(); },
+      listSessionIds: () => [...(sessionManager.sessions?.keys?.() || [])],
     });
     companyBridgeService.start();
     sessionManager.setExtraMcpProvider(({ kind, opts, id }) => companyBridgeService.sessionPlan({ kind, opts, id }));
@@ -3330,6 +3337,7 @@ require('./main/ipc/appearance-handlers').registerAppearanceIpc(ipcMain, { dataD
       const appUpdate = createAppUpdateController({ app, config: distribution.updateConfig, dataDir: getHubDataDir(),
         currentVersion: distribution.editionVersion || app.getVersion(), sendToRenderer });
       registerAppUpdateIpc(ipcMain, appUpdate);
+      appUpdateControllerRef = appUpdate;
       app.whenReady().then(() => appUpdate.startBackgroundChecks());
       app.on('will-quit', () => appUpdate.dispose());
     } catch (e) {

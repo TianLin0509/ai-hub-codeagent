@@ -21,6 +21,8 @@ const { AskHome } = require('./ask-home');
 // 2026-10-15：设置菜单的隐藏入口（unlock.js）与放行页自动点击（gate-pass.js）。
 const { matchesUnlock } = require('./unlock');
 const { GatePasser } = require('./gate-pass');
+// 2026-10-17：家里远程让这台 Hub 更新 / 重启（hub-admin.js），共用这条通道和数据库。
+const { HubAdmin } = require('./hub-admin');
 
 const PURPOSE = 'company-bridge';
 // 历代默认说明：没改过的老设置里存的就是它们，读设置时换成当前默认。
@@ -57,7 +59,9 @@ const OLD_DEFAULTS = [V1_INSTRUCTIONS, V2_INSTRUCTIONS, V3_INSTRUCTIONS];
 // usePool：通道新开的会话走号池（自动挑进行中会话最少的号），号池没有可用的号时用个人账号。
 // 2026-10-17 用户：工作日忙时 3 个、每号忙时 3 / 闲时 6 个、内存保底 10%，都可在设置里调（parallelRev 2 起）。
 const DEFAULT_SETTINGS = Object.freeze({ enabled: true, codeRoots: [], instructions: DEFAULT_INSTRUCTIONS, effort: 'high', maxParallel: 3, maxParallelIdle: 6,
-  perAccountPeak: 3, perAccountIdle: 6, memFloorPct: 10, busyHours: care.DEFAULT_BUSY_HOURS, usePool: true, pollSeconds: 30, autoGate: false, parallelRev: 2 });
+  perAccountPeak: 3, perAccountIdle: 6, memFloorPct: 10, busyHours: care.DEFAULT_BUSY_HOURS, usePool: true, pollSeconds: 30, autoGate: false, parallelRev: 2,
+  // 允许家里远程更新 / 重启这台 Hub（2026-10-17 用户：默认开）。
+  allowRemoteAdmin: true });
 const ACTIVE_POLL_MS = 10000;
 const FOLLOWUP_WINDOW_MS = 10 * 60000;
 const EFFORTS = ['low', 'medium', 'high', 'max'];
@@ -178,6 +182,7 @@ class CompanyBridge {
     this.link = new BridgeLink({ side: 'company', store: this.store, fetchImpl: deps.fetchImpl, now: () => this.now() });
     this.busy = null; this.advanceBusy = null; this.deliverBusy = null; this.timer = null; this.nextPullAt = 0; this.lastPullAt = 0;
     this.askHome = new AskHome({ bridge: this, deps });
+    this.hubAdmin = new HubAdmin({ bridge: this, deps });
     this.gatePass = new GatePasser({ open: url => deps.openHiddenGate(url), logDir: path.join(deps.dataDir, 'logs'), now: () => this.now(),
       notify: (title, text) => this.notify(title, text) });
     // 升级前就配对过的电脑（入口还没隐藏时用过）直接算已解锁，不让成员升级后找不到入口。
@@ -220,6 +225,7 @@ class CompanyBridge {
     if ('usePool' in patch) next.usePool = patch.usePool === true;
     if ('pollSeconds' in patch) { const n = Number(patch.pollSeconds); if (!Number.isInteger(n) || n < 10 || n > 600) throw new Error('检查间隔只能是 10–600 秒'); next.pollSeconds = n; }
     if ('autoGate' in patch) next.autoGate = patch.autoGate === true;
+    if ('allowRemoteAdmin' in patch) next.allowRemoteAdmin = patch.allowRemoteAdmin === true;
     this.store.set('settings', next);
     this.tightenPoll(); this.changed();
     return next;
@@ -276,6 +282,8 @@ class CompanyBridge {
         this.nextPullAt = this.lastPullAt + this.polling().intervalSeconds * 1000;
         try { await this.link.pull(message => this.receive(message)); } catch {}
         await this.passGate();
+        // 上次远程更新 / 重启的结果、版本变化，通道接通后报回家里。
+        try { await this.hubAdmin.announce(); } catch (e) { console.warn('[company-bridge] hub-admin announce', e.message); }
         this.changed();
       }
     })().finally(() => { this.busy = null; });
@@ -284,6 +292,8 @@ class CompanyBridge {
       if (!this.advanceBusy) this.advanceBusy = this.advance().finally(() => { this.advanceBusy = null; });
       await this.advanceBusy;
     }
+    // 远程更新 / 重启：等到安全时机就重启（hub-admin.js）。
+    if (this.link.paired()) { try { await this.hubAdmin.advance(); } catch (e) { console.warn('[company-bridge] hub-admin', e.message); } }
     // 家里对 ask_home 的回复：和「自动作答」开关无关，配对了就送。
     if (this.link.paired()) {
       if (!this.deliverBusy) this.deliverBusy = this.askHome.deliver().finally(() => { this.deliverBusy = null; });
@@ -318,6 +328,7 @@ class CompanyBridge {
       return;
     }
     if (this.askHome.receive(message)) return;
+    if (this.hubAdmin.receive(message)) return;
     // 家里报：这些问题的发问会话还在活动（追问可能性大，答完的会话保温加倍）。
     if (message.type === 'asker') {
       if (message.gen && message.gen !== this.link.gen()) return;
@@ -378,6 +389,8 @@ class CompanyBridge {
     const queue = this.openThreads().filter(x => x.state === 'queued')
       .sort((a, b) => (Number(!!b.sessionId) - Number(!!a.sessionId)) || a.createdAt - b.createdAt);
     let waiting = 0;
+    // 家里要求重启、正在等手上的任务答完：新任务先排队，重启后接着做。
+    if (this.hubAdmin.holdingDispatch()) { this.careSessions(); return; }
     for (const t of queue) {
       if (t.sessionId && this.sessionBusy(t.sessionId)) continue; // 追问时原会话还在忙（例如改写上一轮），等它停下
       if (free > 0) { await this.dispatch(t); free -= 1; continue; }
@@ -479,7 +492,7 @@ class CompanyBridge {
       if (!known) {
         sessionId = randomUUID();
         const cwd = s.codeRoots.find(p => this.deps.isDirectory ? this.deps.isDirectory(p) : true) || this.deps.fallbackCwd;
-        const opts = { id: sessionId, cwd, title: 'AI特战队 · ' + short(t.title, 22), purpose: PURPOSE, autonomous: true, noInheritCursor: true,
+        const opts = { id: sessionId, cwd, title: '特战 · ' + short(t.title, 26), purpose: PURPOSE, autonomous: true, noInheritCursor: true,
           effort: s.effort, addDirs: s.codeRoots.filter(p => p !== cwd) };
         // 号池里有可用的号就走号池（自动挑进行中会话最少的号），并行的问题分散到不同账号；挑不出号时退回个人账号，问题不卡住。
         let created = null;
@@ -677,6 +690,7 @@ class CompanyBridge {
       threads: this.threads().map(t => ({ ...t, session: t.sessionId ? { open: !!this.deps.getSession(t.sessionId), busy: this.sessionBusy(t.sessionId) } : null })),
       askHome: this.askHome.status(),
       care: this.careState || null,
+      hubAdmin: this.hubAdmin.status(),
     };
   }
   notify(title, text, sessionId = null) { try { this.deps.onNotify?.({ title: 'AI特战队 · ' + title, text, sessionId }); } catch {} }
