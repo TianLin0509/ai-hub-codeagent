@@ -23,7 +23,7 @@ const MODE_LABELS = { lively: '活泼', gentle: '温和', quiet: '安静' };
 const MODE_SET = new Set(MODES);
 
 function createHubPetController({
-  BrowserWindow, screen, ipcMain, Menu, powerMonitor, app,
+  BrowserWindow, BaseWindow = null, screen, ipcMain, Menu, powerMonitor, app,
   htmlPath, preloadPath, assetsDir, dataDir,
   company = false, available = true,
   getMainWindow, focusPrimaryWindow, sendToRenderer,
@@ -85,9 +85,24 @@ function createHubPetController({
     return { x: area.x + area.width - WIN_W + INSET.right - MARGIN, y: area.y + area.height - WIN_H + INSET.bottom - 8 };
   }
 
+  // 隐藏的宿主窗口（2026-10-17，公司 CI 39030602842）：桌宠是置顶窗，Windows 挑「进程主窗口」时（Get-Process 的
+  // MainWindowTitle、按标题里 PID/版本认实例）会先挑到它，读成「AI Hub 桌宠」。有宿主的窗口和看不见的窗口都不参与挑选，
+  // 所以给桌宠挂一个永不显示的宿主：主窗口照旧被认出来。不挂在 Hub 主窗口下——那样主窗口最小化时桌宠会跟着消失。
+  let owner = null;
+  function ensureOwner() {
+    if (!BaseWindow) return null;
+    if (owner && !owner.isDestroyed?.()) return owner;
+    try {
+      owner = new BaseWindow({ show: false, width: 1, height: 1, frame: false, skipTaskbar: true, focusable: false, resizable: false, title: 'AI Hub 桌宠宿主' });
+      owner.on?.('closed', () => { owner = null; });
+    } catch (error) { owner = null; logger.warn?.('[hub-pet] owner window failed:', error && error.message); }
+    return owner;
+  }
   function ensureWindow() {
     if (alive()) return win;
+    const parent = ensureOwner();
     win = new BrowserWindow({
+      ...(parent ? { parent } : {}),
       width: WIN_W, height: WIN_H, show: false, frame: false, transparent: true, backgroundColor: '#00000000',
       resizable: false, movable: false, minimizable: false, maximizable: false, fullscreenable: false,
       skipTaskbar: true, focusable: true /* 右键菜单要能拿到焦点，点别处才会收起 */, alwaysOnTop: true, hasShadow: false, title: 'AI Hub 桌宠',
@@ -385,6 +400,8 @@ function createHubPetController({
     peekFrom = null;
     if (alive()) win.destroy();
     win = null;
+    if (owner && !owner.isDestroyed?.()) { try { owner.destroy(); } catch (_) {} }
+    owner = null;
     lastSent = '';
   }
   function dispose() {

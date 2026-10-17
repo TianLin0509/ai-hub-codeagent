@@ -1,6 +1,6 @@
 // Windows 上改名替换遇到短暂占用（EPERM/EBUSY）稍等重试，必须在其他模块加载前装上（core/fs-rename-retry.js）。
 require('./core/fs-rename-retry').install();
-const { app, BrowserWindow, ipcMain, clipboard, dialog, nativeImage, screen, shell, Menu, crashReporter, protocol, net, powerMonitor } = require('electron');
+const { app, BrowserWindow, BaseWindow, ipcMain, clipboard, dialog, nativeImage, screen, shell, Menu, crashReporter, protocol, net, powerMonitor } = require('electron');
 const path = require('path');
 const { fileURLToPath } = require('url');
 const fs = require('fs');
@@ -1257,7 +1257,7 @@ function createWindow() {
     try {
       const petDistribution = require('./core/distribution');
       hubPetController = createHubPetController({
-        BrowserWindow, screen, ipcMain, Menu, powerMonitor, app,
+        BrowserWindow, BaseWindow, screen, ipcMain, Menu, powerMonitor, app,
         htmlPath: path.join(__dirname, 'renderer', 'hub-pet', 'pet.html'),
         preloadPath: path.join(__dirname, 'renderer', 'hub-pet', 'pet-preload.js'),
         assetsDir: path.join(__dirname, 'renderer', 'assets', 'hub-pet'),
