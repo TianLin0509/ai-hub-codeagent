@@ -108,6 +108,15 @@ class BridgeLink {
     return { channel: link.channel, to: this.other, mid, blob: bridgeCrypto.seal(link, this.other, message), type, at: this.now(),
       droppable: type === 'status' && payload.state !== 'error' };
   }
+  prepareImage(metadata, data) {
+    if (!this.paired()) throw new Error('图片发送前必须完成配对');
+    const { sealImage, envelopeSize } = require('./image-message');
+    const link = bridgeCrypto.derive(this.activeSecret());
+    const mid = randomUUID();
+    const message = { ...metadata, v: 1, mid, type: 'image', ts: this.now(), from: this.side, gen: this.gen() };
+    const blob = sealImage(link, this.other, message, data);
+    return { channel: link.channel, to: this.other, mid, blob, type: 'image', at: this.now(), droppable: false, textBytes: envelopeSize(this.other, mid, blob) };
+  }
   // 发给对端：先放进发件箱再发，失败下一轮原样重发，服务端按编号去重。
   // 发件箱满了先丢进度通知；问题、回执、握手一条不丢，满了就拒绝新消息并报错。
   async send(type, payload = {}, { secret } = {}) {

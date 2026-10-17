@@ -1,7 +1,9 @@
 'use strict';
 // 公司版「助理」页（2026-10-16 选定设计 B：简报 + 对话）。页面就是和助理会话的对话：
 // 今天第一条是简报（默认收起成要点，点开看全文，每条带出处），下面是问答；输入框上方一排常用问题小标签。
-// 顶部状态：WeLink 登录（过期时扫码）、日历初始化、数据只留本机、下一份简报时间。
+// 顶部状态：WeLink 登录（过期时扫码）、邮件和日历是否接入、数据只留本机、下一份简报时间。
+// 设置分三页（2026-10-17）：简报与提醒 / WeLink 与邮箱 / 桌宠。邮箱 Hub 先从 WeLink 账号自动读、自动配好，
+// 读不到才在「WeLink 与邮箱」页请用户填一次——不让助理在对话里问。
 // 写法同无线页：盖在主区域上的一层，点左侧其他按钮自动关闭。左侧按钮只在公司版（gate.js）插入。
 function createCompanyAssistantPage({ document, window, ipcRenderer, openSession, closeOtherPanels = () => {}, showMessage }) {
   let page = null, data = null, timer = null, briefOpen = false, sending = false;
@@ -50,6 +52,7 @@ function createCompanyAssistantPage({ document, window, ipcRenderer, openSession
       </header>
       <div class="ca-panel" data-slot="panel" hidden></div>
       <div class="ca-scroll"><div class="ca-convo">
+        <div data-slot="setup"></div>
         <div data-slot="brief"></div>
         <div data-slot="notices"></div>
         <div data-slot="chat"></div>
@@ -87,7 +90,7 @@ function createCompanyAssistantPage({ document, window, ipcRenderer, openSession
     else if (!login) chips.push('<span class="ca-chip">WeLink 状态还没查</span>');
     else if (login.ok) chips.push('<span class="ca-chip ok">WeLink 已登录</span>');
     else chips.push(`<span class="ca-chip warn">${login.reason === 'expired' ? 'WeLink 登录已过期' : 'WeLink 没登录'}</span><button type="button" class="ca-btn small primary" data-ca="login">扫码登录</button>`);
-    if (login?.ok) chips.push(d.calendarNeedsSetup ? '<span class="ca-chip warn">日历未初始化</span><button type="button" class="ca-btn small" data-ca="calendar">初始化日历</button>' : '<span class="ca-chip">日历已接入</span>');
+    if (login?.ok) chips.push(d.calendarNeedsSetup ? '<span class="ca-chip warn">邮件和日历未接入</span><button type="button" class="ca-btn small primary" data-ca="calendar">填邮箱</button>' : `<span class="ca-chip" title="${esc(d.settings.email || '')}">邮件和日历已接入</span>`);
     chips.push('<span class="ca-chip">数据只留在本机</span>');
     chips.push(`<span class="ca-chip">${d.refreshing ? '正在取数据…' : d.refreshedAt ? '数据更新于 ' + when(d.refreshedAt) : '还没取过数据'}</span>`);
     chips.push('<span class="ca-sp"></span>');
@@ -104,6 +107,16 @@ function createCompanyAssistantPage({ document, window, ipcRenderer, openSession
     const state = { waiting: '用手机 WeLink 扫下面的二维码；扫完这里会自动刷新。', finished: '登录命令已结束，正在核对登录状态…', failed: '登录没成功：' + esc(f.error || ''), ok: '' }[f.state] || '';
     const raw = !f.qr && f.text ? `<pre class="ca-qr-text">${esc(f.text.slice(-3000))}</pre>` : '';
     return `<div class="ca-login"><b>扫码登录 WeLink</b><p>${state}</p>${qr}${raw}<div class="ca-row"><button type="button" class="ca-btn" data-ca="close-panel">收起</button>${f.state === 'failed' || f.state === 'finished' ? '<button type="button" class="ca-btn primary" data-ca="login">再试一次</button>' : ''}</div></div>`;
+  }
+
+  // 邮件和日历没接入、WeLink 里也读不到邮箱时，在简报上方请用户填一次（只出现这一处，填完就消失）。
+  function setupCard() {
+    const d = data;
+    if (!d.login?.ok || !d.calendarNeedsSetup) return '';
+    const auto = d.mailSetup || {};
+    const why = auto.reason === 'no-email' ? 'WeLink 账号信息里没读到你的邮箱。' : auto.email ? `用 ${esc(auto.email)} 自动配置没成功${auto.output ? '（' + esc(auto.output) + '）' : ''}。` : '';
+    return `<article class="ca-setup"><b>填一次公司邮箱，邮件和日历就能用</b><p class="ca-note">${why}只用来让 welink-cli 找到公司邮件服务器，不发邮件，数据只留在这台电脑。</p>
+      <div class="ca-row"><input type="email" data-f="setup-email" placeholder="公司邮箱地址" value="${esc(d.settings.email || auto.email || '')}"><button type="button" class="ca-btn primary" data-ca="setup-mail">配置</button></div><p class="ca-note" data-f="setup-msg"></p></article>`;
   }
 
   function briefCard() {
@@ -161,6 +174,7 @@ function createCompanyAssistantPage({ document, window, ipcRenderer, openSession
       el.innerHTML = html; el.dataset.html = html;
       el.querySelectorAll('details').forEach((d, i) => { if (opened[i]) d.open = true; });
     };
+    setHtml('setup', setupCard());
     setHtml('brief', briefCard());
     setHtml('notices', noticesStrip());
     const scroll = page.querySelector('.ca-scroll');
@@ -198,6 +212,8 @@ function createCompanyAssistantPage({ document, window, ipcRenderer, openSession
   // 否则把 prompt 填进输入框（输入框里已有内容不覆盖）；noticeId 对应的提醒展开并滚到眼前。
   async function fromPet(detail = {}) {
     await open();
+    // 桌宠右键「桌宠设置…」「更多形象…」：直接打开设置的对应分页。
+    if (detail.settingsTab) { openSettings(String(detail.settingsTab)); return; }
     const input = page.querySelector('[data-slot="form"] textarea');
     const chip = detail.action ? (data?.chips || []).find(c => c.action === detail.action) : null;
     if (chip && !(chip.fill && input.value.trim())) await useChip(chip);
@@ -226,37 +242,57 @@ function createCompanyAssistantPage({ document, window, ipcRenderer, openSession
     if (verb === 'retry') { await call('retry-chat', { id: arg }); await load(); return; }
     if (verb === 'login') { button.disabled = true; const panel = page.querySelector('[data-slot="panel"]'); panel.dataset.kind = 'login'; await call('login'); await load(); return; }
     if (verb === 'close-panel') { const panel = page.querySelector('[data-slot="panel"]'); panel.hidden = true; panel.innerHTML = ''; panel.dataset.kind = 'closed'; return; }
-    if (verb === 'calendar') return openCalendar();
+    if (verb === 'calendar') return openSettings('welink');
     if (verb === 'settings') return openSettings();
+    if (verb === 'setup-mail') return setupMail(page.querySelector('[data-f="setup-email"]'), page.querySelector('[data-f="setup-msg"]'), button);
+    if (verb === 'settings-tab') return openSettings(arg);
     if (verb === 'open-session') { const r = await call('open-session'); close(); await openSession(r.sessionId); }
   }
 
-  function openCalendar() {
-    const panel = page.querySelector('[data-slot="panel"]');
-    panel.dataset.kind = 'calendar'; panel.hidden = false;
-    panel.innerHTML = `<div class="ca-login"><b>初始化日历</b><p>welink-cli 读 Exchange 日历前要先按你的公司邮箱找一次邮件服务器（只写 welink-cli 自己的本地配置，不发邮件）。</p>
-      <div class="ca-row"><input type="email" data-f="email" placeholder="公司邮箱" value="${esc(data.settings.email || '')}"><button type="button" class="ca-btn primary" data-x="go">初始化</button><button type="button" class="ca-btn" data-ca="close-panel">取消</button></div><p class="ca-note" data-f="msg"></p></div>`;
-    panel.querySelector('[data-x="go"]').onclick = async e => {
-      e.target.disabled = true; const msg = panel.querySelector('[data-f="msg"]'); msg.textContent = '正在初始化…';
-      try { const r = await call('setup-calendar', { email: panel.querySelector('[data-f="email"]').value }); msg.textContent = r.needsSetup ? '还没成功：' + (r.output || '') : '日历已接入。'; await load(); }
-      catch (error) { msg.textContent = '没成功：' + error.message; } finally { e.target.disabled = false; }
-    };
+  async function setupMail(input, msg, button) {
+    if (button) button.disabled = true;
+    if (msg) msg.textContent = '正在配置邮件和日历…';
+    try {
+      const r = await call('setup-calendar', { email: input ? input.value : '' });
+      if (msg) msg.textContent = r.needsSetup ? '还没成功：' + (r.output || '请核对邮箱地址') : '邮件和日历已接入。';
+      await load();
+    } catch (error) { if (msg) msg.textContent = '没成功：' + error.message; } finally { if (button) button.disabled = false; }
   }
 
-  function openSettings() {
-    const panel = page.querySelector('[data-slot="panel"]');
+  const TABS = [['brief', '简报与提醒'], ['welink', 'WeLink 与邮箱'], ['pet', '桌宠']];
+  let petTab = null;
+
+  function welinkTab() {
+    const d = data, s = d.settings, login = d.login;
+    const loginLine = !d.cliFound ? '<span class="ca-chip bad">没找到 welink-cli</span><span class="ca-note">公司电脑上需先安装 npm 全局包 @welink/welink-cli</span>'
+      : login?.ok ? `<span class="ca-chip ok">已登录</span><span class="ca-note">账号 ${esc(login.uid || '')}</span>`
+        : `<span class="ca-chip warn">${login?.reason === 'expired' ? '登录已过期' : '没登录'}</span><button type="button" class="ca-btn small primary" data-ca="login">扫码登录</button>`;
+    const from = s.emailFrom === 'welink' ? '从 WeLink 账号自动读到' : s.email ? '你填写的' : '';
+    const errs = d.errors || [];
+    const errOf = label => errs.find(e => e.label === label || e.label.startsWith(label));
+    const snapRows = [['会议', d.counts?.meetings], ['日程', d.counts?.calendar], ['消息', d.counts?.messages], ['未读邮件', d.counts?.mails]].map(([label, n]) => {
+      const e = errOf(label);
+      return `<div class="ca-src-row"><span>${label}</span>${e ? `<span class="ca-chip warn" title="${esc(e.text)}">没取到</span><span class="ca-note">${esc(e.text)}</span>` : login?.ok && d.refreshedAt ? `<span class="ca-chip ok">已取到 ${n ?? 0} 条</span>` : '<span class="ca-note">—</span>'}</div>`;
+    }).join('');
+    return `<fieldset><legend>WeLink 登录</legend><div class="ca-row">${loginLine}</div></fieldset>
+      <fieldset class="col"><legend>公司邮箱（邮件和日历要用）</legend>
+        <div class="ca-row"><input type="email" data-f="email" placeholder="公司邮箱地址" value="${esc(s.email || '')}"><button type="button" class="ca-btn primary" data-x="mail">${d.calendarNeedsSetup ? '配置邮件和日历' : '重新配置'}</button>${from ? `<span class="ca-note">${from}</span>` : ''}</div>
+        <p class="ca-note" data-f="mail-msg">${d.calendarNeedsSetup ? '还没接入。' : '已接入。'}只让 welink-cli 按邮箱找一次公司邮件服务器，不发邮件。</p></fieldset>
+      <fieldset class="col"><legend>最近一次取数（${d.refreshedAt ? when(d.refreshedAt) : '还没取过'}）</legend>${snapRows}
+        <div class="ca-row"><button type="button" class="ca-btn small" data-ca="refresh">刷新数据</button></div></fieldset>
+      <fieldset><legend>我的名字（用来认群里 @我）</legend><input type="text" data-f="myName" value="${esc(s.myName)}" placeholder="WeLink 里的显示名"><button type="button" class="ca-btn small" data-x="name">保存</button></fieldset>`;
+  }
+
+  function briefTab() {
     const s = data.settings, watched = new Set(s.watchGroups.map(g => g.id));
     const groups = (data.conversations || []).filter(c => c.group);
     const known = new Set(groups.map(g => g.id));
     const extra = s.watchGroups.filter(g => !known.has(g.id)).map(g => ({ ...g, group: true }));
     const opts = (list, cur, fmt = x => x) => list.map(x => `<option value="${x}"${String(x) === String(cur) ? ' selected' : ''}>${fmt(x)}</option>`).join('');
-    panel.dataset.kind = 'settings'; panel.hidden = false;
-    panel.innerHTML = `<div class="ca-settings" role="dialog" aria-label="助理设置"><h3>助理设置</h3>
-      <fieldset><legend>关注的群（简报里出「关注群要点」，关注词也在这些群里找）</legend>
+    return `<fieldset><legend>关注的群（简报里出「关注群要点」，关注词也在这些群里找）</legend>
         <div class="ca-groups">${[...groups, ...extra].map(g => `<label><input type="checkbox" data-group="${esc(g.id)}" data-name="${esc(g.name)}"${watched.has(g.id) ? ' checked' : ''}>${esc(g.name)}</label>`).join('') || '<span class="ca-note">还没取到最近会话：先扫码登录、点「刷新数据」。</span>'}</div></fieldset>
       <fieldset><legend>提醒</legend>
         <label>关注词（逗号分隔）<input type="text" data-f="keywords" value="${esc(s.keywords.join('，'))}"></label>
-        <label>我的名字（用来认群里 @我）<input type="text" data-f="myName" value="${esc(s.myName)}"></label>
         <label>等你回复超过<select data-f="waitHours">${opts([1, 2, 3, 4, 6, 8, 12, 24], s.waitHours, x => x + ' 小时')}</select>提醒</label>
         <label>开会前<select data-f="prepMinutes">${opts([5, 10, 15, 20, 30], s.prepMinutes, x => x + ' 分钟')}</select>出准备卡</label>
         <label>每小时最多<select data-f="maxPerHour">${opts([1, 2, 3, 4, 5], s.maxPerHour, x => x + ' 条')}</select></label></fieldset>
@@ -265,14 +301,37 @@ function createCompanyAssistantPage({ document, window, ipcRenderer, openSession
         <label>下班前小结<input type="time" data-f="summaryTime" value="${esc(s.summaryTime)}"></label>
         <label>自动取数据间隔<select data-f="refreshMinutes">${opts([5, 10, 15, 30], s.refreshMinutes, x => x + ' 分钟')}</select></label></fieldset>
       ${s.chips.length ? `<fieldset><legend>存过的常用问题</legend>${s.chips.map((c, i) => `<label><input type="checkbox" data-chip="${i}" checked>${esc(c.label)}</label>`).join('')}</fieldset>` : ''}
-      <div class="ca-row"><button type="button" class="ca-btn" data-ca="close-panel">取消</button><button type="button" class="ca-btn primary" data-x="save">保存</button></div></div>`;
+      <div class="ca-row end"><button type="button" class="ca-btn primary" data-x="save">保存</button></div>`;
+  }
+
+  function openSettings(tab) {
+    const panel = page.querySelector('[data-slot="panel"]');
+    const current = TABS.some(([k]) => k === tab) ? tab : (panel.dataset.kind === 'settings' && panel.dataset.tab) || 'brief';
+    panel.dataset.kind = 'settings'; panel.dataset.tab = current; panel.hidden = false;
+    const s = data.settings;
+    panel.innerHTML = `<div class="ca-settings" role="dialog" aria-label="助理设置">
+      <div class="ca-settings-head"><h3>助理设置</h3><div class="ca-tabs" role="tablist">${TABS.map(([k, label]) => `<button type="button" role="tab" class="ca-tab${k === current ? ' on' : ''}" aria-selected="${k === current}" data-ca="settings-tab:${k}">${label}</button>`).join('')}</div>
+        <button type="button" class="ca-btn small" data-ca="close-panel">关闭</button></div>
+      <div class="ca-tab-body" data-tab="${current}">${current === 'brief' ? briefTab() : current === 'welink' ? welinkTab() : '<div data-slot="pet-tab"></div>'}</div></div>`;
+    if (current === 'pet') {
+      const host = panel.querySelector('[data-slot="pet-tab"]');
+      try { petTab = require('./hub-pet/pet-settings-tab.js').mountPetSettingsTab(host, { ipcRenderer, window, document }); }
+      catch (error) { host.innerHTML = `<p class="ca-note">桌宠设置没能打开：${esc(error.message)}</p>`; }
+      return;
+    }
+    petTab = null;
+    if (current === 'welink') {
+      panel.querySelector('[data-x="mail"]').onclick = e => setupMail(panel.querySelector('[data-f="email"]'), panel.querySelector('[data-f="mail-msg"]'), e.target).then(() => { if (panel.dataset.tab === 'welink') openSettings('welink'); });
+      panel.querySelector('[data-x="name"]').onclick = async () => { try { await call('set-settings', { myName: panel.querySelector('[data-f="myName"]').value }); await load(); showMessage?.('名字已保存'); } catch (error) { showMessage?.('没有保存：' + error.message); } };
+      return;
+    }
     panel.querySelector('[data-x="save"]').onclick = async e => {
       const v = f => panel.querySelector(`[data-f="${f}"]`).value;
       e.target.disabled = true;
       try {
         await call('set-settings', {
           watchGroups: [...panel.querySelectorAll('[data-group]:checked')].map(x => ({ id: x.dataset.group, name: x.dataset.name })),
-          keywords: v('keywords'), myName: v('myName'), waitHours: Number(v('waitHours')), prepMinutes: Number(v('prepMinutes')), maxPerHour: Number(v('maxPerHour')),
+          keywords: v('keywords'), waitHours: Number(v('waitHours')), prepMinutes: Number(v('prepMinutes')), maxPerHour: Number(v('maxPerHour')),
           briefTime: v('briefTime'), summaryTime: v('summaryTime'), refreshMinutes: Number(v('refreshMinutes')),
           chips: s.chips.filter((_, i) => panel.querySelector(`[data-chip="${i}"]`)?.checked !== false),
         });

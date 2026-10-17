@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src 'self' file:; style-src 'self'; script-src 'self'">
+<title>AI Hub 桌宠菜单</title>
+<link rel="stylesheet" href="pet-menu.css">
+</head>
+<body>
+  <div id="card" class="card" role="menu" aria-label="桌宠菜单">
+    <header class="head">
+      <img id="avatar" class="avatar" alt="">
+      <div class="who"><b id="name"></b><span id="status"></span></div>
+    </header>
+    <div class="label">让助理帮我</div>
+    <div id="actions" class="list"></div>
+    <div class="sep"></div>
+    <div class="row-title">说话</div>
+    <div id="modes" class="seg" role="radiogroup" aria-label="说话频率"></div>
+    <button type="button" class="item toggle" id="quiet-hour" role="menuitemcheckbox"><span class="ico" data-i="moon"></span><span class="txt">安静一小时</span><span class="sw"></span></button>
+    <button type="button" class="item toggle" id="silent-today" role="menuitemcheckbox"><span class="ico" data-i="mute"></span><span class="txt">今天别说话</span><span class="sw"></span></button>
+    <div class="sep"></div>
+    <div class="row-title">形象</div>
+    <div id="roles" class="roles"></div>
+    <div class="sep"></div>
+    <button type="button" class="item" id="open-settings" role="menuitem"><span class="ico" data-i="gear"></span><span class="txt">桌宠设置…</span></button>
+    <button type="button" class="item quiet" id="hide-pet" role="menuitem"><span class="ico" data-i="hide"></span><span class="txt">收起桌宠</span><span class="hint">设置里可再打开</span></button>
+  </div>
+  <script src="pet-menu.js"></script>
+</body>
+</html>

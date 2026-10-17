@@ -5,10 +5,14 @@ const path = require('node:path');
 const { execFile } = require('node:child_process');
 const { promisify } = require('node:util');
 const runFile = promisify(execFile);
-function desktopLayoutScript(moduleDir = __dirname, resourcesPath = process.resourcesPath) {
-  return resourcesPath && /\.asar(?:\.unpacked)?[\\/]/i.test(moduleDir)
-    ? path.join(resourcesPath, 'scripts', 'desktop-icon-layout.ps1')
-    : path.join(moduleDir, '..', 'scripts', 'desktop-icon-layout.ps1');
+// 打包后先找 app.asar.unpacked/scripts（package.json 的 asarUnpack），再找 resources/scripts（extraResources）。
+// 2026-10-17 公司版「排齐图标」报缺脚本：一键更新只替换 app.asar 和 app.asar.unpacked，resources/scripts 停在
+// 基线安装包的样子，基线之后才加的脚本永远到不了。增量包格式不能改（老客户端会拒收不认识的路径、升级失败），
+// 所以把脚本放进增量包本来就覆盖的解包目录。
+function desktopLayoutScript(moduleDir = __dirname, resourcesPath = process.resourcesPath, exists = fsSync.existsSync) {
+  if (!(resourcesPath && /\.asar(?:\.unpacked)?[\\/]/i.test(moduleDir))) return path.join(moduleDir, '..', 'scripts', 'desktop-icon-layout.ps1');
+  const unpacked = path.join(resourcesPath, 'app.asar.unpacked', 'scripts', 'desktop-icon-layout.ps1');
+  return exists(unpacked) ? unpacked : path.join(resourcesPath, 'scripts', 'desktop-icon-layout.ps1');
 }
 
 // PowerShell 的输出：脚本自己按 UTF-8 写；它启动失败时（如找不到脚本）是系统代码页（中文 Windows 为 GBK）。

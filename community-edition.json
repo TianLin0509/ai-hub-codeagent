@@ -36,8 +36,8 @@
   "releaseNotes": [
     "AI特战队功能增强"
   ],
-  "version": "2.1.8",
-  "upstreamVersion": "1.6.522",
-  "upstreamCommit": "9f1d841f2987d4a47ec4ca60985464e0391bec28",
+  "version": "2.1.9",
+  "upstreamVersion": "1.6.527",
+  "upstreamCommit": "65db52b337a97f97b28f28b9ed56474d6d92f0f1",
   "upstreamDirty": false
 }

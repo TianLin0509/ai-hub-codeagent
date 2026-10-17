@@ -28,6 +28,7 @@ function seal(link, to, message) {
 }
 
 function open(link, to, blob) {
+  if (typeof blob === 'string' && blob.startsWith(require('./image-message').PREFIX)) return require('./image-message').openImage(link, to, blob);
   const raw = Buffer.from(String(blob || ''), 'base64url');
   if (raw.length < 12 + 16 + 2) throw new Error('消息太短');
   const decipher = crypto.createDecipheriv('aes-256-gcm', link.key, raw.subarray(0, 12));

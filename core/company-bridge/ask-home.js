@@ -54,22 +54,23 @@ class AskHome {
   now() { return this.bridge.now(); }
 
   // ---- 本机接口：MCP 与命令行都经它调用，凭会话通行证认身份 ----
-  passFor(sessionId) { return createHmac('sha256', this.master).update('ask-home:' + String(sessionId)).digest('hex'); }
-  checkPass(sessionId, pass) {
+  passFor(sessionId, imagesOnly = false) { return createHmac('sha256', this.master).update((imagesOnly ? 'images-only:' : 'ask-home:') + String(sessionId)).digest('hex'); }
+  checkPass(sessionId, pass, imagesOnly = false) {
     if (!sessionId) return false;
-    const a = Buffer.from(String(pass || '')), b = Buffer.from(this.passFor(sessionId));
+    const a = Buffer.from(String(pass || '')), b = Buffer.from(this.passFor(sessionId, imagesOnly));
     return a.length === b.length && timingSafeEqual(a, b);
   }
   async start() {
     this.server = http.createServer((req, res) => {
       const sessionId = String(req.headers['x-hub-home-link-session'] || '');
       const pass = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '');
-      if (req.method !== 'POST' || req.url !== '/tool' || !this.checkPass(sessionId, pass)) { res.writeHead(403); res.end(); return; }
+      const imagesOnly = this.checkPass(sessionId, pass, true);
+      if (req.method !== 'POST' || req.url !== '/tool' || (!imagesOnly && !this.checkPass(sessionId, pass))) { res.writeHead(403); res.end(); return; }
       req.setEncoding('utf8');
       let body = '';
       req.on('data', chunk => { body += chunk; if (body.length > 400000) req.destroy(); });
       req.on('end', async () => {
-        try { const request = JSON.parse(body); const result = await this.invoke({ ...request, callerSessionId: sessionId }); res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify({ ok: true, result })); }
+        try { const request = JSON.parse(body); const result = await this.invoke({ ...request, callerSessionId: sessionId, imagesOnly }); res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify({ ok: true, result })); }
         catch (error) { res.writeHead(400, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ ok: false, error: error.message })); }
       });
     });
@@ -95,9 +96,11 @@ class AskHome {
     const base = String(kind || '').replace(/-resume$/, '');
     if (!require('../ai-kinds').isCodeAgentKind(base)) return null;
     // 公司助理会话读的是本人 WeLink 数据，只留在这台电脑：不挂「问家里」。
-    if (opts.purpose === 'company-bridge' || opts.purpose === 'company-assistant') return null;
-    const pass = this.passFor(id), runner = this.runner();
-    const env = { HUB_HOME_LINK_SESSION_ID: id, HUB_HOME_LINK_PASS: pass, HUB_HOME_LINK_ENDPOINT_FILE: this.endpointFile, HUB_ASK_HOME_CMD: this.cliFile };
+    if (opts.purpose === 'company-assistant') return null;
+    const imagesOnly = opts.purpose === 'company-bridge';
+    if (imagesOnly && !this.bridge.images?.available()) return null;
+    const pass = this.passFor(id, imagesOnly), runner = this.runner();
+    const env = { HUB_HOME_LINK_SESSION_ID: id, HUB_HOME_LINK_PASS: pass, HUB_HOME_LINK_ENDPOINT_FILE: this.endpointFile, HUB_ASK_HOME_CMD: this.cliFile, ...(imagesOnly ? { HUB_HOME_LINK_IMAGES_ONLY: '1' } : {}) };
     return { env, mcp: { name: 'home_bridge', command: runner.command, args: [runner.mcp], env: { ...env, ELECTRON_RUN_AS_NODE: '1' } } };
   }
 
@@ -130,6 +133,10 @@ class AskHome {
     if (!sessionId) throw new Error('无法识别发起求助的会话');
     if (!this.link.paired()) throw new Error('这台电脑还没和家里配对：先在「设置菜单 → AI特战队专用功能」里配对');
     if (!this.deps.getSession(sessionId) && !this.deps.getSessionMetadata?.(sessionId)) throw new Error('发起求助的会话已不在 Hub 里，回复无处投递');
+    if (request.name === 'send_image_home') return this.bridge.images.send(sessionId, args);
+    if (request.name === 'home_images') return { images: this.bridge.images.view(sessionId, args.thread) };
+    const meta = this.meta(sessionId);
+    if (request.imagesOnly || meta.purpose === 'company-bridge' || meta.opts?.purpose === 'company-bridge') throw new Error('这个查询会话只开放图片工具，不能再次向家里求助');
     if (request.name === 'ask_home') return this.ask(sessionId, args);
     if (request.name === 'followup_home') return this.followup(sessionId, args);
     if (request.name === 'home_thread') return this.view(sessionId, args);

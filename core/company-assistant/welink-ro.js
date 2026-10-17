@@ -5,7 +5,10 @@ const { run, resolveCli } = require('./welink');
 
 (async () => {
   try {
-    const result = await run(process.argv.slice(2), { cli: resolveCli({ configured: process.env.CLAUDE_HUB_WELINK_CONFIGURED || '' }), timeoutMs: 60000 });
+    const args = process.argv.slice(2);
+    // 例外只有 mail autodiscover：只写 welink-cli 自己的本地配置（按邮箱找 Exchange 服务器），助理兜底配置邮件时要用；扫码登录仍只能由用户在页面上点。
+    const autodiscover = args[0] === 'mail' && args[1] === 'autodiscover';
+    const result = await run(args, { cli: resolveCli({ configured: process.env.CLAUDE_HUB_WELINK_CONFIGURED || '' }), timeoutMs: autodiscover ? 120000 : 60000, allowSetup: autodiscover });
     process.stdout.write(result.stdout);
     if (result.stderr) process.stderr.write(result.stderr);
     process.exitCode = result.code || 0;

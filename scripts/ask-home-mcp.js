@@ -8,6 +8,13 @@ const schema = (properties, required = []) => ({ type: 'object', properties, req
 const string = { type: 'string' };
 const tools = [
   {
+    name: 'send_image_home',
+    description: '明确需要传图片时，将本机 PNG/JPEG/WebP 图片发送到已有的问答线程（H 或 Q 编号）。Hub 在本机压缩和加密，完整文字消息小于 60000 字节；默认保留分辨率，allow_resize=true 才允许缩小。只传路径，不把图片编码放入问题。返回待发送或已发送不等于家里已收到，可用 home_images 查校验和通知状态。',
+    annotations: { readOnlyHint: false, openWorldHint: true },
+    inputSchema: schema({ thread: string, path: { type: 'string', description: '本机图片绝对路径' }, round: { type: 'integer', minimum: 1 }, caption: string, allow_resize: { type: 'boolean', default: false } }, ['thread', 'path']),
+  },
+  { name: 'home_images', description: '查看属于当前会话的通道图片：大小、压缩方式、家里校验、通知状态和本机路径。', annotations: { readOnlyHint: true, openWorldHint: false }, inputSchema: schema({ thread: string }) },
+  {
     name: 'ask_home',
     description: '请家里 AI Hub 的 Claude（不可用时换 Codex）帮你拿主意。适合：拿不准的设计取舍或技术路线、反复排查仍找不到原因的问题、需要更强模型把关的关键判断；'
       + '用户让你「问一下家里」「让家里的 Claude 看看」时也用它。'
@@ -32,6 +39,7 @@ const tools = [
     inputSchema: schema({ thread: string }),
   },
 ];
+if (process.env.HUB_HOME_LINK_IMAGES_ONLY === '1') tools.splice(2);
 
 async function handle(request) {
   if (request.method === 'initialize') return { protocolVersion: request.params?.protocolVersion || '2024-11-05', capabilities: { tools: {} }, serverInfo: { name: 'home-bridge', version: '0.1.0' } };

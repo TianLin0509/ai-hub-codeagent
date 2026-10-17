@@ -174,6 +174,7 @@
 #sidebar-strip .strip-transfer > span { display: flex; align-items: baseline; gap: 2px; }
 #sidebar-strip .strip-transfer-label { color: var(--status-success); font-size: 10px; }
 #sidebar-strip .strip-upload .strip-transfer-label { color: var(--brand); }
+#sidebar-strip .strip-ip { color: var(--text-secondary, #6b7280); font-size: 10px; font-variant-numeric: tabular-nums; padding-left: 6px; border-left: 1px solid var(--border-subtle, rgba(0,0,0,.12)); user-select: text; -webkit-user-select: text; }
 #sidebar-strip .strip-transfer b { color: var(--fg-default); font-size: 11px; font-weight: 600; }
 #sidebar-strip .strip-transfer small { padding-left: 1px; color: var(--fg-muted); font-size: 9px; font-weight: 400; }
 .resource-process-tooltip { position: fixed; z-index: 10020; width: 310px; max-width: calc(100vw - 16px); padding: 14px; box-sizing: border-box; border: 1px solid var(--border-subtle); border-radius: 12px; background: var(--surface-overlay); color: var(--fg-default); box-shadow: var(--shadow-lg, 0 8px 28px #0004); pointer-events: none; font-size: 13px; }

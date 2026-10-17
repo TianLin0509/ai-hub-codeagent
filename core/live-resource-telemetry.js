@@ -81,7 +81,27 @@ function networkDelta(previous, current) {
   return { status: 'ok', downloadBps: received / seconds, uploadBps: sent / seconds, windowMs: current.at - previous.at };
 }
 
+// 本机 IPv4（2026-10-17 用户：底栏网速旁显示本机 IP，公司电脑通常是 10.x.x.x）。
+// 去掉回环、自动私有地址 169.254、代理软件 TUN 的假地址段 198.18/15，以及虚拟机 / WSL / Hyper-V 的虚拟网卡；
+// 排序：10 段 → 172.16–31 → 192.168 → 其他，第一个就是底栏显示的那个。
+const VIRTUAL_NIC = /vEthernet|WSL|Hyper-V|VMware|VirtualBox|Loopback|docker|Npcap|Bluetooth/i;
+function localAddresses(interfaces = {}) {
+  const rank = ip => (/^10\./.test(ip) ? 0 : /^172\.(1[6-9]|2\d|3[01])\./.test(ip) ? 1 : /^192\.168\./.test(ip) ? 2 : 3);
+  const out = [];
+  for (const [name, list] of Object.entries(interfaces || {})) {
+    if (VIRTUAL_NIC.test(name)) continue;
+    for (const a of list || []) {
+      const family = a && (a.family === 'IPv4' || a.family === 4);
+      if (!family || a.internal || !a.address || /^169\.254\.|^198\.1[89]\./.test(a.address)) continue;
+      out.push({ name, address: a.address });
+    }
+  }
+  return out.sort((x, y) => rank(x.address) - rank(y.address));
+}
+
 function createLiveResourceTelemetry(options = {}) {
+  const networkInterfaces = options.networkInterfaces || (() => os.networkInterfaces());
+  const addresses = () => { try { return localAddresses(networkInterfaces()); } catch { return []; } };
   const run = options.execFile || promisify(execFile);
   const spawnProcess = options.spawn || spawn;
   const now = options.now || Date.now;
@@ -160,12 +180,12 @@ function createLiveResourceTelemetry(options = {}) {
         if (!Array.isArray(value.adapters) || !Array.isArray(value.ids)
             || value.ids.some(id => !/^[a-f0-9-]+$/i.test(id))
             || value.adapters.some(row => !Number.isFinite(row.received) || !Number.isFinite(row.sent))) throw new Error('Invalid network sample');
-        networkCache = { ...networkDelta(baseline, value), sampledAt: now(), adapters: value.adapters.map(row => row.name), scope: 'physical' };
+        networkCache = { ...networkDelta(baseline, value), sampledAt: now(), adapters: value.adapters.map(row => row.name), scope: 'physical', ips: addresses() };
         if (!value.adapters.length) networkCache.status = 'disconnected';
         baseline = value;
       } catch (error) {
         baseline = null;
-        networkCache = { status: 'unavailable', sampledAt: now(), error: error.message };
+        networkCache = { status: 'unavailable', sampledAt: now(), error: error.message, ips: addresses() };
       }
       return networkCache;
     })().finally(() => { networkPending = null; });
@@ -189,4 +209,4 @@ function createLiveResourceTelemetry(options = {}) {
   return { sampleNetwork, sampleProcesses, dispose: () => stopSampler() };
 }
 
-module.exports = { createLiveResourceTelemetry, rankProcesses, networkDelta };
+module.exports = { createLiveResourceTelemetry, rankProcesses, networkDelta, localAddresses };

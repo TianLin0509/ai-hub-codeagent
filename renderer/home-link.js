@@ -6,7 +6,7 @@
 // 解锁时没有输入框、没有提示，菜单里只是多了这一项。
 (() => {
   const { ipcRenderer } = require('electron');
-  let dialog = null, data = null, editing = false, pool = null, poolTimer = null;
+  let dialog = null, data = null, editing = false, pool = null, poolTimer = null, imagePanel = null;
   let tab = (() => { try { return localStorage.getItem('hub.homeLink.tab') === 'pool' ? 'pool' : 'link'; } catch { return 'link'; } })();
   const esc = v => String(v ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const clock = at => at ? new Date(at).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false }) : '—';
@@ -103,7 +103,8 @@
         <div class="hl-muted">任务开始后自动每 10 秒检查；结束后保持 10 分钟，随后恢复空闲间隔。</div></div>
       ${parallelView(s, opt)}
       ${'allowRemoteAdmin' in s ? `<label>远程更新</label><div><select data-hl-f="allowRemoteAdmin"><option value="1"${s.allowRemoteAdmin ? ' selected' : ''}>允许家里远程更新 / 重启这台 Hub</option><option value="0"${s.allowRemoteAdmin ? '' : ' selected'}>不允许</option></select>
-        <div class="hl-muted">只更新到发行源上的正式版本；重启前等手上的任务答完（最长 30 分钟）。${data.hubAdmin?.history?.[0] ? '最近一次：' + esc(data.hubAdmin.history[0].note) + '（' + clock(data.hubAdmin.history[0].at) + '）' : ''}</div></div>` : ''}
+        ${'restartGraceMinutes' in s ? `· 重启前最多等<select data-hl-f="restartGraceMinutes">${opt([...new Set([0, 1, 3, 5, 10, 15, 30, Number(s.restartGraceMinutes)])].sort((a, b) => a - b).map(x => ({ id: String(x), label: x ? x + ' 分钟' : '不等' })), String(s.restartGraceMinutes))}</select>` : ''}
+        <div class="hl-muted">只更新到发行源上的正式版本；重启前先等手上的任务答完，到时还没答完的先记下、中断，重启后自动恢复会话发「继续」接着做，回执照常发回（家里带 force 时不等）。${data.hubAdmin?.history?.[0] ? '最近一次：' + esc(data.hubAdmin.history[0].note) + '（' + clock(data.hubAdmin.history[0].at) + '）' : ''}</div></div>` : ''}
       <label>网络放行</label><div><select data-hl-f="autoGate"><option value="0"${s.autoGate ? '' : ' selected'}>手动：被拦时提示我去点放行页</option><option value="1"${s.autoGate ? ' selected' : ''}>自动放行（我已知晓风险）</option></select>
         <div class="hl-muted">自动放行：公司网络弹出放行页时，Hub 在后台替你点「继续访问」并重新连接；连续 3 次没放行就停下提示你，30 分钟后再试。</div></div>
       <label>给 CodeAgent<br>的说明</label><div><textarea rows="8" data-hl-f="instructions">${esc(s.instructions)}</textarea>
@@ -221,6 +222,11 @@
       <div class="hl-sec hl-row"><span class="hl-muted" style="flex:1">配对于 ${clock(data.link.pairedAt)}。解除后需要对端重新生成配对码。</span><button class="hl-btn" data-hl="unpair">解除配对</button></div>` : ''}`;
     // 正在改设置时别把输入框刷掉
     if (keep) body.querySelector('[data-hl-sec="settings"]').replaceWith(keep);
+    if (paired) {
+      if (!imagePanel) imagePanel = require('./bridge-images').createBridgeImages({ document, ipcRenderer, refresh: load });
+      body.insertBefore(imagePanel.root, body.querySelector('[data-hl-sec="settings"]'));
+      imagePanel.update(data);
+    }
     dialog.querySelector('.hl-state').textContent = { none: '未配对', 'waiting-welcome': '等待确认', paired: data.settings.enabled ? '已接通 · 自动作答' : '已接通 · 作答已关' }[data.link.state] || data.link.state;
   }
   async function load() { data = await call('bridge:status'); render(); void loadPool(); }
@@ -272,7 +278,8 @@
             perAccountPeak: Number(field('perAccountPeak').value), perAccountIdle: Number(field('perAccountIdle').value),
             memFloorPct: Number(field('memFloorPct').value), busyHours: field('busyHours').value, usePool: field('usePool').value === '1' } : {}),
           ...(field('autoGate') ? { autoGate: field('autoGate').value === '1' } : {}),
-          ...(field('allowRemoteAdmin') ? { allowRemoteAdmin: field('allowRemoteAdmin').value === '1' } : {}) });
+          ...(field('allowRemoteAdmin') ? { allowRemoteAdmin: field('allowRemoteAdmin').value === '1' } : {}),
+          ...(field('restartGraceMinutes') ? { restartGraceMinutes: Number(field('restartGraceMinutes').value) } : {}) });
         editing = false; await load(); toast('AI特战队专用功能设置已保存');
       }
     } catch (error) { toast(error.message); }

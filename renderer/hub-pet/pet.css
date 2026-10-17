@@ -46,14 +46,23 @@ body.dock-right .bubble.out, body.dock-left .bubble.out { animation-name: bubble
 @keyframes dot-bump { from { transform: scale(.4); } to { transform: scale(1); } }
 body.dock-right .dot { left: 70px; }
 
-/* 展开面板：点气泡或小圆点后显示完整内容。 */
-.panel { position: absolute; left: 10px; right: 10px; bottom: 162px; max-height: 170px; box-sizing: border-box; background: #fff;
-  color: #1f2733; border-radius: 14px; padding: 10px 12px 10px 12px; box-shadow: 0 8px 24px rgba(20, 30, 50, .18), 0 0 0 1px rgba(20, 30, 50, .05);
-  display: flex; flex-direction: column; animation: bubble-in-docked 220ms cubic-bezier(.2, 1.3, .4, 1) both; }
+/* 展开面板：点气泡或小圆点后显示完整内容。2026-10-17 打磨：标题行 + 类别小标签 + 右对齐的「在助理里打开」。 */
+.panel { position: absolute; left: 10px; right: 10px; bottom: 162px; max-height: 172px; box-sizing: border-box; background: #fff;
+  color: #1f2733; border-radius: 12px; padding: 8px 4px 8px 12px; box-shadow: 0 10px 28px rgba(20, 30, 50, .18), 0 2px 6px rgba(20, 30, 50, .08), 0 0 0 1px rgba(20, 30, 50, .06);
+  display: flex; flex-direction: column; animation: bubble-in-docked 200ms cubic-bezier(.2, 1.2, .4, 1) both; }
 .panel[hidden] { display: none; }
-.panel-close { position: absolute; top: 4px; right: 6px; border: 0; background: none; font-size: 17px; color: #8a94a6; cursor: pointer; line-height: 1; padding: 2px 4px; }
-.panel-list { overflow-y: auto; padding-right: 10px; user-select: text; -webkit-user-select: text; }
-.panel-item + .panel-item { border-top: 1px solid #edf0f5; margin-top: 8px; padding-top: 8px; }
-.panel-item b { display: block; font-size: 13.5px; line-height: 1.5; }
-.panel-item p { margin: 3px 0 4px; font-size: 12.5px; line-height: 1.6; color: #445066; white-space: pre-wrap; }
-.panel-item button { border: 0; background: none; color: #3478f6; font-size: 12.5px; padding: 0; cursor: pointer; font-family: inherit; }
+.panel-head { display: flex; align-items: center; gap: 6px; padding: 0 6px 6px 0; border-bottom: 1px solid #edf0f5; margin-bottom: 6px; }
+.panel-head b { font-size: 12.5px; color: #4a5568; font-weight: 600; }
+.panel-head span { font-size: 11.5px; color: #8a94a6; }
+.panel-close { margin-left: auto; width: 22px; height: 22px; border: 0; border-radius: 50%; background: none; font-size: 16px; color: #8a94a6; cursor: pointer; line-height: 1; padding: 0; }
+.panel-close:hover { background: #f1f3f7; color: #1f2733; }
+.panel-list { overflow-y: auto; padding-right: 8px; user-select: text; -webkit-user-select: text; }
+.panel-list::-webkit-scrollbar { width: 6px; }
+.panel-list::-webkit-scrollbar-thumb { background: #d9dee7; border-radius: 3px; }
+.panel-item + .panel-item { border-top: 1px solid #f1f3f7; margin-top: 8px; padding-top: 8px; }
+.panel-item .kind, .bubble-kind { display: inline-block; font-size: 11px; line-height: 16px; padding: 0 6px; border-radius: 4px; background: #eef4ff; color: #2f6ad9; margin-right: 6px; vertical-align: 1px; font-weight: 500; }
+.panel-item b { font-size: 13px; line-height: 1.5; font-weight: 600; }
+.panel-item p { margin: 3px 0 4px; font-size: 12.5px; line-height: 1.6; color: #4a5568; white-space: pre-wrap;
+  display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }
+.panel-item .open { display: block; margin-left: auto; border: 0; background: none; color: #3478f6; font-size: 12.5px; padding: 2px 0; cursor: pointer; font-family: inherit; }
+.panel-item .open:hover { text-decoration: underline; }

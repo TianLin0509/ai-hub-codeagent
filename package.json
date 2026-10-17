@@ -1,6 +1,6 @@
 {
   "name": "ai-hub-community",
-  "version": "2.1.8",
+  "version": "2.1.9",
   "description": "Local multi-agent desktop workspace using your own AI accounts",
   "main": "main-bootstrap.js",
   "scripts": {
@@ -82,7 +82,9 @@
       "claude-wx.ico",
       "core/claude-fast-settings.json",
       "core/claude-subscription-fast-settings.json",
-      "core/claude-subscription-standard-settings.json"
+      "core/claude-subscription-standard-settings.json",
+      "scripts/desktop-icon-layout.ps1",
+      "scripts/desktop-icon-layout.cs"
     ],
     "extraResources": [
       {

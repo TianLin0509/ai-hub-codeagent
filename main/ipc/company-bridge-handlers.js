@@ -9,6 +9,11 @@ function registerCompanyBridgeIpc(ipcMain, service, { openGate } = {}) {
     'check-now': () => service.checkNow(),
     'set-settings': request => ({ ok: true, settings: service.setSettings(request || {}) }),
     unpair: () => service.unpair(),
+    'image-send': async request => {
+      const { t } = service.images.requireContext(String(request?.thread || ''), null, request?.round);
+      if (!t.sessionId) throw new Error('等所属会话建立后再发图片');
+      return { ok: true, image: await service.images.send(t.sessionId, request) };
+    },
     // 「打开 / 找回会话」：会话已关闭（不在当前 Hub 里）就先按原生身份恢复，再交给界面选中。
     'open-session': async request => {
       const id = String(request?.sessionId || '');

@@ -167,4 +167,4 @@ function transcriptHasRequest(meta, request, fsModule = fs) {
   return false;
 }
 
-module.exports = { readCompanyReceipt, receiptPromptFingerprint, transcriptHasRequest };
+module.exports = { readCompanyReceipt, receiptPromptFingerprint, transcriptHasRequest, BARE_CONTINUE };

@@ -343,6 +343,10 @@ function createNetworkEgressMonitor(options = {}) {
   const fsApi = options.fs || fs;
   const logger = options.logger || console;
   const getProxy = typeof options.getProxy === 'function' ? options.getProxy : () => '';
+  // Hub 没配代理时退到 Windows 系统代理（公司电脑的办公代理只配在系统设置里），以及 xGate 这类安全隧道是否开着。
+  // 见 core/windows-network-context.js（2026-10-17，公司真机回执 Q-1017-20）。
+  const getSystemProxy = typeof options.getSystemProxy === 'function' ? options.getSystemProxy : async () => '';
+  const getTunnel = typeof options.getTunnel === 'function' ? options.getTunnel : async () => null;
   const now = typeof options.now === 'function' ? options.now : () => Date.now();
   const cacheMs = options.cacheMs == null ? DEFAULT_CACHE_MS : Math.max(0, Number(options.cacheMs) || 0);
   const failureCacheMs = options.failureCacheMs == null
@@ -375,7 +379,11 @@ function createNetworkEgressMonitor(options = {}) {
 
   async function sample() {
     const checkedAt = now();
-    const rawProxy = String(getProxy() || '').trim();
+    const hubProxy = String(getProxy() || '').trim();
+    const systemProxy = hubProxy ? '' : String(await Promise.resolve().then(getSystemProxy).catch(() => '') || '').trim();
+    const rawProxy = hubProxy || systemProxy;
+    const proxySource = hubProxy ? 'hub' : systemProxy ? 'system' : '';
+    const tunnel = await Promise.resolve().then(getTunnel).catch(() => null);
     const proxyEndpoint = safeProxyEndpoint(rawProxy);
     if (proxyEndpoint !== lastProxyEndpoint) {
       lastProxyEndpoint = proxyEndpoint;
@@ -430,6 +438,8 @@ function createNetworkEgressMonitor(options = {}) {
     cached = {
       checkedAt,
       proxyEndpoint,
+      proxySource,
+      tunnel: tunnel || null,
       foreign,
       domestic,
       alert,

@@ -379,8 +379,14 @@ function _sessionWarningText(session) {
     const metricClass = value => value != null && value >= 90 ? ' strip-resource-high strip-resource-critical'
       : value != null && value >= 85 ? ' strip-resource-high' : '';
     const proxy = typeof getProxyInfo === 'function' ? getProxyInfo() : null;
-    const proxyShort = _shortProxy(proxy && proxy.proxy);
     const egress = proxy && proxy.egress;
+    // Hub 没配代理、但 Windows 系统设置里有代理时（公司办公代理），出口探测走系统代理，这里按「代理」显示；
+    // xGate（公司安全终端 SPES5）开着时标「xGate」。xGate 的节点配置是加密的，国家以实测出口为准。
+    const systemProxy = egress && egress.proxySource === 'system' ? egress.proxyEndpoint : '';
+    const proxyShort = _shortProxy(proxy && proxy.proxy) || _shortProxy(systemProxy);
+    const xgate = !!(egress && egress.tunnel && egress.tunnel.xgate);
+    const vpnNic = egress && egress.tunnel && egress.tunnel.vpn;
+    const routeLabel = vpnNic ? 'VPN' : xgate ? 'xGate' : systemProxy ? '代理' : proxyShort ? 'VPN' : '直连';
     const foreign = egress && egress.foreign;
     const domestic = egress && egress.domestic;
     const displayRoute = proxyShort ? foreign : domestic;
@@ -389,8 +395,10 @@ function _sessionWarningText(session) {
 
     const ackAttr = alert && alert.acknowledgeable ? ' data-egress-ack="true"' : '';
     const foreignTitle = [
-      proxyShort ? 'Claude / Codex 订阅、Gemini：经 VPN 代理' : '未配置 VPN，显示直连出口',
-      proxyShort ? `本地代理：${proxyShort}` : '本地代理：未配置',
+      vpnNic ? `VPN 已连上：${vpnNic.name}（${vpnNic.address}）` : '',
+      xgate ? 'xGate（公司安全终端 SPES5）正在运行；它选的节点读不到，下面是实测出口' : '',
+      systemProxy ? '公网经 Windows 系统代理' : proxyShort ? 'Claude / Codex 订阅、Gemini：经 VPN 代理' : '未配置 VPN，显示直连出口',
+      systemProxy ? `系统代理：${proxyShort}` : proxyShort ? `本地代理：${proxyShort}` : '本地代理：未配置',
       displayRoute && displayRoute.ok ? `出口地区：${displayRoute.locationLabel || '未知地区'}` : `状态：${displayRoute && displayRoute.error || '检测中'}`,
       clashDelay ? `Clash 节点健康检查：${clashDelay.nodeName} · ${clashDelay.delayMs} ms（${new Date(clashDelay.measuredAt).toLocaleString('zh-CN')}）；这是探测请求延时，不能代表下载速度或 AI 网页加载耗时` : '',
       alert ? `${alert.title || '节点异常'}：${alert.message || ''}` : '',
@@ -416,14 +424,18 @@ function _sessionWarningText(session) {
     const networkTitle = network?.status === 'ok'
       ? `本机物理网卡合计：${(network.adapters || []).join('、')}\n下行 ${(network.downloadBps / 1024).toFixed(1)} KB/s · 上行 ${(network.uploadBps / 1024).toFixed(1)} KB/s\n最近 ${(network.windowMs / 1000).toFixed(1)} 秒均值；含所有应用，非 VPN 专属流量；K/M/G 表示 KB/s、MB/s、GB/s，按 1024 换算`
       : network?.status === 'unavailable' ? '网速暂不可用' : network?.status === 'disconnected' ? '没有已连接的物理网卡' : '网速采样中';
-    const transfer = `<span class="strip-transfer" title="${escapeHtml(networkTitle)}" aria-label="${escapeHtml(networkTitle)}"><span class="strip-download"><span class="strip-transfer-label">↓</span><b>${rate(network?.downloadBps)}</b></span><span class="strip-upload"><span class="strip-transfer-label">↑</span><b>${rate(network?.uploadBps)}</b></span></span>`;
+    // 本机 IP（2026-10-17）：网速右边显示首选的一个（公司电脑通常是 10 段），悬停列出所有网卡的地址。
+    const ips = Array.isArray(network?.ips) ? network.ips : [];
+    const ipTitle = ips.length ? '本机 IP：\n' + ips.map(x => `${x.name}：${x.address}`).join('\n') : '';
+    const ipChip = ips.length ? `<span class="strip-ip" title="${escapeHtml(ipTitle)}" aria-label="${escapeHtml('本机 IP ' + ips[0].address)}">${escapeHtml(ips[0].address)}</span>` : '';
+    const transfer = `<span class="strip-transfer" title="${escapeHtml(networkTitle)}" aria-label="${escapeHtml(networkTitle)}"><span class="strip-download"><span class="strip-transfer-label">↓</span><b>${rate(network?.downloadBps)}</b></span><span class="strip-upload"><span class="strip-transfer-label">↑</span><b>${rate(network?.uploadBps)}</b></span>${ipChip}</span>`;
     const location = displayRoute?.ok
       ? [displayRoute.countryZh || displayRoute.country || '国家未知', displayRoute.cityZh || displayRoute.city || '城市未知'].join(' ')
       : '出口未知';
     const domesticLabel = !egress ? '国内检测中' : domestic?.ok ? '国内正常' : '国内异常';
     const markup =
       '<div class="strip-resources" title="点击 CPU / 内存查看进程，点击硬盘释放空间">' + metric('CPU', cpuPct) + gpuMetric + metric('内存', memoryPct) + diskMetric + '</div>' +
-      `<div class="strip-network"><button type="button" class="strip-route-row strip-route-foreign strip-proxy" title="${escapeHtml(foreignTitle)}"${ackAttr}><span class="strip-route-dot ${routeClass(displayRoute, proxyShort ? alert : null)}"></span><span>${proxyShort ? 'VPN' : '直连'}</span><span class="strip-location">${escapeHtml(location)}</span>${clashDelay ? `<span class="strip-delay">节点 ${clashDelay.delayMs} ms</span>` : ''}</button>` +
+      `<div class="strip-network"><button type="button" class="strip-route-row strip-route-foreign strip-proxy" title="${escapeHtml(foreignTitle)}"${ackAttr}><span class="strip-route-dot ${routeClass(displayRoute, proxyShort ? alert : null)}"></span><span>${routeLabel}</span><span class="strip-location">${escapeHtml(location)}</span>${clashDelay ? `<span class="strip-delay">节点 ${clashDelay.delayMs} ms</span>` : ''}</button>` +
       transfer + (showDomesticRoute() ? `<span class="strip-route-row strip-route-domestic" title="${escapeHtml(domesticTitle)}"><span class="strip-route-dot ${routeClass(domestic)}"></span>${domesticLabel}</span>` : '') + '</div>';
     if (stripEl._resourceMarkup === markup) return;
     stripEl._resourceMarkup = markup;

@@ -75,19 +75,33 @@ async function connectCDP(wsUrl) {
   return new CDPClient(ws);
 }
 
-// Helper: 找到 main window 的 page target 并连上。Hub 启动后第一个 page 就是 index.html。
-//   filter 可选：返回 boolean 决定是否选这个 target。
-async function connectFirstPage(hub, filter = (t) => t.type === 'page') {
+// Helper: 找到 main window 的 page target 并连上。
+//   filter 可选：返回 boolean 决定是否选这个 target（给了就严格按它选）。
+//   不给 filter：优先主窗口 renderer/index.html；Hub 启动后桌宠等小窗口可能排在 CDP 页面清单第一个
+//   （2026-10-17 发布分身报：连到了桌宠），主窗口一时没出现就稍等，最多等 waitMainMs 再退回第一个 page。
+const isMainWindow = t => t.type === 'page' && /renderer[\\/]index\.html/i.test(String(t.url || ''));
+async function listTargets(hub) {
   const http = require('http');
-  const targets = await new Promise((resolve) => {
+  return new Promise((resolve) => {
     http.get(`${hub.cdpHttpBase}/json/list`, (res) => {
       let buf = ''; res.on('data', c => buf += c);
       res.on('end', () => { try { resolve(JSON.parse(buf)); } catch { resolve([]); } });
     }).on('error', () => resolve([]));
   });
-  const t = targets.find(filter);
+}
+async function connectFirstPage(hub, filter = null, { waitMainMs = 5000 } = {}) {
+  let targets = await listTargets(hub);
+  let t = null;
+  if (typeof filter === 'function') t = targets.find(filter);
+  else {
+    for (const end = Date.now() + waitMainMs; !(t = targets.find(isMainWindow)) && Date.now() < end;) {
+      await new Promise(r => setTimeout(r, 250));
+      targets = await listTargets(hub);
+    }
+    t = t || targets.find(x => x.type === 'page');
+  }
   if (!t) throw new Error(`No matching CDP target for ${hub.label}`);
   return await connectCDP(t.webSocketDebuggerUrl);
 }
 
-module.exports = { CDPClient, connectCDP, connectFirstPage };
+module.exports = { CDPClient, connectCDP, connectFirstPage, isMainWindow };

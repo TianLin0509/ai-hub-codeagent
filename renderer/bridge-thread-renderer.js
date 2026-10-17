@@ -239,6 +239,20 @@ function recordsFromStatus(status) {
   return out;
 }
 
+// 公司 Hub 远程重启前被中断、重启后没能自动恢复的本机会话（core/company-bridge/hub-admin.js resumeIssues，2026-10-17）。
+function restartIssuesFromStatus(status) {
+  const out = {};
+  if (!status || status.ok === false || status.role !== 'company') return out;
+  for (const x of Array.isArray(status.hubAdmin?.resumeIssues) ? status.hubAdmin.resumeIssues : []) if (x && x.sessionId) out[x.sessionId] = x;
+  return out;
+}
+// 侧栏标记：「重启打断」，悬停看原因。通道轮次的失败走通道串自己的「没答上」，这里只有本机会话。
+function restartBadge(sessionId, issues) {
+  const x = sessionId && issues && issues[sessionId];
+  if (!x) return null;
+  return { chip: '重启打断', sub: '重启打断，未能自动恢复' + (x.note ? '：' + x.note : '') + '；打开会话看一眼，需要的话自己发「继续」', pin: '', state: 'failed', role: 'restart', thread: null };
+}
+
 // 会话列表与卡片网格上的「⇄」标签：按会话找它参与的最新一串。返回 { chip, sub, state, thread } 或 null。
 function sessionBadge(sessionId, records, now = Date.now()) {
   if (!sessionId) return null;
@@ -284,6 +298,7 @@ function composerText(action, threadId, role, peer, lastQuestion) {
 // 渲染层的接线：拉线程记录、bridge:changed 时刷新、合并调度、按钮。
 function createBridgeThreadController({ doc, scope = doc, deps, invoke = null, subscribe = null, toast = null, autoload = false, now = () => Date.now() }) {
   let records = {};
+  let restartIssues = {};
   let loaded = null;
   const pending = new Set();
   let timer = null;
@@ -303,7 +318,7 @@ function createBridgeThreadController({ doc, scope = doc, deps, invoke = null, s
   async function load() {
     if (!invoke) { loaded = Promise.resolve(); return; }
     loaded = (async () => {
-      try { records = recordsFromStatus(await invoke('bridge:status')); } catch { records = {}; }
+      try { const st = await invoke('bridge:status'); records = recordsFromStatus(st); restartIssues = restartIssuesFromStatus(st); } catch { records = {}; restartIssues = {}; }
       for (const c of containers()) pending.add(c);
       if (!timer) timer = setTimeout(flush, 0);
       try { doc.dispatchEvent(new (doc.defaultView?.CustomEvent || CustomEvent)('bridge-threads-updated')); } catch {}
@@ -356,8 +371,9 @@ function createBridgeThreadController({ doc, scope = doc, deps, invoke = null, s
       const sel = doc.defaultView.getSelection(); sel.removeAllRanges(); sel.addRange(range);
     } catch {}
   }
-  return { schedule, load, act, records: () => records, badge: (sessionId, at) => sessionBadge(sessionId, records, at || now()) };
+  return { schedule, load, act, records: () => records, badge: (sessionId, at) => restartBadge(sessionId, restartIssues) || sessionBadge(sessionId, records, at || now()) };
 }
 
 module.exports = { renderBridgeCard, applyBridgeThreads, threadBlock, messageBody, describeMessage, collectRows, recordsFromStatus, sessionBadge,
+  restartIssuesFromStatus, restartBadge,
   composerText, createBridgeThreadController };

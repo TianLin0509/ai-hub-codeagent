@@ -49,7 +49,9 @@ function mountSection({ document, window, ipcRenderer }) {
   function fill(data) {
     if (!data || !data.available) { section.hidden = true; return; }
     section.hidden = false;
-    if (!roleEl.options.length) for (const r of data.roles) roleEl.add(new window.Option(r.name, r.id));
+    // 只列这台电脑上装了的形象（其余在「助理 → 设置 → 桌宠」里下载）；下载后再打开要能看到新的。
+    roleEl.textContent = '';
+    for (const r of data.roles.filter(x => x.installed !== false)) roleEl.add(new window.Option(r.name, r.id));
     if (!modeEl.options.length) for (const m of data.modes) modeEl.add(new window.Option(m.label, m.id));
     enabledEl.checked = !!data.settings.enabled;
     roleEl.value = data.settings.role;

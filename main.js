@@ -504,8 +504,11 @@ if (process.env.CLAUDE_HUB_E2E === '1' && process.env.CLAUDE_HUB_EGRESS_FIXTURE)
     console.warn('[network-egress] invalid E2E fixture:', error && error.message);
   }
 }
+const windowsNetworkContext = require('./core/windows-network-context').createWindowsNetworkContext();
 const networkEgressMonitor = createNetworkEgressMonitor({
   getProxy: () => getHubConfig().proxy,
+  getSystemProxy: () => windowsNetworkContext.systemProxy(),
+  getTunnel: () => windowsNetworkContext.tunnel(),
   statePath: path.join(getHubDataDir(), 'network-egress-state.json'),
   ...(networkEgressProbe ? { probe: networkEgressProbe } : {}),
   logger: console,
@@ -1277,6 +1280,9 @@ function createWindow() {
         canShow: () => !keepIsolatedE2EWindowHidden() || process.env.CLAUDE_HUB_E2E_SHOW_PET === '1',
         debug: isIsolatedHub(),
         logger: console,
+        // 在线下载形象走 Electron 的网络栈（跟系统代理）；隔离测试用 AI_HUB_PET_SOURCES 指向本地源。
+        fetchImpl: (...args) => net.fetch(...args),
+        roleSources: process.env.AI_HUB_PET_SOURCES ? JSON.parse(process.env.AI_HUB_PET_SOURCES) : null,
       });
     } catch (error) { console.warn('[hub-pet] setup failed:', error && error.message); }
   }
@@ -2144,6 +2150,7 @@ try {
   const bridgeRole = require('./core/company-bridge/role').bridgeRole();
   const bridgeDeps = {
     dataDir: getHubDataDir(),
+    imageCodec: require('./core/company-bridge/image-codec').createImageCodec(),
     noTimer: process.env.CLAUDE_HUB_BRIDGE_TIMER === '0',
     createSession: (kind, opts) => sessionOperations.createSession({ kind, opts }),
     sendPrompt: (sessionId, text, clientSubmissionId) => promptOperations.submitPrompt(null, { sessionId, text, clientSubmissionId, waitForCliReady: true }),
@@ -2194,6 +2201,8 @@ try {
       currentVersion: require('./core/distribution').editionVersion || app.getVersion(),
       relaunch: () => { app.relaunch(); app.quit(); },
       listSessionIds: () => [...(sessionManager.sessions?.keys?.() || [])],
+      // 重启后恢复被中断的会话（hub-admin.js resumeInterrupted）：主窗口加载完、钩子服务在听之后再恢复，会话状态才能被界面和 hook 接住。
+      appReady: () => !!hookPort && !!mainWindow && !mainWindow.isDestroyed() && !mainWindow.webContents.isLoading(),
     });
     companyBridgeService.start();
     sessionManager.setExtraMcpProvider(({ kind, opts, id }) => companyBridgeService.sessionPlan({ kind, opts, id }));

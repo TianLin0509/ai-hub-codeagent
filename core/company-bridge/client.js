@@ -55,6 +55,7 @@ class BridgeClient {
   }
 
   post(channel, to, mid, blob) {
+    if (String(blob).startsWith(require('./image-message').PREFIX) && require('./image-message').envelopeSize(to, mid, blob) >= 60000) throw new BridgeError('image_too_large', '图片消息必须小于 60000 字节');
     return this.request(`/bridge/${channel}/msg`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ to, mid, blob }) });
   }
   fetchMessages(channel, to, after, who) {

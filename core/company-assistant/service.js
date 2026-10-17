@@ -16,7 +16,7 @@ const { noticeBus } = require('./notice-bus');
 const PURPOSE = 'company-assistant';
 const DEFAULT_SETTINGS = Object.freeze({
   enabled: true, briefTime: '08:20', summaryTime: '18:00', waitHours: 4, prepMinutes: 15, maxPerHour: 3, refreshMinutes: 10,
-  watchGroups: [], keywords: [], myName: '', workdays: [1, 2, 3, 4, 5], cliPath: '', email: '', chips: [],
+  watchGroups: [], keywords: [], myName: '', workdays: [1, 2, 3, 4, 5], cliPath: '', email: '', emailFrom: '', chips: [],
 });
 // 输入框上方的常用问题（设计稿 B）。fill=true 的只填进输入框，等补全再发。
 const BUILTIN_CHIPS = Object.freeze([
@@ -33,6 +33,7 @@ const INSTRUCTIONS = [
   '2. 先看 data/today.json（Hub 刚取到的今天的数据，每条带出处编号 sourceId），不够再用 welink-ro.cmd 查。',
   '3. 回答先写结论；提到具体的会、消息、邮件时，时间和主题照数据原样抄，并写清出处（谁、哪个群或哪场会、几点）。没查到就说没查到，不猜。',
   '4. 数据只留在这台电脑：不上传、不转发，不在当前目录以外写文件。',
+  '5. 邮件或日历报「Exchange server domain not found」时：Hub 通常已自动配好；还没好就先看 data/today.json 里 mailSetup.email，有邮箱就直接运行 welink-ro.cmd mail autodiscover --email <邮箱> 再重查，不问我；只有那里也没有邮箱时才问我一次，并提醒我可以在助理页「设置 → WeLink 与邮箱」里填。',
   '可用的查询：welink-ro.cmd im query-recent-conversation；im query-history-message --group-id <群号> 或 --user-account <账号> --query-count <1-100>；meeting query-list --type 1；meeting info --meeting-id <会议号>；calendar list --start YYYY-MM-DD --end YYYY-MM-DD --format json；mail list --is-read 0 --max 20；mail get；search person；contact detail。',
 ].join('\n');
 const JOB_TIMEOUT_MS = 12 * 60000;
@@ -78,7 +79,7 @@ class CompanyAssistant {
     if (Array.isArray(patch.workdays)) next.workdays = [...new Set(patch.workdays.map(Number).filter(d => Number.isInteger(d) && d >= 0 && d <= 6))];
     if ('myName' in patch) next.myName = String(patch.myName || '').trim().slice(0, 30);
     if ('cliPath' in patch) next.cliPath = String(patch.cliPath || '').trim();
-    if ('email' in patch) next.email = String(patch.email || '').trim().slice(0, 120);
+    if ('email' in patch) { next.email = String(patch.email || '').trim().slice(0, 120); next.emailFrom = patch.emailFrom === 'welink' ? 'welink' : 'settings'; }
     if (Array.isArray(patch.chips)) next.chips = patch.chips.filter(c => c && String(c.text || '').trim()).slice(0, 12).map(c => ({ label: String(c.label || c.text).trim().slice(0, 16), text: String(c.text).trim().slice(0, 2000) }));
     this.write('settings.json', next);
     this.changed();
@@ -165,8 +166,17 @@ class CompanyAssistant {
     if (snap.login.ok) {
       const meetingsRaw = await runJson('会议', ['meeting', 'query-list', '--type', '1']);
       if (meetingsRaw) snap.meetings = D.meetings(meetingsRaw);
-      const cal = await runJson('日程', ['calendar', 'list', '--start', day, '--end', day, '--format', 'json']);
-      if (cal) snap.calendar = D.calendarEvents(cal);
+      const queryCalendar = async () => {
+        const cal = await runJson('日程', ['calendar', 'list', '--start', day, '--end', day, '--format', 'json']);
+        if (cal) snap.calendar = D.calendarEvents(cal);
+      };
+      await queryCalendar();
+      // 邮件和日历都要先按邮箱找一次 Exchange 服务器（mail autodiscover）。不让用户先填：
+      // 先用设置里的邮箱，没有就从 WeLink 自己的账号信息（onebox user-info 的 email）读，配好后重查一次日程。
+      if (errors.some(e => e.calendar)) {
+        snap.mailSetup = await this.autoSetupMail(s);
+        if (snap.mailSetup.ok) { for (let i = errors.length - 1; i >= 0; i -= 1) if (errors[i].calendar) errors.splice(i, 1); await queryCalendar(); }
+      }
       snap.calendarNeedsSetup = errors.some(e => e.calendar);
       const convRaw = await runJson('最近会话', ['im', 'query-recent-conversation']);
       if (convRaw) snap.conversations = D.conversations(convRaw);
@@ -178,12 +188,40 @@ class CompanyAssistant {
       }
       const mailRaw = await runJson('未读邮件', ['mail', 'list', '--is-read', '0', '--max', '20']);
       if (mailRaw) snap.mails = D.mails(mailRaw);
+      snap.calendarNeedsSetup = errors.some(e => e.calendar);
     }
     this.write(`raw-${day}.json`, snap);
     // 给助理会话读的同一份数据（只留在本机）。
     try { fs.mkdirSync(path.join(this.workspace, 'data'), { recursive: true }); fs.writeFileSync(path.join(this.workspace, 'data', 'today.json'), JSON.stringify(snap, null, 1), 'utf8'); } catch { /* 下次再写 */ }
     this.pruneFiles();
     return snap;
+  }
+  // 本人邮箱：设置里填过的优先；否则读 WeLink 账号信息（onebox user-info，只读）。读到的存进设置，下次不再查。
+  async accountEmail(s = this.settings()) {
+    if (s.email) return { email: s.email, from: s.emailFrom || 'settings' };
+    try {
+      const r = await this.welink(['onebox', 'user-info']);
+      const info = welink.parseJson(r.stdout);
+      const found = [info, info?.data, info?.user].map(x => x && typeof x === 'object' ? x.email || x.mail : '').find(v => /^[^\s@]+@[^\s@]+$/.test(String(v || '')));
+      // 顺带补上「我的名字」（认群里 @我 用），用户填过的不动。
+      const name = [info, info?.data, info?.user].map(x => x && typeof x === 'object' ? x.name : '').find(v => typeof v === 'string' && v.trim());
+      if (name && !s.myName) this.setSettings({ myName: name.trim() });
+      if (found) { this.setSettings({ email: String(found), emailFrom: 'welink' }); return { email: String(found), from: 'welink' }; }
+    } catch { /* 读不到就请用户填 */ }
+    return { email: '', from: '' };
+  }
+  // 自动配置邮件和日历：同一个邮箱每天最多自动试一次，失败了不反复跑；用户在设置里点「配置」不受这个限制。
+  async autoSetupMail(s = this.settings()) {
+    const { email, from } = await this.accountEmail(s);
+    if (!email) return { ok: false, reason: 'no-email' };
+    const st = this.state(), day = D.dayKey(this.now()), key = `${email}|${day}`;
+    if (st.autoSetupTried === key) return { ok: false, reason: 'tried', email, from };
+    this.saveState({ autoSetupTried: key });
+    try {
+      const r = await this.welink(['mail', 'autodiscover', '--email', email], { allowSetup: true, timeoutMs: 120000 });
+      const text = r.stdout + r.stderr;
+      return { ok: r.code === 0 && !welink.calendarNeedsSetup(text), email, from, output: D.short(text, 200) };
+    } catch (error) { return { ok: false, reason: 'error', email, from, output: D.short(error.message, 200) }; }
   }
   pruneFiles() {
     try {
@@ -370,9 +408,9 @@ class CompanyAssistant {
     return this.loginFlow;
   }
   async setupCalendar(email) {
-    const addr = String(email || this.settings().email || '').trim();
+    const addr = String(email || this.settings().email || (await this.accountEmail()).email || '').trim();
     if (!/^[^\s@]+@[^\s@]+$/.test(addr)) throw new Error('请填写公司邮箱地址');
-    this.setSettings({ email: addr });
+    if (addr !== this.settings().email) this.setSettings({ email: addr });
     const r = await this.welink(['mail', 'autodiscover', '--email', addr], { allowSetup: true, timeoutMs: 120000 });
     const snap = await this.refresh({ force: true });
     return { ok: !snap.calendarNeedsSetup, output: D.short(r.stdout + r.stderr, 400), needsSetup: snap.calendarNeedsSetup };
@@ -383,7 +421,8 @@ class CompanyAssistant {
     const next = this.nextBriefAt(s, now);
     const sid = st.sessionId || null;
     return { ok: true, enabled: s.enabled, now, day, settings: s, chips: [...BUILTIN_CHIPS, ...s.chips.map(c => ({ ...c, custom: true }))],
-      cliFound: !!this.cli(), login: snap?.login || null, loginFlow: this.loginFlow, calendarNeedsSetup: !!snap?.calendarNeedsSetup,
+      cliFound: !!this.cli(), login: snap?.login || null, loginFlow: this.loginFlow, calendarNeedsSetup: !!snap?.calendarNeedsSetup, mailSetup: snap?.mailSetup || null,
+      counts: snap ? { meetings: (snap.meetings || []).length, calendar: (snap.calendar || []).length, messages: Object.values(snap.messages || {}).reduce((n, l) => n + l.length, 0), mails: (snap.mails || []).length } : null,
       refreshedAt: snap?.at || null, refreshing: !!this.refreshing, errors: snap?.errors || [], conversations: (snap?.conversations || []).slice(0, 60),
       brief: this.brief(day), nextBriefAt: next, chat: this.chat().slice(-60), job: this.job ? { type: this.job.type, sentAt: this.job.sentAt || null } : null,
       queued: this.queue.length, session: sid ? { id: sid, open: !!this.deps.getSession(sid), busy: this.sessionBusy(sid) } : null,

@@ -61,7 +61,8 @@ const OLD_DEFAULTS = [V1_INSTRUCTIONS, V2_INSTRUCTIONS, V3_INSTRUCTIONS];
 const DEFAULT_SETTINGS = Object.freeze({ enabled: true, codeRoots: [], instructions: DEFAULT_INSTRUCTIONS, effort: 'high', maxParallel: 3, maxParallelIdle: 6,
   perAccountPeak: 3, perAccountIdle: 6, memFloorPct: 10, busyHours: care.DEFAULT_BUSY_HOURS, usePool: true, pollSeconds: 30, autoGate: false, parallelRev: 2,
   // 允许家里远程更新 / 重启这台 Hub（2026-10-17 用户：默认开）。
-  allowRemoteAdmin: true });
+  // restartGraceMinutes：远程重启前最多等手上的任务几分钟，到时先记下、中断，重启后自动接着做（2.1.9；0 = 立即，hub-admin.js）。
+  allowRemoteAdmin: true, restartGraceMinutes: 3 });
 const ACTIVE_POLL_MS = 10000;
 const FOLLOWUP_WINDOW_MS = 10 * 60000;
 const EFFORTS = ['low', 'medium', 'high', 'max'];
@@ -71,6 +72,8 @@ const MAX_CODE_RUN = 12;
 const MAX_CODE_TOTAL = 30;
 // 发出后会话停下、却一直没读到回答：判定没答上，告诉家里。
 const NO_ANSWER_MS = 10 * 60000;
+// 记录还在写时最多等多久（长仿真、全量编译）；过了照旧按「没答上」处理，避免永远挂着。
+const LONG_RUN_MS = 3 * 60 * 60000;
 // 发出后多久核实「提问真的写进了 CodeAgent 的记录」；刚发出这段时间里 hook 可能还没到，也按「在干活」占名额。
 const VERIFY_MS = 3 * 60000;
 const STARTUP_GRACE_MS = 3 * 60000;
@@ -165,6 +168,8 @@ function ensureOpenColumn(db, needsWork) {
 // ---- 线程状态：由各轮推导 ----
 // 轮次的阶段：queued（等派发）、running（已发进会话等回答）、replied、failed。
 function roundPhase(r) { return r.reply ? 'replied' : r.error ? 'failed' : r.sentAt ? 'running' : 'queued'; }
+// 在途轮次从什么时候算起：发出时间；远程重启后恢复会话、发了「继续」的，从恢复时间算（hub-admin.js）。
+function activeSince(r) { return Math.max(r.sentAt || 0, r.resumedAt || 0); }
 function deriveState(t) {
   if (t.state === 'cancelled') return 'cancelled';
   const phases = t.rounds.map(roundPhase);
@@ -182,6 +187,7 @@ class CompanyBridge {
     this.link = new BridgeLink({ side: 'company', store: this.store, fetchImpl: deps.fetchImpl, now: () => this.now() });
     this.busy = null; this.advanceBusy = null; this.deliverBusy = null; this.timer = null; this.nextPullAt = 0; this.lastPullAt = 0;
     this.askHome = new AskHome({ bridge: this, deps });
+    this.images = new (require('./images').BridgeImages)(this);
     this.hubAdmin = new HubAdmin({ bridge: this, deps });
     this.gatePass = new GatePasser({ open: url => deps.openHiddenGate(url), logDir: path.join(deps.dataDir, 'logs'), now: () => this.now(),
       notify: (title, text) => this.notify(title, text) });
@@ -221,6 +227,7 @@ class CompanyBridge {
     int('perAccountPeak', 1, 8, '每个账号忙时同时处理的问题数');
     int('perAccountIdle', 1, 12, '每个账号闲时同时处理的问题数');
     int('memFloorPct', 5, 50, '内存保底百分比');
+    int('restartGraceMinutes', 0, 30, '远程重启前最多等待的分钟数');
     if ('busyHours' in patch) { const spec = String(patch.busyHours || '').trim(); if (spec && !care.parseHours(spec).length) throw new Error('忙时格式如 08:30-12:00,13:30-17:30'); next.busyHours = spec || care.DEFAULT_BUSY_HOURS; }
     if ('usePool' in patch) next.usePool = patch.usePool === true;
     if ('pollSeconds' in patch) { const n = Number(patch.pollSeconds); if (!Number.isInteger(n) || n < 10 || n > 600) throw new Error('检查间隔只能是 10–600 秒'); next.pollSeconds = n; }
@@ -292,12 +299,15 @@ class CompanyBridge {
       if (!this.advanceBusy) this.advanceBusy = this.advance().finally(() => { this.advanceBusy = null; });
       await this.advanceBusy;
     }
-    // 远程更新 / 重启：等到安全时机就重启（hub-admin.js）。
-    if (this.link.paired()) { try { await this.hubAdmin.advance(); } catch (e) { console.warn('[company-bridge] hub-admin', e.message); } }
+    // 远程更新 / 重启：等到安全时机就重启、重启没成的看门狗、配对变了作废（hub-admin.js）。不看配对：解除配对时等待中的指令要作废。
+    try { await this.hubAdmin.advance(); } catch (e) { console.warn('[company-bridge] hub-admin', e.message); }
+    // 重启前被中断的会话：恢复并发一句「继续」（和配对无关，本机会话也在里面）。
+    try { await this.hubAdmin.resumeInterrupted(); } catch (e) { console.warn('[company-bridge] hub-admin resume', e.message); }
     // 家里对 ask_home 的回复：和「自动作答」开关无关，配对了就送。
     if (this.link.paired()) {
       if (!this.deliverBusy) this.deliverBusy = this.askHome.deliver().finally(() => { this.deliverBusy = null; });
       await this.deliverBusy;
+      await this.images.tick();
     }
   }
   // 通道被放行页拦着、且开了自动放行：在看不见的窗口里点一次放行，点到了立即重试连接。
@@ -323,6 +333,7 @@ class CompanyBridge {
   cancelOpen(why) { this.askHome.cancelOpen(why); for (const t of this.openThreads()) this.saveThread({ ...t, state: 'cancelled', cancelNote: why }); }
 
   receive(message) {
+    if (['image-capabilities', 'image', 'image-ack'].includes(message.type)) return this.images.receive(message);
     if (message.type === 'welcome') {
       if (this.link.completeAsCompany(message)) this.notify('配对已完成', 'AI特战队专用功能已接通。');
       return;
@@ -365,6 +376,15 @@ class CompanyBridge {
     const s = id && this.deps.getSession(id);
     if (!s) return false;
     return !!this.deps.isAgentTurnActive?.(id) || require('../session-runtime-truth').sessionRuntimeIsActive(s) || s.status === 'running' || !!this.deps.hasPendingPrompt?.(id);
+  }
+  // 原生记录最近 NO_ANSWER_MS 内有写入：CodeAgent 还在干活。拿不到路径或读不到时间按「不新鲜」处理（沿用原判定）。
+  transcriptFresh(sessionId) {
+    const meta = this.deps.getSession(sessionId) || this.deps.getSessionMetadata?.(sessionId);
+    const file = meta && meta.transcriptPath;
+    if (!file) return false;
+    let ms = null;
+    try { ms = this.deps.transcriptMtime ? this.deps.transcriptMtime(file) : require('node:fs').statSync(file).mtimeMs; } catch { return false; }
+    return Number.isFinite(ms) && this.now() - ms < NO_ANSWER_MS;
   }
   lastFinal(sessionId) {
     const meta = this.deps.getSession(sessionId) || this.deps.getSessionMetadata?.(sessionId);
@@ -430,7 +450,8 @@ class CompanyBridge {
   roundWorking(t) {
     if (t.sessionId && this.sessionBusy(t.sessionId)) return true;
     const r = t.rounds.find(x => roundPhase(x) === 'running');
-    return !!r && this.now() - (r.sentAt || 0) < STARTUP_GRACE_MS;
+    // 重启前被中断、等重启后恢复的轮次（hub-admin.js resumeAfterRestart）也算在干活。
+    return !!r && (!!r.resumePending || this.now() - activeSince(r) < STARTUP_GRACE_MS);
   }
 
   // 答完的通道会话按追问规律与内存余量休眠（session-care.js）；休眠保留记录，追问时 dispatch 会按编号恢复。
@@ -538,7 +559,10 @@ class CompanyBridge {
   async collect(t) {
     const r = t.rounds.find(x => roundPhase(x) === 'running');
     if (!r) { this.saveThread(t); return; }
+    // 公司 Hub 远程重启前中断的轮次：等 hub-admin 恢复会话、发「继续」后再收（期间会话关着，不能按「会话已关闭」判失败）。
+    if (r.resumePending) return;
     if (this.sessionBusy(t.sessionId)) return;
+    const since = activeSince(r);
     const final = this.lastFinal(t.sessionId);
     // 发出结果未知、3 分钟后会话停着而原生记录文件都还没有：CodeAgent 确实没收到，重发一次（不会重复）。
     if (!final && r.sendUncertain && !r.resent && this.now() - r.sentAt > 3 * 60000) {
@@ -563,8 +587,12 @@ class CompanyBridge {
           return this.failRound(t, r, '提问没能送进公司的 CodeAgent（重发一次后它的记录里仍没有这条提问）；可在「AI特战队专用功能」里点重试，或追问重发');
         }
       }
-      if (this.now() - r.sentAt > NO_ANSWER_MS && !this.deps.getSession(t.sessionId)) return this.failRound(t, r, '会话已关闭，没有读到回答');
-      if (this.now() - r.sentAt > NO_ANSWER_MS * 3) return this.failRound(t, r, '会话停下了，但一直没读到回答');
+      // CodeAgent 的原生记录还在写就是还在干活（长时间的编译、仿真）：会话表里查不到、或停摆超过 30 分钟都先别判失败，
+      // 最多等 LONG_RUN_MS（2026-10-17 Q-1017-17/21：跑 AirView 的会话还在运行，10 分钟就被判成「会话已关闭」）。
+      if (this.now() - r.sentAt < LONG_RUN_MS && this.transcriptFresh(t.sessionId)) return;
+      // 远程重启后恢复、发了「继续」的轮次从恢复时间算（activeSince）。
+      if (this.now() - since > NO_ANSWER_MS && !this.deps.getSession(t.sessionId)) return this.failRound(t, r, '会话已关闭，没有读到回答');
+      if (this.now() - since > NO_ANSWER_MS * 3) return this.failRound(t, r, '会话停下了，但一直没读到回答');
       return;
     }
     if (this.promptCheck(t, r) === 'hijacked') {
@@ -581,7 +609,7 @@ class CompanyBridge {
       catch (error) { receipt = { available: false, issue: '原生回执核对失败：' + error.message }; }
       if (!receipt?.available) {
         const issue = receipt?.issue || '本次请求的原生回执尚未核对';
-        if (this.now() - r.sentAt > NO_ANSWER_MS * 3) return this.failRound(t, r, issue);
+        if (this.now() - since > NO_ANSWER_MS * 3) return this.failRound(t, r, issue);
         if (r.receiptIssue !== issue) {
           this.patchRound(t, r.round, { receiptIssue: issue });
           this.notify('回执待核对', `${t.id}：${issue}；记录已保留，稍后会继续核对`, t.sessionId);
@@ -689,6 +717,7 @@ class CompanyBridge {
       nextPullAt: this.nextPullAt, now: this.now(), polling: this.polling(),
       threads: this.threads().map(t => ({ ...t, session: t.sessionId ? { open: !!this.deps.getSession(t.sessionId), busy: this.sessionBusy(t.sessionId) } : null })),
       askHome: this.askHome.status(),
+      images: this.images.status(),
       care: this.careState || null,
       hubAdmin: this.hubAdmin.status(),
     };

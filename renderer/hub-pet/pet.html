@@ -9,10 +9,10 @@
 <body>
   <div id="stage">
     <div id="panel" class="panel" data-hit="panel" hidden>
-      <button type="button" class="panel-close" id="panel-close" aria-label="关闭">×</button>
+      <div class="panel-head"><b>提醒</b><span id="panel-count"></span><button type="button" class="panel-close" id="panel-close" aria-label="关闭">×</button></div>
       <div class="panel-list" id="panel-list"></div>
     </div>
-    <div id="bubble" class="bubble" data-hit="bubble" hidden><span id="bubble-text"></span></div>
+    <div id="bubble" class="bubble" data-hit="bubble" hidden><span id="bubble-kind" class="bubble-kind" hidden></span><span id="bubble-text"></span></div>
     <button type="button" id="dot" class="dot" data-hit="dot" hidden aria-label="未读提醒"></button>
     <div id="shadow"></div>
     <div id="body" data-hit="pet">

@@ -1,7 +1,10 @@
 'use strict';
 // 桌宠动画用到的数学（渲染端与单测共用）。参数借鉴 WorkMate 的 PetMotion，按 Hub 的帧调度重新整理：
 // 呼吸频率 0.18+0.6·兴奋度 Hz，幅度 1.1%+1.0%·兴奋度，横向反向收缩一半多（体积守恒的感觉）；
-// 落地回弹是衰减正弦 −p·e^(−3.5t)·sin(2π·2.2t)，1.2 秒内收完；帧序列按时间插值，相邻两帧按小数部分叠加淡入。
+// 落地回弹是衰减正弦 −p·e^(−3.5t)·sin(2π·2.2t)，1.2 秒内收完。
+// 帧序列（2026-10-17 改）：按「播放单」逐帧硬切，不再把相邻两帧按小数部分叠加淡入——两张不同的画半透明叠在一起
+// 就是用户说的「残影」。片段的选法借鉴 WorkMate 的 AnimationPolicy：小动作只播 5 帧、停一下再倒放回来，
+// 打字只循环第一行身体不动的 5 帧，伸懒腰播到峰值停 420ms 再收势；被裁切的帧（manifest.clipped）不进播放单。
 (function (root) {
   const TAU = Math.PI * 2;
 
@@ -38,19 +41,44 @@
     return target + (current - target) * Math.pow(0.5, dtMs / halfLifeMs);
   }
 
-  // 帧序列按时间取帧：from→to（含），fps 帧/秒；loop 时循环，否则停在最后一帧。
-  // 返回 { a, b, mix, done }：画 a，再把 b 以 mix 的不透明度叠在上面。
-  function sequenceFrame(elapsedMs, seq) {
-    const count = Math.abs(seq.to - seq.from) + 1;
-    const dir = seq.to >= seq.from ? 1 : -1;
-    let pos = Math.max(0, elapsedMs) / 1000 * seq.fps;
-    let done = false;
-    if (seq.loop) pos = pos % count;
-    else if (pos >= count - 1) { pos = count - 1; done = true; }
-    const i = Math.floor(pos);
-    const mix = done ? 0 : pos - i;
-    const j = seq.loop ? (i + 1) % count : Math.min(count - 1, i + 1);
-    return { a: seq.from + dir * i, b: seq.from + dir * j, mix, done };
+  // 播放单：[{ f: 帧号, ms: 停留毫秒 }]。返回 elapsed 时刻该显示哪一帧；loop 时循环，否则停在最后一帧并标 done。
+  function playlistFrame(elapsedMs, list, loop) {
+    if (!list || !list.length) return { f: 0, index: 0, done: true };
+    const total = list.reduce((n, x) => n + x.ms, 0);
+    let t = Math.max(0, elapsedMs);
+    if (loop && total > 0) t %= total;
+    else if (t >= total) return { f: list[list.length - 1].f, index: list.length - 1, done: true };
+    for (let i = 0; i < list.length; i++) {
+      if (t < list[i].ms) return { f: list[i].f, index: i, done: false };
+      t -= list[i].ms;
+    }
+    return { f: list[list.length - 1].f, index: list.length - 1, done: !loop };
+  }
+
+  // 从 from 到 to（含两端，可倒序）的帧号，跳过被裁切的帧。
+  function frameRange(from, to, clipped = []) {
+    const out = [];
+    const dir = to >= from ? 1 : -1;
+    for (let f = from; dir > 0 ? f <= to : f >= to; f += dir) if (clipped.indexOf(f) < 0) out.push(f);
+    return out;
+  }
+
+  // 小动作：start 起往后 len 帧，最后一帧停 holdMs，再倒放回 start（WorkMate：175ms/帧，停 220ms）。
+  // 片段里有被裁切的帧就整段不用，返回 null。
+  function gesturePlaylist(start, len, clipped = [], msPerFrame = 175, holdMs = 220) {
+    const fwd = frameRange(start, start + len - 1, []);
+    if (fwd.some(f => clipped.indexOf(f) >= 0)) return null;
+    const list = fwd.map(f => ({ f, ms: msPerFrame }));
+    list[list.length - 1] = { f: fwd[fwd.length - 1], ms: msPerFrame + holdMs };
+    for (let i = fwd.length - 2; i >= 0; i--) list.push({ f: fwd[i], ms: msPerFrame });
+    return list;
+  }
+
+  // 来回循环：0,1,2,3,4,3,2,1（打字时只有爪子动，身体不跳）。
+  function pingPong(frames, msPerFrame) {
+    const list = frames.map(f => ({ f, ms: msPerFrame }));
+    for (let i = frames.length - 2; i >= 1; i--) list.push({ f: frames[i], ms: msPerFrame });
+    return list;
   }
 
   // 5×5 序列图里第 n 帧的 background-position（百分比）。
@@ -60,7 +88,7 @@
     return (col * 25) + '% ' + (row * 25) + '%';
   }
 
-  const api = { approach, breathStep, clamp, easeInOut, easeOutBack, easeOutCubic, hopAt, sequenceFrame, sheetPosition, squashAt };
+  const api = { approach, breathStep, clamp, easeInOut, easeOutBack, easeOutCubic, frameRange, gesturePlaylist, hopAt, pingPong, playlistFrame, sheetPosition, squashAt };
   if (typeof module === 'object' && module.exports) module.exports = api;
   else root.HubPetMotion = api;
 })(typeof window !== 'undefined' ? window : globalThis);

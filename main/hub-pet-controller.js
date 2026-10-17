@@ -7,6 +7,7 @@ const path = require('path');
 const { ASSISTANT_ACTIONS, MODES, ROLES, SpeechQueue, chatterFor, decidePose, localDateKey, speakGate } = require('../core/hub-pet/state');
 const { allowedRange, clampTo, cubicOut, dockOf, releasePlan } = require('../core/hub-pet/motion');
 const { createSettingsStore } = require('../core/hub-pet/settings');
+const { DEFAULT_ROLE, createRolePackStore } = require('../core/hub-pet/role-packs');
 const { createFullscreenWatch } = require('../core/hub-pet/fullscreen-watch');
 
 const WIN_W = 280;
@@ -19,6 +20,7 @@ const POLL_MS = 4000;                    // 看助理忙不忙、有没有离开
 const DRAG_TICK_MS = 16;
 const CLICK_SLOP = 4;
 const MODE_LABELS = { lively: '活泼', gentle: '温和', quiet: '安静' };
+const MODE_HINTS = { lively: '提醒之外，早上问候、久坐提醒', gentle: '只说助理的提醒', quiet: '不说话，只亮小圆点' };
 
 const MODE_SET = new Set(MODES);
 
@@ -30,14 +32,18 @@ function createHubPetController({
   noticeBus, isAssistantBusy = () => false,
   canShow = () => true, debug = false, watchFullscreen = true,
   logger = console, now = () => Date.now(),
+  fetchImpl = globalThis.fetch, roleSources = null,
 } = {}) {
   // now 是「现在几点」（可在单测里固定）；窗口移动的动画计时一律用真实时钟 Date.now()。
   if (typeof BrowserWindow !== 'function') throw new Error('BrowserWindow is required');
-  const settings = createSettingsStore({ dataDir, company, logger });
+  // 形象：程序自带的（公司版只带小猫、企鹅）+ 在线下载到数据目录的（core/hub-pet/role-packs.js）。
+  const roles = createRolePackStore({ assetsDir, dataDir, logger, fetchImpl, ...(roleSources ? { sources: roleSources } : {}),
+    emit: (channel, payload) => { try { sendToRenderer?.(channel, payload); } catch (_) {} } });
+  const settings = createSettingsStore({ dataDir, company, logger, roleOk: id => roles.installed(id) });
   const speech = new SpeechQueue({ now });
   const chatterTrack = {};
-  let manifest = {};
-  try { manifest = JSON.parse(fs.readFileSync(path.join(assetsDir, 'manifest.json'), 'utf8')); } catch (error) { logger.warn?.('[hub-pet] manifest missing:', error.message); }
+  // 存的形象被删掉（或换到没带这只的版本）时用小猫顶上。
+  const currentRole = () => { const r = settings.get().role; return roles.installed(r) ? r : DEFAULT_ROLE; };
 
   let win = null;
   let started = false;
@@ -48,7 +54,8 @@ function createHubPetController({
   let drag = null;
   let lastSent = '';
   let pose = 'idle';
-  let fullscreen = false;
+  let fullscreen = false;        // 正在躲边（全屏且设置里开着「全屏时躲边」）
+  let screenFull = false;        // 前台程序是不是全屏（关了躲边也照样不说话）
   let peekFrom = null;           // 躲边前的位置，全屏结束后回去
   let dock = null;
   let pettedAt = 0;
@@ -56,7 +63,7 @@ function createHubPetController({
   let signals = { quotaLow: false };
   const overrides = {};          // 隔离测试注入（idleSec / busy / fullscreen / cursor）
 
-  const fsWatch = createFullscreenWatch({ logger, onChange: (value) => { if (overrides.fullscreen == null) setFullscreen(value); } });
+  const fsWatch = createFullscreenWatch({ logger, onChange: (value) => { if (overrides.fullscreen == null) setScreenFull(value); } });
 
   const enabled = () => available && !disposed && settings.get().enabled;
   const alive = () => !!(win && !win.isDestroyed());
@@ -140,7 +147,7 @@ function createHubPetController({
     try { return !!isAssistantBusy(); } catch (_) { return false; }
   }
   function gate(spokenAt) {
-    return speakGate(settings.get(), { now: clock(), pose, fullscreen }, spokenAt);
+    return speakGate(settings.get(), { now: clock(), pose, fullscreen: fullscreen || screenFull }, spokenAt);
   }
 
   function evaluate() {
@@ -156,10 +163,11 @@ function createHubPetController({
     const snap = speech.snapshot();
     pose = decidePose({ ...ctxBase, speaking: !!snap.bubble });
     const s = settings.get();
+    const role = currentRole();
     const state = {
-      pose, role: s.role, mode: s.mode, dock: fullscreen ? 'right' : dock, peeking: fullscreen,
+      pose, role, assetBase: roles.assetBase(role), mode: s.mode, dock: fullscreen ? 'right' : dock, peeking: fullscreen,
       bubble: snap.bubble ? { id: snap.bubble.id, title: snap.bubble.title, kind: snap.bubble.kind } : null,
-      dots: snap.dots, quiet: !gate([]).ok, sequences: (manifest[s.role] && manifest[s.role].sequences) || [],
+      dots: snap.dots, quiet: !gate([]).ok, sequences: (roles.meta(role) && roles.meta(role).sequences) || [], clipped: (roles.meta(role) && roles.meta(role).clipped) || {},
       night: pose === 'sleep',
     };
     const key = JSON.stringify(state);
@@ -181,6 +189,11 @@ function createHubPetController({
   }
 
   // ---------- 全屏躲边 ----------
+  function setScreenFull(value) {
+    screenFull = !!value;
+    setFullscreen(screenFull && settings.get().peekOnFullscreen !== false);
+    evaluate();
+  }
   function setFullscreen(value) {
     if (value === fullscreen) return;
     fullscreen = value;
@@ -296,27 +309,111 @@ function createHubPetController({
     evaluate();
   }
 
-  function popupMenu() {
-    if (!alive() || !Menu) return;
-    const s = settings.get();
-    const t = clock();
+  // ---------- 右键菜单（2026-10-17：自绘浮层，替换系统原生菜单） ----------
+  // 一个透明小窗，第一次右键时建好，之后只是显示/隐藏（打开快）。同样挂在隐藏宿主下，不抢 Hub 主窗口的标题。
+  // 点菜单外面（失焦）、按 Esc、或点了会离开的项目就收起；切换开关、换频率、换形象后菜单留着，结果当场可见。
+  const MENU_W = 260;
+  const menuHtml = path.join(path.dirname(htmlPath || ''), 'pet-menu.html');
+  const menuPreload = path.join(path.dirname(preloadPath || ''), 'pet-menu-preload.js');
+  let menuWin = null;
+  let menuReady = false;
+  let menuAnchor = null;
+  let menuSize = { width: MENU_W, height: 420 };
+  const menuAlive = () => !!(menuWin && !menuWin.isDestroyed());
+  const POSE_TEXT = { idle: '在旁边陪着你', typing: '助理正在干活', happy: '有话要跟你说', sleep: '在打盹', peek: '躲在屏幕边上', tired: '有点累了' };
+  const pad2 = n => String(n).padStart(2, '0');
+
+  function menuState() {
+    const s = settings.get(), t = clock();
+    const role = currentRole();
+    const list = roleList();
+    const me = list.find(r => r.id === role) || { id: role, name: (ROLES.find(r => r.id === role) || {}).name || '桌宠' };
+    const dots = speech.snapshot().dots;
     const quietHour = s.quietUntil > t;
-    const silentToday = s.silentDate === localDateKey(t);
-    const template = [
-      ...ASSISTANT_ACTIONS.map(a => ({ label: a.label, click: () => openAssistant({ action: a.action, prompt: a.prompt }) })),
-      { type: 'separator' },
-      { label: quietHour ? '安静一小时（点一下恢复）' : '安静一小时', type: 'checkbox', checked: quietHour, click: () => { settings.update({ quietUntil: quietHour ? 0 : t + 3600000 }); evaluate(); } },
-      { label: '今天别说话', type: 'checkbox', checked: silentToday, click: () => { settings.update({ silentDate: silentToday ? '' : localDateKey(t) }); evaluate(); } },
-      { label: '说话频率', submenu: MODES.map(m => ({ label: MODE_LABELS[m], type: 'radio', checked: s.mode === m, click: () => { settings.update({ mode: m }); evaluate(); } })) },
-      { label: '换角色', submenu: ROLES.map(r => ({ label: r.name, type: 'radio', checked: s.role === r.id, click: () => { settings.update({ role: r.id }); evaluate(); } })) },
-      { type: 'separator' },
-      { label: '收起桌宠（设置里可再打开）', click: () => setSettings({ enabled: false }) },
-    ];
-    try { Menu.buildFromTemplate(template).popup({ window: win }); } catch (error) { logger.warn?.('[hub-pet] menu', error.message); }
+    const status = [POSE_TEXT[pose] || '', dots ? `${dots} 条提醒没看` : '', s.mode === 'quiet' ? '只亮小圆点' : ''].filter(Boolean).join(' · ');
+    return {
+      role: { id: me.id, name: me.name, preview: me.preview || '' }, status, mode: s.mode,
+      modes: MODES.map(id => ({ id, label: MODE_LABELS[id], hint: MODE_HINTS[id] })),
+      quietHour, quietUntilText: quietHour ? `${pad2(new Date(s.quietUntil).getHours())}:${pad2(new Date(s.quietUntil).getMinutes())}` : '',
+      silentToday: s.silentDate === localDateKey(t),
+      actions: ASSISTANT_ACTIONS.map(a => ({ action: a.action, label: a.label })),
+      roles: list.filter(r => r.installed).map(r => ({ id: r.id, name: r.name, preview: r.preview || '' })),
+      moreRoles: list.some(r => !r.installed),
+    };
+  }
+  function sendMenuState() { if (menuAlive() && menuReady) menuWin.webContents.send('hub-pet-menu:state', menuState()); }
+
+  function ensureMenu() {
+    if (menuAlive()) return menuWin;
+    const parent = ensureOwner();
+    menuReady = false;
+    menuWin = new BrowserWindow({
+      ...(parent ? { parent } : {}),
+      width: MENU_W, height: menuSize.height, show: false, frame: false, transparent: true, backgroundColor: '#00000000',
+      resizable: false, movable: false, minimizable: false, maximizable: false, fullscreenable: false,
+      skipTaskbar: true, focusable: true, alwaysOnTop: true, hasShadow: false, title: 'AI Hub 桌宠菜单',
+      webPreferences: { preload: menuPreload, nodeIntegration: false, contextIsolation: true, sandbox: true },
+    });
+    try { menuWin.setAlwaysOnTop(true, 'pop-up-menu'); } catch (_) {}
+    menuWin.setMenuBarVisibility?.(false);
+    menuWin.webContents.setWindowOpenHandler?.(() => ({ action: 'deny' }));
+    menuWin.webContents.on('will-navigate', event => event.preventDefault());
+    menuWin.on('blur', () => hideMenu());
+    menuWin.on('closed', () => { menuWin = null; menuReady = false; });
+    Promise.resolve(menuWin.loadFile(menuHtml)).catch(error => logger.warn?.('[hub-pet] menu load failed:', error && error.message));
+    return menuWin;
+  }
+  function menuBounds() {
+    const c = menuAnchor || cursor();
+    const area = displayFor(c).workArea;
+    const w = MENU_W, h = Math.max(120, Math.min(area.height, menuSize.height));
+    const right = c.x + w > area.x + area.width;
+    const up = c.y + h > area.y + area.height;
+    // 卡片在窗口里左留 14px、上留 10px：让卡片的角正好落在鼠标处。
+    const x = right ? c.x - w + 14 : c.x - 14;
+    const y = up ? c.y - h + 18 : c.y - 10;
+    return { bounds: { x: Math.round(Math.max(area.x, Math.min(area.x + area.width - w, x))), y: Math.round(Math.max(area.y, Math.min(area.y + area.height - h, y))), width: w, height: Math.round(h) }, origin: { right, up } };
+  }
+  function popupMenu() {
+    if (!alive()) return;
+    menuAnchor = cursor();
+    ensureMenu();
+    const open = () => {
+      if (!menuAlive()) return;
+      sendMenuState();
+      const { bounds, origin } = menuBounds();
+      menuWin.setBounds(bounds, false);
+      menuWin.show();
+      menuWin.focus();
+      menuWin.webContents.send('hub-pet-menu:open', origin);
+    };
+    if (menuReady) open(); else menuWin.webContents.once('did-finish-load', () => { menuReady = true; open(); });
+  }
+  function hideMenu() { if (menuAlive() && menuWin.isVisible()) menuWin.hide(); }
+  function menuAct(a = {}) {
+    const t = clock();
+    if (a.type === 'action') {
+      const item = ASSISTANT_ACTIONS.find(x => x.action === a.action);
+      hideMenu();
+      if (item) openAssistant({ action: item.action, prompt: item.prompt });
+      return;
+    }
+    if (a.type === 'settings') { hideMenu(); openAssistant({ settingsTab: String(a.tab || 'pet') }); return; }
+    if (a.type === 'hide') { hideMenu(); setSettings({ enabled: false }); return; }
+    if (a.type === 'close') { hideMenu(); return; }
+    if (a.type === 'mode' && MODE_SET.has(a.mode)) settings.update({ mode: a.mode });
+    else if (a.type === 'quietHour') settings.update({ quietUntil: a.value ? t + 3600000 : 0 });
+    else if (a.type === 'silentToday') settings.update({ silentDate: a.value ? localDateKey(t) : '' });
+    else if (a.type === 'role' && typeof a.role === 'string' && roles.installed(a.role)) settings.update({ role: a.role });
+    else return;
+    evaluate();
+    sendMenuState();
+    try { sendToRenderer?.('hub-pet:settings-changed', publicSettings()); } catch (_) {}
   }
 
   // ---------- IPC ----------
   const fromPet = event => !!(event && alive() && event.sender === win.webContents);
+  const fromMenu = event => !!(event && menuAlive() && event.sender === menuWin.webContents);
   const fromMain = event => { const m = getMainWindow?.(); return !!(event && m && !m.isDestroyed?.() && event.sender === m.webContents); };
   const handlers = {
     'hub-pet:ready': (event) => { if (fromPet(event)) { lastSent = ''; evaluate(); } },
@@ -324,6 +421,15 @@ function createHubPetController({
     'hub-pet:press': (event, payload) => { if (fromPet(event)) onPress(payload && payload.target); },
     'hub-pet:release': (event) => { if (fromPet(event)) onRelease(); },
     'hub-pet:menu': (event) => { if (fromPet(event)) { if (drag) { drag = null; stopMove(); } popupMenu(); } },
+    'hub-pet-menu:ready': (event) => { if (fromMenu(event)) { menuReady = true; sendMenuState(); } },
+    'hub-pet-menu:size': (event, box) => {
+      if (!fromMenu(event) || !box) return;
+      const h = Math.round(Number(box.height) || 0);
+      if (h < 80 || h > 1200 || h === menuSize.height) return;
+      menuSize = { width: MENU_W, height: h };
+      if (menuWin.isVisible()) menuWin.setBounds(menuBounds().bounds, false);
+    },
+    'hub-pet-menu:act': (event, payload) => { if (fromMenu(event)) menuAct(payload || {}); },
     'hub-pet:open-notice': (event, item) => {
       if (!fromPet(event) || !item) return;
       openAssistant({ noticeId: String(item.id || '').slice(0, 160), sessionId: item.sessionId ? String(item.sessionId).slice(0, 160) : undefined });
@@ -332,16 +438,32 @@ function createHubPetController({
   };
   for (const [channel, fn] of Object.entries(handlers)) ipcMain.on(channel, fn);
 
-  function publicSettings() { return { available, settings: settings.get(), roles: ROLES, modes: MODES.map(id => ({ id, label: MODE_LABELS[id] })) }; }
+  // roles：[{ id, name, bundled, installed, available, update, bytes, preview, previewMain }]，「换形象」只列 installed 的。
+  function roleList() { return roles.listRoles(); }
+  function publicSettings() {
+    const s = settings.get(), t = clock();
+    return { available, settings: { ...s, role: currentRole() }, roles: roleList(), modes: MODES.map(id => ({ id, label: MODE_LABELS[id] })),
+      quietHour: s.quietUntil > t, silentToday: s.silentDate === localDateKey(t), running: alive() };
+  }
   ipcMain.handle('hub-pet:get-settings', (event) => (fromMain(event) ? publicSettings() : null));
   ipcMain.handle('hub-pet:set-settings', (event, patch) => (fromMain(event) ? (setSettings(patch), publicSettings()) : null));
+  // 形象下载：只在用户点「下载 / 检查新形象」时联网；进度经 hub-pet:roles-state 推给主窗口。
+  ipcMain.handle('hub-pet:roles', (event) => (fromMain(event) ? roles.snapshot() : null));
+  ipcMain.handle('hub-pet:roles-check', (event) => (fromMain(event) ? roles.check() : null));
+  ipcMain.handle('hub-pet:role-download', async (event, id) => {
+    if (!fromMain(event)) return null;
+    const snap = await roles.download(String(id || ''));
+    lastSent = '';
+    evaluate();
+    return snap;
+  });
   if (debug) {
     ipcMain.handle('hub-pet:debug', (event, req = {}) => {
       if (!fromMain(event)) return null;
       if (req.op === 'notice') return noticeBus?.publish(req.notice) || false;
       if (req.op === 'override') {
         for (const k of ['idleSec', 'busy', 'fullscreen', 'nowShift']) if (k in req) overrides[k] = req[k];
-        if ('fullscreen' in req) setFullscreen(req.fullscreen === true);
+        if ('fullscreen' in req) setScreenFull(req.fullscreen === true);
         evaluate();
         return true;
       }
@@ -368,9 +490,23 @@ function createHubPetController({
   function setSettings(patch = {}) {
     const clean = {};
     if (typeof patch.enabled === 'boolean') clean.enabled = patch.enabled;
-    if (ROLES.some(r => r.id === patch.role)) clean.role = patch.role;
+    if (typeof patch.role === 'string' && roles.installed(patch.role)) clean.role = patch.role;
     if (MODE_SET.has(patch.mode)) clean.mode = patch.mode;
+    if (typeof patch.peekOnFullscreen === 'boolean') clean.peekOnFullscreen = patch.peekOnFullscreen;
+    const t = clock();
+    if (typeof patch.quietHour === 'boolean') clean.quietUntil = patch.quietHour ? t + 3600000 : 0;
+    if (typeof patch.silentToday === 'boolean') clean.silentDate = patch.silentToday ? localDateKey(t) : '';
+    if (patch.resetPosition === true) clean.position = null;
     settings.update(clean);
+    if ('peekOnFullscreen' in clean) setFullscreen(screenFull && clean.peekOnFullscreen);
+    if (clean.position === null && alive() && !drag) {
+      // 「回到右下角」：滑回默认位置。
+      const to = initialPosition();
+      animateTo([{ from: currentPos(), to, durationMs: 420 }], () => {
+        dock = dockOf({ position: to, area: areaAt(to), size: { width: WIN_W, height: WIN_H }, inset: INSET });
+        send('hub-pet:motion', { phase: 'land', impact: 0.3 }); lastSent = ''; evaluate();
+      });
+    }
     if ('enabled' in clean) { if (clean.enabled) start(); else stop(); }
     else evaluate();
   }
@@ -397,9 +533,12 @@ function createHubPetController({
     drag = null;
     fsWatch.stop();
     fullscreen = false;
+    screenFull = false;
     peekFrom = null;
     if (alive()) win.destroy();
     win = null;
+    if (menuAlive()) menuWin.destroy();
+    menuWin = null; menuReady = false;
     if (owner && !owner.isDestroyed?.()) { try { owner.destroy(); } catch (_) {} }
     owner = null;
     lastSent = '';
@@ -407,14 +546,16 @@ function createHubPetController({
   function dispose() {
     if (disposed) return;
     stop();
+    roles.cancel();
     disposed = true;
     for (const [channel, fn] of Object.entries(handlers)) ipcMain.removeListener?.(channel, fn);
     ipcMain.removeHandler?.('hub-pet:get-settings');
     ipcMain.removeHandler?.('hub-pet:set-settings');
+    for (const ch of ['hub-pet:roles', 'hub-pet:roles-check', 'hub-pet:role-download']) ipcMain.removeHandler?.(ch);
     if (debug) ipcMain.removeHandler?.('hub-pet:debug');
   }
 
-  return { start, stop, dispose, setSignal, setSettings, getWindow: () => win, getSettings: () => settings.get(), _evaluate: evaluate, _speech: speech };
+  return { start, stop, dispose, setSignal, setSettings, roleList, getWindow: () => win, getSettings: () => settings.get(), _evaluate: evaluate, _speech: speech, _roles: roles };
 }
 
 module.exports = { BODY, INSET, WIN_H, WIN_W, createHubPetController };
