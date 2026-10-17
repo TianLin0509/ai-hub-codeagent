@@ -23,6 +23,8 @@ function registerCompanyBridgeIpc(ipcMain, service, { openGate } = {}) {
   if (role === 'home') {
     handlers['create-pairing'] = () => service.createPairing();
     handlers['send-pairing'] = () => service.sendPairingToInbox();
+    // 通道串里的「补收」按钮（2026-10-16）：和会话里 AI 调 recollect_company 是同一个动作，编号须属于这个会话。
+    handlers.recollect = request => service.recollect(String(request?.sessionId || ''), { thread: String(request?.thread || '') });
   } else {
     handlers.pair = request => service.pair(String(request?.code || ''));
     handlers.retry = request => service.retry(String(request?.id || ''));

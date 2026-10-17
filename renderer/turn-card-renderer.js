@@ -106,6 +106,22 @@ function createTurnCardRenderer(options = {}) {
     catch (error) { console.warn('[turn-card] onTurnPresentation failed:', error && error.message); }
   }
 
+  // 家里 ⇄ 公司通道串（renderer/bridge-thread-renderer.js）：线程记录走 bridge:status，没有 Electron 时只用卡片自身。
+  const bridgeIpc = options.bridgeIpc !== undefined ? options.bridgeIpc : (() => { try { return require('electron').ipcRenderer; } catch { return null; } })();
+  const bridgeDeps = {
+    escapeHtml: value => escapeHtml(value), renderMarkdown: text => renderMarkdownPreservingLocalPaths(text),
+    formatTime: ts => formatAbsoluteTime(ts), avatarSrc: (kind, model) => chatAvatarSrc(kind, { model }),
+    postProcess: slot => { if (typeof wrapPathLinksInElement === 'function') wrapPathLinksInElement(slot, { sessionId: slot.closest('.turn-card')?.dataset.sessionId }); },
+  };
+  const bridgeThreads = require('./bridge-thread-renderer').createBridgeThreadController({
+    doc, scope: root,
+    deps: bridgeDeps,
+    invoke: bridgeIpc ? (channel, request) => bridgeIpc.invoke(channel, request) : null,
+    subscribe: bridgeIpc && !options.root ? fn => bridgeIpc.on('bridge:changed', fn) : null, autoload: !options.root,
+    toast: (text, level) => { if (typeof win.showToast === 'function') win.showToast(text, level || 'info'); else console.info('[bridge-thread]', text); },
+  });
+  if (!options.root) win._bridgeThreads = bridgeThreads;
+
   function renderMarkdownPreservingLocalPaths(text) {
     const mathGuard = guardMarkdownMath(normalizeMarkdownPathBreaks(text));
     const guard = guardMarkdownLocalPaths(mathGuard.text);
@@ -517,6 +533,9 @@ function confirmCardResend({ text, sessionLabel }) {
 function renderTurnCard(turn) {
   // turn = { id, role: 'user'|'assistant', text, ts, model?, kind?, toolCalls? }
   const isUser = turn.role === 'user';
+  // 通道送进来的消息（回执、提问）不是用户说的话：渲染成通道卡，挂上后按编号聚合成通道串。
+  const bridgeCard = isUser ? require('./bridge-thread-renderer').renderBridgeCard(turn, bridgeDeps) : null;
+  if (bridgeCard) return bridgeCard;
   const isSimple = turn.simpleChat === true;
   const isProgress = !isUser && turn.phase === 'commentary';
   // inherited = 从父会话补进来的「分支前」对话（见 core/branch-transcript-inheritance.js）。
@@ -722,6 +741,12 @@ function postProcessLongTextFold(cardEl) {
 // 全局 click handler: 长文本展开/折叠
 listen('click', (e) => {
   if (!options.root && e.target.closest('[data-split-secondary]')) return;
+  const bridgeAction = e.target.closest('[data-bridge-action]');
+  if (bridgeAction) {
+    e.preventDefault(); e.stopPropagation();
+    void bridgeThreads.act(bridgeAction);
+    return;
+  }
   const btn = e.target.closest && e.target.closest('[data-action="body-expand"], [data-action="body-collapse"]');
   if (!btn) return;
   const card = btn.closest('.turn-card');
@@ -1087,6 +1112,7 @@ function mountSessionTurnCard(sessionId, turn, opts = {}) {
     state._sessionTurns.set(turn.id, turnForRender2);
     _turnRenderSigs.set(turn.id, nextSig);
     publishTurnPresentation(sessionId, turnForRender2);
+    if (patchedCard.classList?.contains?.('bridge-msg')) bridgeThreads.schedule(container);
     return patchedCard;
   }
 
@@ -1132,6 +1158,7 @@ function mountSessionTurnCard(sessionId, turn, opts = {}) {
   // 6-7. Shared post processing. Keeping this in one function ensures new
   // cards and in-place streaming patches receive identical behavior.
   _postProcessTurnCard(cardEl, sessionId);
+  if (cardEl.classList?.contains?.('bridge-msg')) bridgeThreads.schedule(container);
 
   // 8. register in _sessionTurns (turnId → turn) — keep spec1 Map shape
   // Use turnForRender (kind merged) so rerenderTurn won't lose kind on fold/unfold

@@ -53,7 +53,11 @@ const V3_INSTRUCTIONS = [
 // 只迁移未改过的默认说明；成员自己写的说明原样保留。
 const DEFAULT_INSTRUCTIONS = V3_INSTRUCTIONS.replace('替家里的 Agent 办事', '为已配对的授权 Agent 处理任务').replace('家里的问题里', '任务中');
 const OLD_DEFAULTS = [V1_INSTRUCTIONS, V2_INSTRUCTIONS, V3_INSTRUCTIONS];
-const DEFAULT_SETTINGS = Object.freeze({ enabled: true, codeRoots: [], instructions: DEFAULT_INSTRUCTIONS, effort: 'high', maxParallel: 2, pollSeconds: 30, autoGate: false });
+// maxParallel 是工作日忙时的上限；闲时（晚上、周末）放宽到 maxParallelIdle，并按可用账号和内存再收（session-care.js parallelCap）。
+// usePool：通道新开的会话走号池（自动挑进行中会话最少的号），号池没有可用的号时用个人账号。
+// 2026-10-17 用户：工作日忙时 3 个、每号忙时 3 / 闲时 6 个、内存保底 10%，都可在设置里调（parallelRev 2 起）。
+const DEFAULT_SETTINGS = Object.freeze({ enabled: true, codeRoots: [], instructions: DEFAULT_INSTRUCTIONS, effort: 'high', maxParallel: 3, maxParallelIdle: 6,
+  perAccountPeak: 3, perAccountIdle: 6, memFloorPct: 10, busyHours: care.DEFAULT_BUSY_HOURS, usePool: true, pollSeconds: 30, autoGate: false, parallelRev: 2 });
 const ACTIVE_POLL_MS = 10000;
 const FOLLOWUP_WINDOW_MS = 10 * 60000;
 const EFFORTS = ['low', 'medium', 'high', 'max'];
@@ -192,7 +196,9 @@ class CompanyBridge {
   settings() {
     const { model: _oldModel, ...s } = this.store.get('settings') || {}; // 旧版存过模型，现在不用
     const instructions = !s.instructions || OLD_DEFAULTS.includes(s.instructions.trim()) ? DEFAULT_INSTRUCTIONS : s.instructions;
-    return { ...DEFAULT_SETTINGS, ...s, instructions, codeRoots: Array.isArray(s.codeRoots) ? s.codeRoots : [] };
+    // 旧版设置页只能存「同时 N 个」且默认 2；没调过并行档位的（parallelRev 缺失且仍是旧默认 2）按新默认 3。
+    if (!s.parallelRev && Number(s.maxParallel) === 2) delete s.maxParallel;
+    return { ...DEFAULT_SETTINGS, ...s, instructions, codeRoots: Array.isArray(s.codeRoots) ? s.codeRoots : [], parallelRev: DEFAULT_SETTINGS.parallelRev };
   }
   setSettings(patch = {}) {
     const next = this.settings();
@@ -204,7 +210,14 @@ class CompanyBridge {
     }
     if ('instructions' in patch) { const t = String(patch.instructions || '').trim(); if (t.length > 8000) throw new Error('说明太长（上限 8000 字）'); next.instructions = t || DEFAULT_INSTRUCTIONS; }
     if ('effort' in patch) { if (!EFFORTS.includes(patch.effort)) throw new Error('思考深度只能是 low / medium / high / max'); next.effort = patch.effort; }
-    if ('maxParallel' in patch) { const n = Number(patch.maxParallel); if (!Number.isInteger(n) || n < 1 || n > 4) throw new Error('同时处理的问题数只能是 1–4'); next.maxParallel = n; }
+    const int = (key, lo, hi, label) => { if (!(key in patch)) return; const n = Number(patch[key]); if (!Number.isInteger(n) || n < lo || n > hi) throw new Error(`${label}只能是 ${lo}–${hi}`); next[key] = n; };
+    int('maxParallel', 1, 8, '工作日忙时同时处理的问题数');
+    int('maxParallelIdle', 1, 12, '闲时同时处理的问题数');
+    int('perAccountPeak', 1, 8, '每个账号忙时同时处理的问题数');
+    int('perAccountIdle', 1, 12, '每个账号闲时同时处理的问题数');
+    int('memFloorPct', 5, 50, '内存保底百分比');
+    if ('busyHours' in patch) { const spec = String(patch.busyHours || '').trim(); if (spec && !care.parseHours(spec).length) throw new Error('忙时格式如 08:30-12:00,13:30-17:30'); next.busyHours = spec || care.DEFAULT_BUSY_HOURS; }
+    if ('usePool' in patch) next.usePool = patch.usePool === true;
     if ('pollSeconds' in patch) { const n = Number(patch.pollSeconds); if (!Number.isInteger(n) || n < 10 || n > 600) throw new Error('检查间隔只能是 10–600 秒'); next.pollSeconds = n; }
     if ('autoGate' in patch) next.autoGate = patch.autoGate === true;
     this.store.set('settings', next);
@@ -358,17 +371,48 @@ class CompanyBridge {
     }
     // 名额只算真在干活的（2026-10-16）：会话在忙，或刚发出、hook 还没到。回答已写完只等核对、停在两轮之间的不占——
     // 以前它们照样占着，新问题排了一个半小时（Q-1016-06/07/08）。
-    let free = s.maxParallel - this.openThreads().filter(x => x.state === 'running' && this.roundWorking(x)).length;
+    const working = this.openThreads().filter(x => x.state === 'running' && this.roundWorking(x)).length;
+    const limit = this.parallelLimit(working);
+    let free = limit.cap - working;
     // 已有会话的线索（追问、改写）先派：不用新开会话、不多占内存；同类按到达先后。
     const queue = this.openThreads().filter(x => x.state === 'queued')
       .sort((a, b) => (Number(!!b.sessionId) - Number(!!a.sessionId)) || a.createdAt - b.createdAt);
+    let waiting = 0;
     for (const t of queue) {
-      if (free <= 0) break;
       if (t.sessionId && this.sessionBusy(t.sessionId)) continue; // 追问时原会话还在忙（例如改写上一轮），等它停下
-      await this.dispatch(t);
-      free -= 1;
+      if (free > 0) { await this.dispatch(t); free -= 1; continue; }
+      waiting += 1;
+      this.reportQueue(t, waiting, limit, working);
     }
     this.careSessions();
+  }
+  // 当前允许几个问题同时在跑（session-care.js parallelCap）。
+  parallelLimit(working) {
+    const s = this.settings();
+    let lanes = 1;
+    if (s.usePool) { try { lanes += Math.max(0, Number(this.deps.poolLanes?.()) || 0); } catch { /* 号池读不到就只算个人账号 */ } }
+    const limit = care.parallelCap({ date: new Date(this.now()), busyHours: s.busyHours, peakCap: s.maxParallel, idleCap: s.maxParallelIdle,
+      perAccountPeak: s.perAccountPeak, perAccountIdle: s.perAccountIdle, memFloor: s.memFloorPct / 100, lanes, working,
+      memory: this.deps.memory ? this.deps.memory() : care.memoryNow() });
+    this.parallelState = { ...limit, lanes, working, at: this.now() };
+    return limit;
+  }
+  // 设置页显示「现在最多同时几个、受什么限制」；算不出来时不挡状态页。
+  parallelLimitSafe() {
+    try {
+      const working = this.openThreads().filter(x => x.state === 'running' && this.roundWorking(x)).length;
+      const { cap, peak, limitedBy, timeCap, laneCap, memCap } = this.parallelLimit(working);
+      return { cap, peak, limitedBy, timeCap, laneCap, memCap, working };
+    } catch { return null; }
+  }
+  // 排队的问题告诉家里：排第几、为什么在等。只在内容变化时发。
+  reportQueue(t, position, limit, working) {
+    const r = t.rounds.find(x => roundPhase(x) === 'queued');
+    if (!r) return;
+    const note = `排队第 ${position} 个：${working} 个在跑，上限 ${limit.cap}（受${limit.limitedBy}限制）`;
+    if (r.queueNote === note) return;
+    this.patchRound(t, r.round, { queueNote: note });
+    void this.link.send('status', { thread: t.id, gen: t.gen, round: r.round, state: 'received', note }).catch(() => {});
   }
   roundWorking(t) {
     if (t.sessionId && this.sessionBusy(t.sessionId)) return true;
@@ -437,7 +481,15 @@ class CompanyBridge {
         const cwd = s.codeRoots.find(p => this.deps.isDirectory ? this.deps.isDirectory(p) : true) || this.deps.fallbackCwd;
         const opts = { id: sessionId, cwd, title: 'AI特战队 · ' + short(t.title, 22), purpose: PURPOSE, autonomous: true, noInheritCursor: true,
           effort: s.effort, addDirs: s.codeRoots.filter(p => p !== cwd) };
-        const created = await this.deps.createSession('codeagent', opts);
+        // 号池里有可用的号就走号池（自动挑进行中会话最少的号），并行的问题分散到不同账号；挑不出号时退回个人账号，问题不卡住。
+        let created = null;
+        let poolLanes = 0;
+        try { poolLanes = s.usePool ? Number(this.deps.poolLanes?.()) || 0 : 0; } catch { poolLanes = 0; }
+        if (poolLanes > 0) {
+          try { created = await this.deps.createSession('codeagent', { ...opts, codeagentAccount: 'pool' }); }
+          catch (error) { console.warn('[company-bridge] 号池开会话失败，改用个人账号：' + error.message); created = null; }
+        }
+        if (!created) created = await this.deps.createSession('codeagent', opts);
         if (!created || created.id !== sessionId) throw new Error('会话创建结果与预留编号不一致');
         // 开会话要十几秒：期间可能已解除配对。重新读一次，作废了就不再发问题。
         const latest = this.thread(t.id);
@@ -618,7 +670,7 @@ class CompanyBridge {
   status() {
     const c = this.link.config(), st = this.link.status();
     return {
-      ok: true, role: 'company', unlocked: this.unlocked(), settings: this.settings(), defaultInstructions: DEFAULT_INSTRUCTIONS,
+      ok: true, role: 'company', unlocked: this.unlocked(), settings: this.settings(), defaultInstructions: DEFAULT_INSTRUCTIONS, parallel: this.parallelLimitSafe(),
       link: { state: c.state || 'none', baseUrl: c.baseUrl || null, pairedAt: c.pairedAt || null, createdAt: c.createdAt || null, outbox: this.link.pendingOutbox() },
       net: { lastOkAt: st.lastOkAt || null, lastError: st.lastError || null, gate: st.gate || null, peerSeen: st.peerSeen || null, autoGate: this.gatePass.status() },
       nextPullAt: this.nextPullAt, now: this.now(), polling: this.polling(),

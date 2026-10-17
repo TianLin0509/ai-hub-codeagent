@@ -15,6 +15,7 @@ const MAX_KEEP_WARM_MS = 120 * 60000;
 const MIN_SAMPLES = 8;
 const LOW_FREE_RATIO = 0.20;
 const HIGH_FREE_RATIO = 0.30;
+const PARALLEL_MEM_FLOOR = 0.10; // 并行上限的内存保底（收会话的 20%/30% 是另一回事，见上面第 2 条）
 const SESSION_BYTES = 1.3 * 1024 ** 3;
 
 function quantile(values, q) {
@@ -74,7 +75,37 @@ function planRelease({ candidates, keepWarmMs, now, memory, sessionBytes = SESSI
   return out;
 }
 
+// ---------------------------------------------------------------- 并行上限（2026-10-16 用户：「白天算力紧张，晚上尤其周末几乎不受限」，
+// 并「把号池考虑到通道里，加速双向通信」）。三者取最小、至少 1：
+//   时段：工作日忙时用成员设的上限（默认 3）；其余时间放宽到闲时上限（默认 6）；
+//   账号：每个可用账号（个人 + 号池里能用的号）忙时最多 perAccountPeak 个（默认 3）、闲时 perAccountIdle 个（默认 6）；
+//   内存：再开一个会话后可用内存仍不低于 memFloor（默认 10%；每个 CodeAgent 会话约 1.3 GB）。
+//   2026-10-17 用户：忙时 3 个、内存保底 10%，这些数字都在设置里可调。
+const DEFAULT_BUSY_HOURS = '08:30-12:00,13:30-17:30';
+function parseHours(spec) {
+  return String(spec || '').split(/[,，\s]+/).map(part => part.match(/^(\d{1,2}):(\d{2})-(\d{1,2}):(\d{2})$/)).filter(Boolean)
+    .map(m => [Number(m[1]) * 60 + Number(m[2]), Number(m[3]) * 60 + Number(m[4])]).filter(([a, b]) => a < b && b <= 24 * 60);
+}
+function isPeak(date, spec = DEFAULT_BUSY_HOURS) {
+  const day = date.getDay();
+  if (day === 0 || day === 6) return false;
+  const minute = date.getHours() * 60 + date.getMinutes();
+  return parseHours(spec).some(([a, b]) => minute >= a && minute < b);
+}
+function parallelCap({ date, busyHours = DEFAULT_BUSY_HOURS, peakCap = 3, idleCap = 6, perAccountPeak = 3, perAccountIdle = 6, memFloor = PARALLEL_MEM_FLOOR,
+  lanes = 1, working = 0, memory = null, sessionBytes = SESSION_BYTES }) {
+  const peak = isPeak(date, busyHours);
+  const timeCap = peak ? peakCap : Math.max(peakCap, idleCap);
+  const laneCap = Math.max(1, lanes) * (peak ? perAccountPeak : perAccountIdle);
+  let memCap = Infinity;
+  if (memory && memory.total > 0) memCap = working + Math.max(0, Math.floor((memory.free - memFloor * memory.total) / sessionBytes));
+  const cap = Math.max(1, Math.min(timeCap, laneCap, memCap));
+  const limitedBy = cap === timeCap ? (peak ? '工作日忙时上限' : '闲时上限') : cap === laneCap ? `可用账号数（${lanes} 个）` : cap === memCap ? '内存余量' : '最少保留 1 个';
+  return { cap, peak, timeCap, laneCap, memCap: Number.isFinite(memCap) ? memCap : null, limitedBy };
+}
+
 module.exports = {
+  isPeak, parseHours, parallelCap, DEFAULT_BUSY_HOURS,
   learnKeepWarm, followupGaps, memoryNow, planRelease, quantile,
-  DEFAULT_KEEP_WARM_MS, MIN_KEEP_WARM_MS, MAX_KEEP_WARM_MS, LOW_FREE_RATIO, HIGH_FREE_RATIO, SESSION_BYTES,
+  DEFAULT_KEEP_WARM_MS, MIN_KEEP_WARM_MS, MAX_KEEP_WARM_MS, LOW_FREE_RATIO, HIGH_FREE_RATIO, PARALLEL_MEM_FLOOR, SESSION_BYTES,
 };

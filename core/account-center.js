@@ -160,18 +160,23 @@ class AccountCenter {
     const row=this.baseConnections().find(r=>r.id===id);if(!row)return null;
     return this.save(this.scope(row),{state:'login_required',message,source:'CLI 运行报告',credential:this.credentialSignature(row)});
   }
-  // Identity of a fixed connection: id, home directory and credential. A launch may reuse a
-  // login answer only while this stays the same.
+  // Stable storage scope: native credential refreshes must not move login admissions or history.
   scopeOf(id){const row=this.baseConnections().find(r=>r.id===id);return row?this.scope(row):null;}
+  // Pending checks also belong to the native credential files they started with.
+  checkIdentityOf(id){const row=this.baseConnections().find(r=>r.id===id);return row?this.scope(row)+':'+this.credentialSignature(row):null;}
   // An explicit check still resumes the tasks that were waiting for this login. Only the
   // background poll passes resume:false, so it can never restart web tasks on its own.
   async check(id,{quiet=false,resume=true}={}){
     const row=await this.row(id),key=this.scope(row),token=this.leaseToken(key),credential=this.credentialSignature(row);
-    const mayResume=resume!==false;
-    if(this.flights.has(key))return this.flights.get(key);
+    const mayResume=resume!==false,flightKey=key+':'+credential;
+    if(this.flights.has(flightKey))return this.flights.get(flightKey);
     const promise=(async()=>{
       try {
-        const raw=await this.adapter.check(row);const result=this.save(key,{...raw,credential});
+        const raw=await this.adapter.check(row);
+        // A login may finish while its previous probe is still running. Do not publish that
+        // stale proof or let it clear the current login window; check the current files.
+        if(this.credentialSignature(row)!==credential)return this.check(id,{quiet,resume});
+        const result=this.save(key,{...raw,credential});
         if(result.state==='signed_in')for(const batch of this.batches.values()){const item=batch.items.find(x=>x.id===id);if(item)Object.assign(item,{stage:'signed_in',message:'已有明确登录证据'});}
         if(result.state==='signed_in')this.clearLease(key,token);
         if(!quiet)this.log(row,result.state==='signed_in'?'检查完成：已有登录证据':result.state==='login_required'?'检查完成：需要登录':'检查完成：'+result.message);
@@ -182,9 +187,12 @@ class AccountCenter {
           }catch(e){result.message='登录已确认，但任务恢复未完成：'+e.message;result.recovery={started:0,errors:[{message:e.message}]};this.log(row,'登录已确认，任务恢复失败；可再次检查重试');}
         }
         return result;
-      }catch(e){this.save(key,{state:'unknown',message:'检查未完成；未将网络或工具错误判为未登录',source:'连接检查',credential});if(!quiet)this.log(row,'检查失败，请重试或打开原工具');throw new Error('检查失败：'+(e.code==='ENOENT'?'未找到所需工具':'工具未返回有效状态，请在原工具检查'));}
-      finally{this.flights.delete(key);}
-    })();this.flights.set(key,promise);return promise;
+      }catch(e){
+        if(this.credentialSignature(row)!==credential)return this.check(id,{quiet,resume});
+        this.save(key,{state:'unknown',message:'检查未完成；未将网络或工具错误判为未登录',source:'连接检查',credential});if(!quiet)this.log(row,'检查失败，请重试或打开原工具');throw new Error('检查失败：'+(e.code==='ENOENT'?'未找到所需工具':'工具未返回有效状态，请在原工具检查'));
+      }
+      finally{this.flights.delete(flightKey);}
+    })();this.flights.set(flightKey,promise);return promise;
   }
   // "完成后自动确认" has to hold even when nobody is looking at the account page: the panel's
   // own polling dies with the page. While any login window is open, keep taking snapshots —

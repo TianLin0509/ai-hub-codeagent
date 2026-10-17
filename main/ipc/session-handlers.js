@@ -48,6 +48,7 @@ function registerSessionIpc(ipcMain, deps) {
     getTerminalOutputBatchStats = () => null,
     getPersistedSessions = () => [],
     ensureLaunchAuth,
+    prepareLaunchAuth,
   } = deps;
   require('./codex-backstage-handlers').registerCodexBackstageIpc(ipcMain, { sessionManager });
   require('../../core/codex-fast-command').registerCodexSpeedIpc(ipcMain,{sessionManager,sendToRenderer});
@@ -157,6 +158,10 @@ function registerSessionIpc(ipcMain, deps) {
     if (ensureLaunchAuth) return ensureLaunchAuth(kind,opts).then(()=>createResolvedSession(kind,opts));
     return createResolvedSession(kind, opts);
   };
+  ipcMain.handle('session:prepare-launch-auth', async (_event, request = {}) => {
+    await prepareLaunchAuth?.(request.kind, { launchProfile: request.launchProfile });
+    return { ok: true };
+  });
   ipcMain.handle('create-session', (_e, arg) => createSession(arg));
 
   function createResolvedSession(kind, opts) {

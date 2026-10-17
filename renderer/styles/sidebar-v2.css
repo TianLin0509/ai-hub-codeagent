@@ -52,7 +52,7 @@
 #session-list .session-sec-header:hover .sec-action,
 #session-list .session-sec-header:focus-within .sec-action { opacity: 1; pointer-events: auto; }
 #session-list .session-item.slim {
-  position: relative; display: grid; grid-template-columns: 8px minmax(0, 1fr) auto auto;
+  position: relative; display: grid; grid-template-columns: minmax(20px, max-content) minmax(0, 1fr) auto;
   align-items: center; gap: 6px; height: 27px; min-height: 27px; max-height: 27px;
   box-sizing: border-box; margin: 0; padding: 0 6px; border: 0;
   border-radius: var(--radius-sm); box-shadow: none; background: transparent;
@@ -96,11 +96,11 @@
 #session-list .sl-dot.unread { background: var(--brand); }
 #session-list .session-item.slim.meeting { display: block; }
 #session-list .session-item.slim.meeting .sl-line1 {
-  display: grid; grid-template-columns: minmax(0, 1fr) auto auto;
+  display: grid; grid-template-columns: minmax(20px, max-content) minmax(0, 1fr) auto;
   height: 27px; align-items: center; gap: 6px;
 }
-#session-list .session-item.slim.meeting .sl-line1.with-arrow { grid-template-columns: auto minmax(0, 1fr) auto auto; }
-#session-list .sl-group-logos { display: flex; padding-left: 5px; }
+#session-list .session-item.slim.meeting .sl-line1.with-arrow { grid-template-columns: auto minmax(20px, max-content) minmax(0, 1fr) auto; }
+#session-list .sl-group-logos { display: flex; justify-self: center; margin-inline: 3.5px; padding: 0; }
 #session-list .sl-group-logos .ai-logo + .ai-logo { margin-left: -5px; box-shadow: 0 0 0 1px var(--surface-canvas); }
 #session-list .sl-group-progress { position: absolute; height: 2px; left: 20px; right: 6px; bottom: 0; background: var(--border-subtle); }
 #session-list .sl-group-progress i { display: block; height: 100%; background: var(--brand); }
@@ -125,7 +125,7 @@
 #session-list .session-item.slim.meeting.gc .mini-jump-text { overflow: hidden; text-overflow: ellipsis; }
 #session-list .session-item.slim.meeting.gc .sl-members-hint { display: block; }
 #session-list .session-item.slim.meeting.gc .mini-jump-status-dot { display: inline-block; }
-#session-list .session-item.slim.child { grid-template-columns: 14px minmax(0, 1fr) auto; padding-left: 20px; }
+#session-list .session-item.slim.child { grid-template-columns: minmax(20px, max-content) minmax(0, 1fr) auto; padding-left: 20px; }
 #session-list .session-archive-entry {
   display: flex; align-items: center; gap: 6px; width: 100%; height: 30px;
   margin-top: 8px; padding: 0 8px; border: 1px dashed var(--border-subtle);

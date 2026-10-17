@@ -1,0 +1,66 @@
+{
+ "01-cat": {
+  "poses": [
+   "idle",
+   "typing",
+   "happy",
+   "sleep"
+  ],
+  "sequences": [
+   "typing",
+   "idle-life",
+   "dock-right",
+   "stretch"
+  ]
+ },
+ "03-penguin": {
+  "poses": [
+   "idle",
+   "typing",
+   "happy",
+   "sleep"
+  ],
+  "sequences": [
+   "typing",
+   "idle-life",
+   "dock-right",
+   "stretch"
+  ]
+ },
+ "05-rabbit": {
+  "poses": [
+   "idle",
+   "typing",
+   "happy",
+   "sleep"
+  ],
+  "sequences": []
+ },
+ "07-shiba": {
+  "poses": [
+   "idle",
+   "typing",
+   "happy",
+   "sleep"
+  ],
+  "sequences": []
+ },
+ "09-hamster": {
+  "poses": [
+   "idle",
+   "typing",
+   "happy",
+   "sleep"
+  ],
+  "sequences": []
+ },
+ "11-cockatiel": {
+  "poses": [
+   "idle",
+   "typing",
+   "happy",
+   "sleep"
+  ],
+  "sequences": []
+ }
+}

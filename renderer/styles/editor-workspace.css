@@ -16,7 +16,8 @@
 #scene-rail.rail-editing .btn-shell-nav::after { content:''; position:absolute; top:6px; right:5px; width:6px; height:10px; background:radial-gradient(circle,var(--fg-faint) 1px,transparent 1px) 0 0/3px 4px; }
 :root body #scene-rail.rail-editing .nav-dragging { background:var(--brand-tint)!important; cursor:grabbing; outline-color:var(--brand); }
 .session-range-tabs { display:flex; align-items:center; gap:4px; flex:none; padding:4px 12px 8px; border-bottom:1px solid var(--border-subtle); }
-.session-range-tabs button { border:0; border-radius:6px; background:transparent; color:var(--fg-muted); padding:6px 14px; font:12px var(--font-sans); cursor:pointer; }
+.session-range-tabs button { border:0; border-radius:6px; background:transparent; color:var(--fg-muted); padding:6px 9px; font:12px var(--font-sans); cursor:pointer; white-space:nowrap; }
+#btn-sidebar-wireless { margin-left:auto; }
 .session-range-tabs button[aria-pressed='true'] { background:var(--brand-tint); color:var(--brand-text); font-weight:600; }
 .session-range-tabs button:hover { background:var(--surface-hover); }
 .sidebar-mark-read { display:block; margin:6px 4px; padding:5px 8px; border:0; border-radius:5px; background:transparent; color:var(--fg-muted); font:11px var(--font-sans); cursor:pointer; }

@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src 'self' file:; style-src 'self'; script-src 'self'">
+<title>AI Hub 桌宠</title>
+<link rel="stylesheet" href="pet.css">
+</head>
+<body>
+  <div id="stage">
+    <div id="panel" class="panel" data-hit="panel" hidden>
+      <button type="button" class="panel-close" id="panel-close" aria-label="关闭">×</button>
+      <div class="panel-list" id="panel-list"></div>
+    </div>
+    <div id="bubble" class="bubble" data-hit="bubble" hidden><span id="bubble-text"></span></div>
+    <button type="button" id="dot" class="dot" data-hit="dot" hidden aria-label="未读提醒"></button>
+    <div id="shadow"></div>
+    <div id="body" data-hit="pet">
+      <div id="layers"></div>
+    </div>
+  </div>
+  <script src="pet-motion.js"></script>
+  <script src="pet.js"></script>
+</body>
+</html>

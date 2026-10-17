@@ -5,23 +5,23 @@
 #btn-session-details[aria-pressed="true"] { color: var(--accent-blue); border-color: var(--accent-blue); background: rgba(var(--rgb-info), .08); }
 #btn-session-details:focus-visible { outline: 2px solid var(--accent-blue); outline-offset: 2px; }
 #session-list .session-item.slim.has-details { display: block; height: auto; max-height: none; padding-top: 5px; padding-bottom: 5px; }
-#session-list .session-item.slim.has-details > .sl-line1 { display: grid; grid-template-columns: 8px minmax(0, 1fr) auto auto; gap: 6px; min-height: 19px; }
+#session-list .session-item.slim.has-details > .sl-line1 { display: grid; grid-template-columns: minmax(20px, max-content) minmax(0, 1fr) auto; gap: 6px; min-height: 19px; }
 .sl-details { display: flex; align-items: center; gap: 7px; min-width: 0; margin: 3px 0 0 22px; color: var(--text-secondary); font-size: 10px; line-height: 17px; }
 .sl-usage { flex: 0 0 auto; padding: 0; border: none; border-radius: 2px; background: transparent; color: var(--text-primary); font: 10.5px/17px Consolas, "Microsoft YaHei", monospace; white-space: nowrap; cursor: help; }
 .sl-usage:hover { color: var(--accent-blue); }
 .sl-detail-model { flex: 1 1 auto; min-width: 20px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 9.5px; }
 .sl-detail-context { flex: 0 0 auto; white-space: nowrap; font-size: 9px; color: var(--text-muted); }
-#session-list .sidebar-group .session-item.slim.child { margin-left: 18px; padding-left: 8px; border-left: 1px solid var(--border-color); border-radius: 0 5px 5px 0; grid-template-columns: 8px minmax(0, 1fr) auto auto; }
+#session-list .sidebar-group .session-item.slim.child { margin-left: 18px; padding-left: 8px; border-left: 1px solid var(--border-color); border-radius: 0 5px 5px 0; grid-template-columns: minmax(20px, max-content) minmax(0, 1fr) auto; }
 .sidebar-group.compact-group:not(.hover-open):not(.has-active-member):not(:focus-within) > .sidebar-group-children { display: none; }
 #session-list .sidebar-group .session-item.slim.meeting.gc { padding-top: 0; padding-bottom: 0; }
-#session-list .sidebar-group .session-item.slim.meeting.gc .sl-line1:not(.with-arrow) { grid-template-columns: minmax(0, 1fr) auto auto; }
+#session-list .sidebar-group .session-item.slim.meeting.gc .sl-line1:not(.with-arrow) { grid-template-columns: minmax(20px, max-content) minmax(0, 1fr) auto; }
 #session-list .sidebar-group .session-item.slim.meeting.gc .sl-group-progress { display: none; }
 .sl-group-icon { width: 15px; height: 15px; stroke: var(--text-muted); stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; fill: none; }
 .sl-group-icon.idle { stroke: #3b82f6; }
 .sl-group-icon.run { stroke: var(--accent-green); }
 .sl-group-icon.wait { stroke: var(--accent-orange); }
 .sl-group-icon.error, .sl-group-icon.unread { stroke: var(--accent-red); }
-#session-list .session-item.slim.meeting.has-session-details .sl-line1.with-arrow { grid-template-columns: 10px minmax(0, 1fr) auto auto; }
+#session-list .session-item.slim.meeting.has-session-details .sl-line1.with-arrow { grid-template-columns: 10px minmax(20px, max-content) minmax(0, 1fr) auto; }
 #session-list .session-item.slim.meeting.has-session-details .sl-line1.with-arrow .expand-arrow { display: inline-block; transform: rotate(0); }
 #session-list .session-item.slim.meeting.has-session-details.expanded .sl-line1.with-arrow .expand-arrow { transform: rotate(90deg); }
 

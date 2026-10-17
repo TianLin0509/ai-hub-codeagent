@@ -75,6 +75,21 @@
     const mode = p.active ? '活跃检查' : '空闲检查';
     return `<div class="hl-muted hl-polling">${mode} · 每 ${esc(p.intervalSeconds)} 秒检查${p.active ? `；空闲时每 ${esc(data.settings.pollSeconds)} 秒检查` : ''}</div>`;
   }
+  // 并行档位（2026-10-17 用户：忙时 3 个、内存保底 10%，数字都可调）。三者取最小：时段上限、账号数×每号上限、内存保底。
+  function parallelView(s, opt) {
+    if (!('perAccountPeak' in s)) return '';
+    const num = (key, list, unit) => `<select data-hl-f="${key}">${opt([...new Set([...list, Number(s[key])])].sort((a, b) => a - b).map(x => ({ id: String(x), label: x + unit })), String(s[key]))}</select>`;
+    const p = data.parallel;
+    const now = p ? `现在${p.peak ? '是工作日忙时' : '是闲时'}，最多同时 ${p.cap} 个（${p.working} 个在跑，受${p.limitedBy}限制）` : '';
+    return `<label>同时处理</label><div><div class="hl-row">
+        工作日忙时 ${num('maxParallel', [1, 2, 3, 4, 5, 6, 8], ' 个')}
+        · 其余时间 ${num('maxParallelIdle', [2, 3, 4, 6, 8, 10, 12], ' 个')}
+        · 每个账号 忙时 ${num('perAccountPeak', [1, 2, 3, 4, 6, 8], ' 个')} / 闲时 ${num('perAccountIdle', [2, 3, 4, 6, 8, 10, 12], ' 个')}
+        · 内存保底 ${num('memFloorPct', [5, 10, 15, 20, 25, 30], '%')}</div>
+        <div class="hl-row">忙时时段 <input data-hl-f="busyHours" value="${esc(s.busyHours)}" style="width:220px" title="格式如 08:30-12:00,13:30-17:30；周末全天算闲时">
+        · 新会话<select data-hl-f="usePool"><option value="1"${s.usePool ? ' selected' : ''}>优先用号池</option><option value="0"${s.usePool ? '' : ' selected'}>只用个人账号</option></select></div>
+        <div class="hl-muted">实际上限取三者最小：时段上限、可用账号数 × 每号上限、再开一个会话后可用内存不低于保底（每个 CodeAgent 会话约 1.3 GB）。${esc(now)}</div></div>`;
+  }
   function settingsView() {
     const s = data.settings;
     const opt = (list, cur) => list.map(x => `<option value="${esc(x.id)}"${x.id === cur ? ' selected' : ''}>${esc(x.label)}</option>`).join('');
@@ -84,9 +99,9 @@
       <label>代码位置</label><div><textarea rows="3" data-hl-f="codeRoots" placeholder="每行一个目录，例如 D:\\code\\l2">${esc(s.codeRoots.join('\n'))}</textarea><div class="hl-muted">第一行作为 CodeAgent 会话的工作目录，其余目录一并开放读取。</div></div>
       <label>运行</label><div class="hl-row">模型用 CodeAgent 的默认 ·
         思考<select data-hl-f="effort">${opt(['low', 'medium', 'high', 'max'].map(x => ({ id: x, label: { low: '低', medium: '中', high: '高', max: '最高' }[x] })), s.effort)}</select>
-        同时<select data-hl-f="maxParallel">${opt([1, 2, 3, 4].map(x => ({ id: String(x), label: x + ' 个' })), String(s.maxParallel))}</select>
         空闲检查间隔<select data-hl-f="pollSeconds">${opt([...new Set([10, 15, 30, 60, 120, s.pollSeconds])].sort((a, b) => a - b).map(x => ({ id: String(x), label: x + ' 秒' })), String(s.pollSeconds))}</select>
         <div class="hl-muted">任务开始后自动每 10 秒检查；结束后保持 10 分钟，随后恢复空闲间隔。</div></div>
+      ${parallelView(s, opt)}
       <label>网络放行</label><div><select data-hl-f="autoGate"><option value="0"${s.autoGate ? '' : ' selected'}>手动：被拦时提示我去点放行页</option><option value="1"${s.autoGate ? ' selected' : ''}>自动放行（我已知晓风险）</option></select>
         <div class="hl-muted">自动放行：公司网络弹出放行页时，Hub 在后台替你点「继续访问」并重新连接；连续 3 次没放行就停下提示你，30 分钟后再试。</div></div>
       <label>给 CodeAgent<br>的说明</label><div><textarea rows="8" data-hl-f="instructions">${esc(s.instructions)}</textarea>
@@ -250,7 +265,10 @@
       else if (verb === 'reset-instructions') { field('instructions').value = data.defaultInstructions; editing = true; }
       else if (verb === 'save') {
         await call('bridge:set-settings', { enabled: field('enabled').value === '1', codeRoots: field('codeRoots').value, effort: field('effort').value,
-          maxParallel: Number(field('maxParallel').value), pollSeconds: Number(field('pollSeconds').value), instructions: field('instructions').value,
+          pollSeconds: Number(field('pollSeconds').value), instructions: field('instructions').value,
+          ...(field('perAccountPeak') ? { maxParallel: Number(field('maxParallel').value), maxParallelIdle: Number(field('maxParallelIdle').value),
+            perAccountPeak: Number(field('perAccountPeak').value), perAccountIdle: Number(field('perAccountIdle').value),
+            memFloorPct: Number(field('memFloorPct').value), busyHours: field('busyHours').value, usePool: field('usePool').value === '1' } : {}),
           ...(field('autoGate') ? { autoGate: field('autoGate').value === '1' } : {}) });
         editing = false; await load(); toast('AI特战队专用功能设置已保存');
       }

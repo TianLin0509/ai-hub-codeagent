@@ -32,4 +32,26 @@ function parseCodeAgentContext(lines) {
   return null;
 }
 
-module.exports = { parseCodeAgentContext };
+// 同一面板里的额度「Credit 2,477.1 (99.1%)」：剩余额度和剩余百分比（2026-10-16 公司真机 Q-1016-19）。
+// CodeAgent 没有查额度的命令，本地也不存剩余额度，界面上这一行是唯一来源。它显示的是「当前生效那一档」：
+// 白天读到 2,477.1 (99.1%) → 总额 2,500，是每日忙时额度；晚上读到 19,111.8 (95.6%) → 总额 20,000，是月度额度。
+// 所以用剩余量 ÷ 百分比反算总额，认出是哪一档；认不出就叫「当前额度」。
+const CREDIT_RE = /\bCredit\s+(\d{1,3}(?:,\d{3})*(?:\.\d+)?|\d+(?:\.\d+)?)\s*\((\d+(?:\.\d+)?)%\)/;
+const BUCKETS = [{ total: 2500, label: '今日忙时' }, { total: 20000, label: '月度' }];
+
+function parseCodeAgentCredit(lines) {
+  const rows = Array.isArray(lines) ? lines : String(lines || '').split(/\r?\n/);
+  for (let i = rows.length - 1; i >= 0; i -= 1) {
+    const m = CREDIT_RE.exec(String(rows[i] || ''));
+    if (!m) continue;
+    const remaining = Number(m[1].replace(/,/g, ''));
+    const pct = Number(m[2]);
+    if (!Number.isFinite(remaining) || !(pct >= 0) || pct > 100) return null;
+    const total = pct > 0 ? remaining / pct * 100 : null;
+    const bucket = total ? BUCKETS.find(b => Math.abs(total - b.total) / b.total < 0.02) : null;
+    return { remaining, pct, total: bucket ? bucket.total : (total ? Math.round(total) : null), bucket: bucket ? bucket.label : '当前额度' };
+  }
+  return null;
+}
+
+module.exports = { parseCodeAgentContext, parseCodeAgentCredit };

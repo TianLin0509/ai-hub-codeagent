@@ -139,7 +139,21 @@ function createCodexModelCatalogService(options = {}) {
   async function getCatalog(request = {}) {
     const current = now();
     const cacheKey = String(request.home || '<default>').toLowerCase();
-    const existing = cachedByHome.get(cacheKey);
+    let existing = cachedByHome.get(cacheKey);
+    // After a Hub restart the in-memory cache is empty, but this profile's CLI
+    // already has the real model/effort list on disk. Seed from it and refresh
+    // behind the caller, just as we do for an expired in-memory catalogue.
+    // Empty/corrupt caches and explicit refreshes still await model/list.
+    if (!request.force && !existing && request.offline !== true) {
+      const snapshot = buildCodexTuningSnapshot(
+        (MODEL_OPTIONS_BY_KIND.codex || []).map(option => option.id),
+        { configDir: request.home },
+      );
+      if (snapshot.models.length > 0) {
+        existing = { value: { ok: true, ...snapshot, fetchedAt: snapshot.catalogMtimeMs }, cachedAt: current - ttlMs };
+        cachedByHome.set(cacheKey, existing);
+      }
+    }
     if (!request.force && existing && current - existing.cachedAt < ttlMs) {
       return { ...existing.value, cached: true };
     }
@@ -148,7 +162,7 @@ function createCodexModelCatalogService(options = {}) {
     // anything else. Answer with the last list and refresh behind it.
     if (!request.force && existing) {
       if (!inFlightByHome.has(cacheKey)) void getCatalog({ ...request, force: true }).catch(() => {});
-      return { ...existing.value, cached: true, stale: true };
+      return { ...existing.value, cached: true, stale: true, refreshing: true };
     }
     if (inFlightByHome.has(cacheKey)) return inFlightByHome.get(cacheKey);
     const inFlight = (async () => {

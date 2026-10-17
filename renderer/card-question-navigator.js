@@ -2,7 +2,8 @@
 
 function normalizeQuestionSummary(value, maxLength = 72) {
   const limit = Math.max(12, Number(maxLength) || 72);
-  const text = String(value || '')
+  // 长粘贴的 <pasted_content> 外壳不显示，只显示里面的正文。
+  const text = require('../core/bridge-message-kind').bridgeText(value)
     .replace(/```[\s\S]*?```/g, ' [代码] ')
     .replace(/[A-Za-z]:[\\/][^\r\n<>"`]*?\.(?:png|jpe?g|webp|gif)\b/gi, '[图片附件]')
     .replace(/`([^`]+)`/g, '$1')
@@ -306,9 +307,11 @@ function createCardQuestionNavigator(options = {}) {
     const sessionId = String(getActiveSessionId() || '');
     const cardViewVisible = getCurrentView() === 'card' && !!sessionId && !overlay.classList.contains('hidden');
     const customEntries = cardViewVisible && options.getEntries ? options.getEntries() : null;
+    // 家里 ⇄ 公司通道送进来的回执、提问不是人提的问题，不进目录（2026-10-16 用户截图：Q4–Q9 全是回执）。
+    const { bridgeMessageKind } = require('../core/bridge-message-kind');
     const cards = customEntries ? customEntries.map(entry => entry.card) : cardViewVisible
       ? Array.from(overlay.querySelectorAll(':scope > .turn-card.user')).filter(card => (
-        !card.dataset.sessionId || card.dataset.sessionId === sessionId
+        (!card.dataset.sessionId || card.dataset.sessionId === sessionId) && !bridgeMessageKind(questionTextForCard(card))
       ))
       : [];
 

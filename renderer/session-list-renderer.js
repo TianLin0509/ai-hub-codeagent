@@ -112,10 +112,19 @@ function getSidebarSearchEntries(doc) {
   return sidebarSources.get(doc)?.() || [];
 }
 
+function isWirelessSession(item) {
+  // Stable purpose survives renaming. The title prefix also covers older
+  // workbench records without purpose; unrelated wireless discussions stay.
+  return item?.purpose === 'wireless-proposal' || /^无线\s*[·・]/.test(String(item?.title || '').trim());
+}
+
 function createSessionListRenderer(options = {}) {
   const { detailsHtml } = require('./session-details.js');
   const doc = options.document || document;
   const storage = options.localStorage || localStorage;
+  const bridgeBadge = typeof options.bridgeBadge === 'function' ? options.bridgeBadge
+    : id => { try { return (typeof window !== 'undefined' && window._bridgeThreads?.badge(id)) || null; } catch { return null; } };
+  doc.addEventListener?.('bridge-threads-updated', () => { try { renderSessionList(); } catch (error) { console.warn('[session-list] bridge refresh failed:', error && error.message); } });
   const publishSessionViews=createSessionViewPublisher(packet=>{
     const ipc=options.ipcRenderer || (typeof process!=='undefined'&&process.type==='renderer'?require('electron').ipcRenderer:null);
     ipc?.send?.('assistant:session-view',packet);
@@ -125,6 +134,7 @@ function createSessionListRenderer(options = {}) {
   let recentDays = 1;
   let pinnedOnly = false;
   let modelFilter = 'all';
+  let showWireless = false;
   try {
     const saved = JSON.parse(storage.getItem('hubSidebarCollapsedSections') || '[]');
     if (Array.isArray(saved)) collapsedSections = new Set(saved.filter(key => sectionKeys.includes(key)));
@@ -133,6 +143,7 @@ function createSessionListRenderer(options = {}) {
     pinnedOnly = storage.getItem('hubSidebarRange') === 'pinned';
     const model = storage.getItem('hubSidebarModelFilter');
     if (SESSION_FAMILY_KEYS.includes(model)) modelFilter = model;
+    showWireless = storage.getItem('hubSidebarShowWireless') === 'true';
   } catch (error) { console.warn('[sidebar] preferences could not be read:', error.message); }
   function savePreference(key, value) {
     try { storage.setItem(key, value); }
@@ -143,6 +154,17 @@ function createSessionListRenderer(options = {}) {
     for (const button of rangeControls) button.setAttribute('aria-pressed', String(pinnedOnly ? button.dataset.sessionDays === 'pinned' : Number(button.dataset.sessionDays) === recentDays));
   }
   syncRangeControls();
+  const wirelessControl = doc.getElementById?.('btn-sidebar-wireless');
+  function syncWirelessControl() {
+    wirelessControl?.setAttribute('aria-pressed', String(showWireless));
+    wirelessControl?.setAttribute('title', showWireless ? '隐藏无线协作会话' : '显示无线协作会话');
+  }
+  syncWirelessControl();
+  wirelessControl?.addEventListener('click', () => {
+    showWireless = !showWireless;
+    savePreference('hubSidebarShowWireless', String(showWireless));
+    syncWirelessControl(); renderSessionList();
+  });
   for (const button of rangeControls) button.addEventListener('click', () => {
     pinnedOnly = button.dataset.sessionDays === 'pinned';
     if (!pinnedOnly) recentDays = Number(button.dataset.sessionDays) === 3 ? 3 : 1;
@@ -264,7 +286,7 @@ function _logoKind(kind, modelId = '') {
 
 // AI mini logo for sidebar sub-session items. Reuses the .ai-logo + .logo-<kind>
 // classes already defined in styles.css for the toolbar dropdown.
-// 2026-09-01 · 侧栏瘦身：时间左边的「Opus 5 / gpt-5.6-sol」字串换成一枚品牌小图标。
+// 侧栏用标题前的品牌小图标标识 AI，具体型号保留在悬停说明中。
 //   扫列表时真正要一眼分辨的只是"哪家 CLI"，具体型号是二级信息 → 退到 tooltip
 //   （会话行的无障碍标签也包含完整 displayName）。
 //   拿不到图标的 kind 回落成原来的文字列，避免这一列直接消失。
@@ -630,11 +652,15 @@ sessionListEl.addEventListener('keydown', event => {
     doc.dispatchEvent(new doc.defaultView.CustomEvent('sidebar:open-search', { detail }));
   }
   function filteredSidebarItems(sessionMap = getSessions()) {
-    return collectSidebarItems(sessionMap).filter(item => projectFilter.matches(item) && (modelFilter === 'all' || sessionFamilies(item, sessionMap).has(modelFilter)));
+    return collectSidebarItems(sessionMap).filter(item => (showWireless || !isWirelessSession(item)) && projectFilter.matches(item) && (modelFilter === 'all' || sessionFamilies(item, sessionMap).has(modelFilter)));
   }
   function revealSearchItem(id, memberId = null) {
     const item = collectSidebarItems().find(entry => entry.id === id);
     if (!item) return;
+    if (isWirelessSession(item) && !showWireless) {
+      showWireless = true;
+      savePreference('hubSidebarShowWireless', 'true'); syncWirelessControl();
+    }
     if (pinnedOnly !== !!item.pinned) {
       pinnedOnly = !!item.pinned;
       savePreference('hubSidebarRange',pinnedOnly ? 'pinned' : String(recentDays)); syncRangeControls();
@@ -859,8 +885,8 @@ sessionListEl.addEventListener('keydown', event => {
       div.innerHTML = [
         '<div class="sl-line1' + (canExpand ? ' with-arrow' : '') + '">',
         canExpand ? '<span class="expand-arrow" data-action="toggle-expand" title="展开成员">▸</span>' : '',
-        '<span class="sl-title" aria-label="' + escapeHtml([s.title, meetingWarning, unreadMembers.size + ' 位未读'].filter(Boolean).join(' · ')) + '">' + _warningHtml(meetingWarning) + escapeHtml(s.title) + (s._meeting?.orchestration?.enabled === true ? '<span class="sl-orch-tag" title="AI 编排模式">编排</span>' : '') + '</span>',
         '<span class="sl-group-logos" data-state="' + dotCls + '" aria-label="群聊 · ' + STATUS_LABELS[dotCls] + '">' + (logos || `<svg class="sl-kind sl-group-icon" data-state="${dotCls}" role="img" aria-label="群聊 · ${STATUS_LABELS[dotCls]}" viewBox="0 0 24 24"><path d="M9 11a3 3 0 1 0 0-6 3 3 0 0 0 0 6ZM3 20v-2a4 4 0 0 1 4-4h4a4 4 0 0 1 4 4v2M16 5a3 3 0 0 1 0 6m1 3a4 4 0 0 1 4 4v2"/></svg>`) + '</span>',
+        '<span class="sl-title" aria-label="' + escapeHtml([s.title, meetingWarning, unreadMembers.size + ' 位未读'].filter(Boolean).join(' · ')) + '">' + _warningHtml(meetingWarning) + escapeHtml(s.title) + (s._meeting?.orchestration?.enabled === true ? '<span class="sl-orch-tag" title="AI 编排模式">编排</span>' : '') + '</span>',
         timeHtml(s, hasUnread ? unreadMembers.size : 0) + '</div>',
         hasUnread ? '<div class="sl-group-actions">' + (unreadChips ? '<div class="sl-unread-members">' + unreadChips + '</div>' : '')
           + (markMeetingRead ? '<button type="button" class="sl-meeting-read" data-action="mark-meeting-read" data-sidebar-control="read-' + escapeHtml(s.id) + '">整组已读</button>' : '') + '</div>' : '',
@@ -901,7 +927,7 @@ sessionListEl.addEventListener('keydown', event => {
       return;
     }
 
-    // Compact rows: title, stateful provider logo, and abbreviated activity time.
+    // Compact rows: stateful provider logo, title, and abbreviated activity time.
     // Runtime/context/unread details remain available through accessible labels.
     const isActive = s.id === getActiveSessionId();
     const runtimeTruth = getSessionRuntimeTruth(s, { now: Date.now() });
@@ -955,14 +981,19 @@ sessionListEl.addEventListener('keydown', event => {
     // 号池会话：标题前一个「池」字（放在标题格里，不占卡片的列），悬停看用的是哪个号（core/codeagent-pool.js）。
     const poolHtml = s.codeagentPoolAccount
       ? `<span class="sl-pool" title="${escapeHtml('号池账号 · ' + (s.codeagentPoolLabel || s.codeagentPoolAccount))}">池</span>` : '';
-    div.innerHTML = '<span class="sl-title">' + _warningHtml(anyWarning) + poolHtml + escapeHtml(displayTitle) + '</span>'
-      + _sessionKindHtml(s.kind, modelTxt, isDormant && !isResumePending && !issue ? 'dorm' : dotCls, dormantStateTip || runtimeTruthSummary(runtimeTruth), s.currentModel?.id || '')
+    // 家里 ⇄ 公司通道（2026-10-16）：标题前一枚「⇄」标签（行高固定一行，放标题前才不会被省略号截掉）；
+    // 在途时标签里就是当前那一步和耗时，悬停看编号与全程。
+    const bridge = bridgeBadge(s.id);
+    const bridgeHtml = bridge ? `<span class="bt-badge" data-state="${escapeHtml(bridge.state)}" data-role="${escapeHtml(bridge.role || '')}" title="${escapeHtml(bridge.sub)}">${escapeHtml(bridge.chip)}</span>` : '';
+    div.innerHTML = _sessionKindHtml(s.kind, modelTxt, isDormant && !isResumePending && !issue ? 'dorm' : dotCls, dormantStateTip || runtimeTruthSummary(runtimeTruth), s.currentModel?.id || '')
+      + '<span class="sl-title">' + _warningHtml(anyWarning) + poolHtml + bridgeHtml + escapeHtml(displayTitle) + '</span>'
       + timeHtml(s, showUnread ? Math.max(1, unreadCount) : 0);
     if (child) div.className += ' child';
     if (detailsEnabled) {
       div.className += ' has-details';
       div.innerHTML = '<div class="sl-line1">' + div.innerHTML + '</div>'
-        + detailsHtml(s, { escapeHtml, modelShort });
+        + detailsHtml(s, { escapeHtml, modelShort })
+        + (bridge ? `<div class="bt-badge-sub" data-state="${escapeHtml(bridge.state)}">⇄ ${escapeHtml(bridge.sub)}${bridge.pin ? ' · ' + escapeHtml(bridge.pin) : ''}</div>` : '');
       detailSessionIds.add(s.id);
     }
     div.addEventListener('contextmenu', (e) => { e.preventDefault(); openContextMenu(s.id, e.clientX, e.clientY); });
@@ -1091,6 +1122,7 @@ sessionListEl.addEventListener('mousedown', (e) => {
 }
 
 module.exports = {
+  isWirelessSession,
   createSessionListRenderer,
   showDomesticRoute,
   compareLatestActivityDesc,

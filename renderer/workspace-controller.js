@@ -1158,6 +1158,8 @@
       }
       if (selectedKind === 'codex' && codexTuningCatalog && codexTuningCatalog.refreshError) {
         lines.push('Codex 在线目录刷新失败，当前显示最近一次 CLI 本地缓存；下次打开会自动重试。');
+      } else if (selectedKind === 'codex' && codexTuningCatalog?.refreshing) {
+        lines.push('模型与推理档位来自当前账号的 CLI 缓存；重新打开此面板时检查更新。');
       } else if (selectedKind === 'codex' && codexTuningCatalog) {
         lines.push(codexTuningCatalog.source === 'codex-app-server'
           ? '模型目录来自当前 Codex 账号的实时 model/list；打开界面时自动刷新。'
@@ -1354,6 +1356,13 @@
     window.dispatchEvent(new CustomEvent('launch-center:closed'));
   }
 
+  function prepareLaunchAuth() {
+    void ipcRenderer.invoke('session:prepare-launch-auth', {
+      kind: selectedKind,
+      launchProfile: selectedKind === 'codex' ? codexAccountId : undefined,
+    }).catch(() => {});
+  }
+
   function openNewSessionModal(options = {}) {
     if (!menuEl) return;
     const revision = ++modalRevision;
@@ -1385,6 +1394,7 @@
     void loadHubDefaultModels().then(async () => {
       if (revision !== modalRevision) return;
       const kind = selectedKind;
+      prepareLaunchAuth();
       await loadModelCatalog(kind);
       if (revision !== modalRevision || kind !== selectedKind) return;
       if (!tuningTouchedByUser) applyTuningMemory(selectedKind);
@@ -1575,7 +1585,7 @@
     submitting = true;
     paint();
     const submit = document.getElementById('new-session-submit');
-    if (submit) submit.textContent = '创建中…';
+    if (submit) submit.textContent = '读取模型…';
     try {
       // 与群聊成员同一条准确性门：提交前等真实 Codex 模型目录并重新归一化，
       // 避免快速点击把 fallback 中该模型不支持的 effort 送进 PTY。
@@ -1583,8 +1593,10 @@
       // 刷新登录（5–15 秒），创建会话不等它。
       if (selectedKind !== 'gemini') await loadModelCatalog(selectedKind);
       paintTuning();
+      if (submit) submit.textContent = '准备目录…';
       if (workspaceMode === 'scratch') workspace = await createScratch('未命名任务');
       else if (workspaceMode === 'default') workspace = await createDefaultWorkspace('未命名任务');
+      if (submit) submit.textContent = '检查账号并启动…';
       const session = await createSession(selectedKind, { workspace, opts: tuningOpts() });
       require('./codeagent-preference').rememberKind(selectedKind);
       closeNewSessionModal();
@@ -1646,6 +1658,7 @@
         applyTuningMemory(selectedKind);
         setError('');
         paint();
+        prepareLaunchAuth();
         void loadModelCatalog(selectedKind).then(paint);
       });
     });

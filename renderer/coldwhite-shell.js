@@ -17,11 +17,13 @@ function installColdwhiteShell(doc = globalThis.document) {
   if (strip) footer.append(strip);
   const usage = doc.getElementById('rail-usage');
   if (usage) footer.append(usage);
+  const codeagentQuota = doc.getElementById('rail-codeagent-quota');
+  if (codeagentQuota) footer.append(codeagentQuota);
   app.append(footer);
   require('./status-footer-layout').installStatusFooterLayout(doc);
-  const panelIds = ['hub-workspace', 'rules-panel', 'writing-panel', 'account-page', 'xresearch-panel', 'study-panel', 'ran-panel'];
+  const panelIds = ['cloud-page', 'hub-workspace', 'rules-panel', 'writing-panel', 'account-page', 'xresearch-panel', 'study-panel', 'ran-panel'];
   const watched = new Set();
-  const navigation = ['btn-home','btn-rules','btn-assistant','btn-research','btn-study','btn-ran','btn-wireless','btn-rail-memo','btn-rail-capabilities','btn-rail-accounts','btn-writing'];
+  const navigation = ['btn-home','btn-rules','btn-assistant','btn-company-assistant','btn-research','btn-study','btn-ran','btn-wireless','btn-rail-memo','btn-rail-capabilities','btn-cloud','btn-rail-accounts','btn-writing'];
   let scheduled = false;
   const sync = () => {
     scheduled = false;
@@ -35,13 +37,17 @@ function installColdwhiteShell(doc = globalThis.document) {
       return e && !e.hidden && doc.defaultView.getComputedStyle(e).display !== 'none';
     };
     let current = 'btn-home';
-    if (isVisible('hub-workspace')) {
+    if (isVisible('cloud-page')) {
+      current = 'btn-cloud';
+    } else if (isVisible('hub-workspace')) {
       current = doc.getElementById('hub-workspace').dataset.area === 'review' ? 'btn-rail-memo' : 'btn-rail-capabilities';
     } else {
       for (const [panel, button] of [['rules-panel','btn-rules'],['account-page','btn-rail-accounts'],['writing-panel','btn-writing'],['xresearch-panel','btn-research'],['study-panel','btn-study'],['ran-panel','btn-ran']]) {
         if (isVisible(panel)) { current = button; break; }
       }
       if (current === 'btn-home' && doc.body.classList.contains('wireless-page-open')) current = 'btn-wireless';
+      // 公司版「助理」页（core/company-assistant）
+      if (current === 'btn-home' && doc.body.classList.contains('company-assistant-page-open')) current = 'btn-company-assistant';
       if (current === 'btn-home' && (doc.body.classList.contains('assistant-session-active') || doc.body.classList.contains('assistant-page-open'))) current = 'btn-assistant';
     }
     for (const id of navigation) {

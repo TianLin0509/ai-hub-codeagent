@@ -26,6 +26,8 @@
   <link rel="stylesheet" href="capability-panel.css">
   <link rel="stylesheet" href="account-center-panel.css">
   <link rel="stylesheet" href="styles/assistant-panel.css">
+  <!-- 公司版「助理」页（2026-10-16）：按钮由脚本只在公司版插入，样式公开版也带着无害 -->
+  <link rel="stylesheet" href="styles/company-assistant-page.css">
   <link rel="stylesheet" href="file-manager-panel.css">
   <link rel="stylesheet" href="vendor/katex/katex.min.css">
   <link rel="stylesheet" href="../node_modules/prismjs/themes/prism-tomorrow.css">
@@ -69,6 +71,8 @@
   <link rel="stylesheet" href="styles/preview-immersive.css">
   <link rel="stylesheet" href="styles/session-immersive.css">
 <link rel="stylesheet" href="styles/zoom-label.css">
+  <link rel="stylesheet" href="styles/appearance.css">
+  <link rel="stylesheet" href="styles/bridge-thread.css">
   <link rel="stylesheet" href="styles/controls.css" id="controls-layer">
 </head>
 <body>
@@ -90,10 +94,16 @@
         <strong>AI Hub</strong><span id="coldwhite-preview-label" hidden>冷白预览 0.1</span><span id="hub-version"></span><span class="hub-pid" id="hub-pid"></span>
       </div>
       <div class="terminal-header-actions" id="toolbar-actions"></div>
-      <div id="display-preset-switch" role="group" aria-label="显示预设">
-        <button type="button" data-display-mode="desktop" aria-pressed="true" title="电脑显示预设">电脑</button>
-        <button type="button" data-display-mode="phone" aria-pressed="false" title="手机显示预设 · A 均衡清晰">手机</button>
-        <button type="button" id="btn-display-settings" aria-expanded="false" aria-controls="display-preset-settings" title="调整当前预设的显示参数" aria-label="显示参数">⚙</button>
+      <div class="header-overflow-wrap" id="toolbar-more-wrap">
+        <button type="button" class="btn-zoom" id="btn-toolbar-more" title="更多操作" aria-label="更多操作" aria-haspopup="true" aria-expanded="false" aria-controls="toolbar-more-menu">⋯</button>
+        <div class="header-overflow-menu" id="toolbar-more-menu" hidden>
+          <div id="display-preset-switch" role="group" aria-label="显示预设">
+            <button type="button" data-display-mode="desktop" aria-pressed="true" title="电脑显示预设">电脑</button>
+            <button type="button" data-display-mode="phone" aria-pressed="false" title="手机显示预设 · A 均衡清晰">手机</button>
+            <button type="button" id="btn-display-settings" aria-expanded="false" aria-controls="display-preset-settings" title="调整当前预设的显示参数" aria-label="显示参数">⚙</button>
+          </div>
+          <div id="toolbar-more-actions"></div>
+        </div>
       </div>
       <aside id="display-preset-settings" hidden aria-label="显示参数"><strong>电脑显示参数</strong><div class="display-preset-fields"></div><p>两套参数分别保存；切换不改变会话和草稿。</p></aside>
       <button type="button" class="backstage-toggle" id="btn-backstage" aria-pressed="false" title="查看后台输出" hidden>后台</button>
@@ -135,6 +145,7 @@
           <!-- 内容由 theme-controller.js 按 core/theme-config.js 的清单生成 -->
           <div class="options-theme-picker" id="options-theme-picker" role="radiogroup" aria-label="选择主题"></div>
           <div class="options-theme-note">默认冷白工作室；CLI 终端随冷白主题适配浅色。手动选择会保存。</div>
+          <button type="button" id="options-appearance">AI 头像与图标 →</button>
         </div>
       </div>
       <div class="options-wrapper">
@@ -250,7 +261,7 @@
         </button>
       </div>
       <div class="session-detail-bar"><button type="button" id="btn-session-details" aria-pressed="false">详细信息</button><label class="session-model-filter"><select id="session-model-filter" aria-label="侧栏模型" title="按模型筛选"><option value="all">模型</option><option value="claude">Claude</option><option value="codex">Codex</option><option value="codeagent" hidden>CodeAgent</option><option value="other">其他</option></select></label><label class="session-project-filter"><select id="session-project-filter" aria-label="侧栏项目" title="按项目筛选"><option value="random">随机</option><option value="all" selected>项目</option></select></label></div><div id="session-project-filter-note" class="session-project-filter-note" role="status" hidden></div>
-      <div class="session-range-tabs" role="group" aria-label="会话范围"><button type="button" data-session-days="pinned" aria-pressed="false" title="只显示置顶的会话与群聊">置顶</button><button type="button" data-session-days="1" aria-pressed="true" title="未置顶的最近24小时会话；未读和活跃会话始终显示">今天</button><button type="button" data-session-days="3" aria-pressed="false" title="未置顶的最近72小时会话；未读和活跃会话始终显示">3 天</button></div>
+      <div class="session-range-tabs" role="group" aria-label="会话范围"><button type="button" data-session-days="pinned" aria-pressed="false" title="只显示置顶的会话与群聊">置顶</button><button type="button" data-session-days="1" aria-pressed="true" title="未置顶的最近24小时会话；未读和活跃会话始终显示">今天</button><button type="button" data-session-days="3" aria-pressed="false" title="未置顶的最近72小时会话；未读和活跃会话始终显示">3 天</button><button type="button" id="btn-sidebar-wireless" aria-pressed="false" title="显示无线协作会话">无线</button></div>
       <div class="session-list" id="session-list"></div>
       <section class="sidebar-insights" id="sidebar-insights" aria-label="用量与系统状态">
         <button type="button" class="sidebar-insights-toggle" id="sidebar-insights-toggle" aria-label="展开或收起用量与系统状态" aria-expanded="true" aria-controls="sidebar-insights-content" title="向下收起用量与系统状态">
@@ -260,6 +271,7 @@
         <div class="sidebar-insights-content" id="sidebar-insights-content">
           <div class="sidebar-insights-inner">
             <div class="sidebar-account-usage" id="rail-usage" data-presentation="footer" aria-label="账户剩余额度"></div>
+            <div class="sidebar-account-usage" id="rail-codeagent-quota" aria-label="CodeAgent 剩余额度" hidden></div>
             <div class="sidebar-strip" id="sidebar-strip" style="display:none"></div>
           </div>
         </div>
@@ -858,5 +870,6 @@
     </div>
   </div>
 
+<script src="appearance-controller.js"></script>
 </body>
 </html>

@@ -94,7 +94,8 @@ class AskHome {
     if (!this.link.paired() || !id) return null;
     const base = String(kind || '').replace(/-resume$/, '');
     if (!require('../ai-kinds').isCodeAgentKind(base)) return null;
-    if (opts.purpose === 'company-bridge') return null;
+    // 公司助理会话读的是本人 WeLink 数据，只留在这台电脑：不挂「问家里」。
+    if (opts.purpose === 'company-bridge' || opts.purpose === 'company-assistant') return null;
     const pass = this.passFor(id), runner = this.runner();
     const env = { HUB_HOME_LINK_SESSION_ID: id, HUB_HOME_LINK_PASS: pass, HUB_HOME_LINK_ENDPOINT_FILE: this.endpointFile, HUB_ASK_HOME_CMD: this.cliFile };
     return { env, mcp: { name: 'home_bridge', command: runner.command, args: [runner.mcp], env: { ...env, ELECTRON_RUN_AS_NODE: '1' } } };
