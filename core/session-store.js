@@ -135,6 +135,8 @@ function _buildSessionPayload(hubId, data) {
     codeagentActualModel: typeof data.codeagentActualModel === 'string' ? data.codeagentActualModel : null,
     codeagentRequestedModel: typeof data.codeagentRequestedModel === 'string' ? data.codeagentRequestedModel : null,
     codeagentModelPick: typeof data.codeagentModelPick === 'boolean' ? data.codeagentModelPick : null,
+    // AI特战队通道里家里指定的模型（core/codeagent-model-route.js）；恢复时沿用，追问不换模型。
+    codeagentRouteModel: typeof data.codeagentRouteModel === 'string' ? data.codeagentRouteModel : null,
     codeagentForkSourceSessionId: typeof data.codeagentForkSourceSessionId === 'string' ? data.codeagentForkSourceSessionId : null,
     // 号池会话用的是号池里哪个号（core/codeagent-pool.js）；恢复时回到同一个号的配置目录。
     codeagentPoolAccount: typeof data.codeagentPoolAccount === 'string' ? data.codeagentPoolAccount : null,

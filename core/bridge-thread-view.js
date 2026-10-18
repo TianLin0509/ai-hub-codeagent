@@ -73,7 +73,7 @@ function threadSummary(thread, now = Date.now()) {
   const total = last && (last.replyAt || last.errorAt) && last.sentAt ? (last.replyAt || last.errorAt) - last.sentAt : null;
   return { state, label: STATE_LABEL[state], rounds: rounds.length, lastRound: last ? last.round : null,
     lastTotal: state === 'done' && total != null ? fmtDur(total) : '', steps: last ? roundSteps(last, now) : [],
-    note: last?.note || '', model: last?.meta?.model || '' };
+    note: last?.note || '', model: last?.meta?.actualModel || last?.meta?.model || thread?.model || '' };
 }
 
 // 答方（公司替家里办事、家里替公司办事）的线程记录：receivedAt 收到，sentAt 已送进会话开始处理，reply/error 结束。
@@ -91,7 +91,7 @@ function answerSummary(thread, now = Date.now()) {
   const total = state === 'done' && start && last.replyAt ? fmtDur(last.replyAt - start) : '';
   const since = state === 'running' && (last.firstSentAt || last.sentAt) ? fmtDur(now - (last.firstSentAt || last.sentAt)) : '';
   return { state, label: STATE_LABEL[state], rounds: rounds.length, lastRound: last ? last.round : null, lastTotal: total,
-    steps: [], note: since ? `处理中 · 已 ${since}` : '', model: last?.meta?.model || '' };
+    steps: [], note: since ? `处理中 · 已 ${since}` : '', model: last?.meta?.actualModel || last?.meta?.model || thread?.model || '' };
 }
 
 // 结论一行：回答正文里第一处 📌 那一行，没有就取第一行非空文字。

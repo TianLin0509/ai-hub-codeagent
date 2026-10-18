@@ -55,25 +55,38 @@ function calendarEvents(raw) {
   }).filter(e => e.start);
 }
 
+// 会话列表（im query-recent-conversation --count 50）：真机每个会话只有 8 个字段，没有最后消息时间、免打扰、置顶、未读数（Q-1018-10），
+// welink-cli 的其他命令也查不到免打扰和置顶。单聊的 group_id 是 "0"。
 function conversations(raw) {
   return listIn(raw, ['conversation_info', 'conversations']).map(c => {
     const group = c.recent_conversation_type === 'CHAT_TYPE_GROUP_MSG' || (!!c.group_id && !c.target_account);
     const id = String(group ? c.group_id : (c.target_account || c.group_id || '')) || '';
-    return { id, group, name: String(first(c, group ? ['group_name', 'native_name'] : ['staff_name', 'native_name', 'target_account']) ?? id) };
+    return { id, group, name: String(first(c, group ? ['group_name', 'native_name'] : ['native_name', 'staff_name', 'target_account']) ?? id) };
   }).filter(c => c.id);
 }
 
-// 一个会话的历史消息。me：本人账号（auth status 的 UID），用来判断「最后一句是不是我说的」。
-function messages(raw, conv, me) {
-  const list = listIn(raw, ['messages', 'message_list', 'history', 'msgs', 'data']);
+// 账号 → 姓名：单聊会话的对方（target_account → native_name）。
+function namesOf(conversations) { return new Map((conversations || []).filter(c => !c.group && c.name && c.name !== c.id).map(c => [c.id, c.name])); }
+
+// 一个会话的历史消息。me：本人账号（auth status 的 UID），用来判断「最后一句是不是我说的」「有没有 @ 我」。
+// 真机字段（Q-1018-04、Q-1018-10）：列表在 chatInfo 里；msgId（长整数）、sender（账号，和 auth status 的 UID 同格式）、content、contentType、
+// serverSendTime（毫秒）、at（这条有没有 @ 人）、atAccountList（被点名 @ 的账号；@所有人 时是空数组）。
+// names：账号 → 姓名（真机消息只有账号；单聊对方的姓名从会话列表拿）。自己发的显示「我」。
+function messages(raw, conv, me, { myName = '', names = null } = {}) {
+  const list = listIn(raw, ['chatInfo', 'messages', 'message_list', 'msgList', 'history', 'msgs', 'data']);
   return list.map((m, i) => {
-    const at = toMs(first(m, ['send_time', 'sendTime', 'msg_time', 'msgTime', 'time', 'timestamp', 'create_time', 'createTime']));
-    const account = String(first(m, ['sender_account', 'senderAccount', 'from_account', 'fromAccount', 'sender_id', 'senderId', 'from', 'account']) ?? '');
-    const sender = String(first(m, ['sender_name', 'senderName', 'staff_name', 'native_name', 'nick_name', 'sender', 'from_name']) ?? account);
-    const key = String(first(m, ['msg_id', 'msgId', 'message_id', 'messageId', 'id']) ?? `${at || 0}-${i}`);
-    const mine = m.is_self === true || m.isSelf === true || m.direction === 'send' || (!!me && (account === me || sender === me));
-    return { sourceId: `msg:${conv.id}:${key}`, conv: conv.id, convName: conv.name, group: conv.group, key, at, sender, account, mine,
-      text: short(textOf(first(m, ['content', 'msg_content', 'msgContent', 'text', 'message', 'body'])), 400) };
+    const at = toMs(first(m, ['serverSendTime', 'server_send_time', 'send_time', 'sendTime', 'msg_time', 'msgTime', 'time', 'timestamp', 'create_time', 'createTime']));
+    const account = String(first(m, ['sender_account', 'senderAccount', 'from_account', 'fromAccount', 'sender_id', 'senderId', 'sender', 'from', 'account']) ?? '');
+    const named = first(m, ['sender_name', 'senderName', 'staff_name', 'native_name', 'nick_name', 'from_name']);
+    const key = String(first(m, ['msgId', 'msg_id', 'message_id', 'messageId', 'id']) ?? `${at || 0}-${i}`);
+    const mine = m.is_self === true || m.isSelf === true || m.direction === 'send' || (!!me && (account === me || named === me));
+    const sender = mine ? '我' : String(named ?? (names && names.get(account)) ?? account);
+    const text = short(textOf(first(m, ['content', 'msg_content', 'msgContent', 'text', 'message', 'body'])), 400);
+    const atList = Array.isArray(m.atAccountList) ? m.atAccountList.map(String) : [];
+    const atFlag = m.at === true || m.at === 'true';
+    const atMe = !mine && ((!!me && atList.includes(me)) || (!!myName && text.includes('@' + myName)));
+    const atAll = !mine && !atMe && atFlag && !atList.length;
+    return { sourceId: `msg:${conv.id}:${key}`, conv: conv.id, convName: conv.name, group: conv.group, key, at, sender, account, mine, atMe, atAll, text };
   }).filter(m => m.text).sort((a, b) => (a.at || 0) - (b.at || 0));
 }
 
@@ -89,7 +102,7 @@ function mails(raw) {
   });
 }
 
-// 「等你回复」：单聊里最后一句不是我说的；群里有人 @ 我（设置里填了我的名字时）且我之后没在群里说过话。
+// 「等你回复」：单聊里最后一句不是我说的；群里有人 @ 我（atAccountList 里有我的账号，或文字里有「@我的名字」）且我之后没在群里说过话。
 function awaiting(snapshot, { myName = '' } = {}) {
   const out = [];
   for (const conv of snapshot.conversations || []) {
@@ -97,12 +110,28 @@ function awaiting(snapshot, { myName = '' } = {}) {
     if (!list.length) continue;
     const last = list[list.length - 1];
     if (!conv.group) { if (!last.mine && last.at) out.push({ ...last, since: last.at }); continue; }
-    if (!myName) continue;
     const lastMine = Math.max(0, ...list.filter(m => m.mine).map(m => m.at || 0));
-    const hit = [...list].reverse().find(m => !m.mine && (m.at || 0) > lastMine && m.text.includes('@' + myName));
+    const hit = [...list].reverse().find(m => !m.mine && (m.at || 0) > lastMine && (m.atMe || (!!myName && m.text.includes('@' + myName))));
     if (hit && hit.at) out.push({ ...hit, since: hit.at });
   }
   return out.sort((a, b) => a.since - b.since);
+}
+
+// 「群里和你相关」：回看时间内有人 @ 你、提到关注词，或者你自己在群里说过话的群（替代原来要手动勾选的「关注群」）。
+// 排序：@ 你的次数 → 提到关注词的 → 你参与的 → 消息多的。
+function relatedGroups(snapshot, { keywords = [], since = 0 } = {}) {
+  const words = (keywords || []).map(w => String(w).trim()).filter(Boolean);
+  const rows = [];
+  for (const conv of snapshot.conversations || []) {
+    if (!conv.group) continue;
+    const list = ((snapshot.messages || {})[conv.id] || []).filter(m => !since || !m.at || m.at >= since);
+    if (!list.length) continue;
+    const atMe = list.filter(m => m.atMe), mine = list.filter(m => m.mine), hits = words.length ? list.filter(m => !m.mine && words.some(w => m.text.includes(w))) : [];
+    if (!atMe.length && !mine.length && !hits.length) continue;
+    const key = atMe.at(-1) || hits.at(-1) || list.at(-1);
+    rows.push({ conv, count: list.length, atMe: atMe.length, mine: mine.length, keyword: hits.length, key });
+  }
+  return rows.sort((a, b) => b.atMe - a.atMe || b.keyword - a.keyword || b.mine - a.mine || b.count - a.count);
 }
 
 // 出处表：sourceId → 这一条原始记录（简报核对与「看出处」都用它）。
@@ -124,4 +153,4 @@ function todaysMeetings(snapshot, day) {
   return [...ms, ...cal].sort((a, b) => a.start - b.start);
 }
 
-module.exports = { dayKey, clock, toMs, listIn, textOf, short, meetings, calendarEvents, conversations, messages, mails, awaiting, sourceIndex, todaysMeetings };
+module.exports = { dayKey, clock, toMs, listIn, textOf, short, namesOf, meetings, calendarEvents, conversations, messages, mails, awaiting, relatedGroups, sourceIndex, todaysMeetings };

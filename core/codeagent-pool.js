@@ -22,6 +22,7 @@ const NOTE_MAX = 24;
 const SHARED_FILES = ['AGENTS.md', 'CLAUDE.md'];
 const SHARED_DIRS = ['skills'];
 
+function fileExists(file, fsModule = fs) { try { return fsModule.statSync(file).isFile(); } catch { return false; } }
 function poolRoot(dataDir) { return path.join(dataDir, POOL_DIR); }
 function accountDir(dataDir, id) {
   if (!ACCOUNT_ID.test(String(id || ''))) throw new Error('号池账号编号无效');
@@ -97,6 +98,8 @@ function listAccounts(dataDir, { activeCounts = {}, personalAccountId = '', now 
       state, method: creds.method || null, accountLabel: maskAccountId(creds.accountId), expiresAt: creds.expiresAt || null,
       models: configured.models, modelsAuthoritative: configured.authoritative, defaultModel: configured.defaultModel || '',
       modelsProbedAt: configured.probedAt || null,
+      // 为通道指定模型切过默认模型、还没换回（hub-route-model.json，见 syncSharedConfig）。
+      routeSwitched: fileExists(path.join(dir, ROUTE_MARKER), fsModule),
       activeSessions: Number(activeCounts[a.id]) || 0,
       sameAsPersonal: !!(creds.accountId && personalAccountId && creds.accountId === personalAccountId),
       duplicateOf: duplicateOf || null,
@@ -133,7 +136,10 @@ function pickAccount(accounts, { model = '' } = {}) {
     : a.models.some(m => m.toLowerCase() === wanted) ? 0 : a.modelsAuthoritative ? 2 : 1;
   const candidates = usable.filter(a => fit(a) < 2);
   if (!candidates.length) return null;
+  // 不指定模型时避开「为通道切了模型、上面还有会话」的号（那个号此刻跑的不是它原来的默认模型）；只剩它时照用（2026-10-18 审核）。
+  const switchedBusy = a => (!wanted && a.routeSwitched && a.activeSessions > 0 ? 1 : 0);
   return candidates.slice().sort((x, y) => fit(x) - fit(y)
+    || switchedBusy(x) - switchedBusy(y)
     || x.activeSessions - y.activeSessions
     || x.lastAssignedAt - y.lastAssignedAt)[0];
 }
@@ -181,11 +187,34 @@ function projectCredentialsOverride(cwd, fsModule = fs) {
   try { return fsModule.statSync(file).isFile() ? file : null; } catch { return null; }
 }
 
+// 一个号此刻启动会用哪个模型：号自己存的（settings.json 的 model）在清单里就用它；探测清单已知时不在清单里的换成
+// 菜单标的默认、再不行用清单第一个（2026-10-17 公司实测：DS 号没定下模型就退回 CodeAgent 自己的默认 GLM）。
+function chooseAccountModel(own, known) {
+  let model = typeof own === 'string' && own.trim() ? own.trim() : '';
+  if (known && known.authoritative && known.models.length) {
+    const inList = m => !!m && known.models.some(x => x.toLowerCase() === String(m).toLowerCase());
+    if (!inList(model)) model = inList(known.defaultModel) ? known.defaultModel : known.models[0];
+  }
+  return model;
+}
+function readSettingsModel(dir, fsModule = fs) {
+  try { const v = JSON.parse(fsModule.readFileSync(path.join(dir, 'settings.json'), 'utf8')); return v && typeof v.model === 'string' ? v.model.trim() : ''; }
+  catch { return ''; }
+}
+function effectiveModel(dir, fsModule = fs) { return chooseAccountModel(readSettingsModel(dir, fsModule), accountModels(dir, fsModule)); }
+
+// 家里指定模型时（AI特战队通道，2026-10-18）把号的默认模型切到指定模型：CodeAgent 交互模式不认 --model、/model 菜单
+// 会把第一条消息卡住约 1 分钟，只有配置目录 settings.json 的 model 能定新会话的模型。切之前的模型记在这个文件里，
+// 之后不指定模型、且这个号上没有进行中的会话时换回去（不指定时的行为与以前相同）。
+const ROUTE_MARKER = 'hub-route-model.json';
+
 // 启动前把与账号无关的配置同步进号的目录：settings.json 以个人账号为准，但去掉 hooks（由 Hub 按本目录部署，
 // 避免指向个人目录的 hook 与本目录的重复触发）和 model（每个号能用的模型不同，保留号自己的）；
 // 号自己没有默认模型、而账号清单里有模型时，用清单第一个，避免回落到这个号没有权限的模型。
-function syncSharedConfig(personalDir, targetDir, fsModule = fs) {
+// routeModel：家里指定的模型（调用方已核对这个号有它的权限）；idle：这个号上没有进行中的会话（可以换回切之前的模型）。
+function syncSharedConfig(personalDir, targetDir, fsModule = fs, { routeModel = '', idle = false } = {}) {
   const errors = [];
+  let model = '';
   fsModule.mkdirSync(targetDir, { recursive: true });
   const readJson = file => { try { return JSON.parse(fsModule.readFileSync(file, 'utf8')); } catch { return null; } };
   try {
@@ -197,11 +226,20 @@ function syncSharedConfig(personalDir, targetDir, fsModule = fs) {
     // 定这个号用哪个模型（2026-10-17 公司实测：只有 DeepSeek v4 权限的号开出来报「找不到 GLM」）。
     // 以前只看配置文件里的账号清单，没读「一键获取模型权限」探测到的清单（hub-models.json），没定下模型时
     // CodeAgent 退回它自己的默认 GLM。现在探测清单优先；号自己存的模型不在清单里也换掉。
-    let model = typeof own.model === 'string' && own.model.trim() ? own.model.trim() : '';
     const known = accountModels(targetDir, fsModule);
-    if (known.authoritative && known.models.length) {
-      const inList = m => !!m && known.models.some(x => x.toLowerCase() === String(m).toLowerCase());
-      if (!inList(model)) model = inList(known.defaultModel) ? known.defaultModel : known.models[0];
+    model = chooseAccountModel(own.model, known);
+    const markerFile = path.join(targetDir, ROUTE_MARKER);
+    const marker = readJson(markerFile);
+    if (routeModel) {
+      const want = known.models.find(m => m.toLowerCase() === String(routeModel).toLowerCase()) || String(routeModel);
+      if (model.toLowerCase() !== want.toLowerCase()) {
+        const original = marker && typeof marker.original === 'string' ? marker.original : model;
+        fsModule.writeFileSync(markerFile, JSON.stringify({ original, model: want, at: new Date().toISOString() }, null, 2) + '\n', 'utf8');
+        model = want;
+      }
+    } else if (marker && idle) {
+      model = chooseAccountModel(typeof marker.original === 'string' ? marker.original : '', known);
+      try { fsModule.rmSync(markerFile, { force: true }); } catch { /* 删不掉下次再删 */ }
     }
     if (model) next.model = model;
     const text = JSON.stringify(next, null, 2) + '\n';
@@ -222,7 +260,7 @@ function syncSharedConfig(personalDir, targetDir, fsModule = fs) {
     try { if (fsModule.existsSync(src)) fsModule.cpSync(src, path.join(targetDir, name), { recursive: true, force: true }); }
     catch (error) { errors.push(`${name}：${error.message}`); }
   }
-  return { errors };
+  return { errors, model };
 }
 
 // 本机号池里各号的模型合集（启动中心选「号池」时的模型菜单）。
@@ -315,4 +353,5 @@ module.exports = {
   POOL_DIR, poolRoot, accountDir, readRegistry, maskAccountId, readCredentials, accountState,
   listAccounts, label, pickAccount, markAssigned, addAccount, setNote, removeAccount,
   projectCredentialsOverride, syncSharedConfig, poolModelOptions,
+  chooseAccountModel, readSettingsModel, effectiveModel, ROUTE_MARKER,
 };

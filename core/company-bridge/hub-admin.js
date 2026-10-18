@@ -283,14 +283,17 @@ class HubAdmin {
   async resumeInterrupted({ sameProcess = false } = {}) {
     const plan = this.state().resumeAfterRestart;
     if (!plan || !Array.isArray(plan.items)) return null;
-    if (!sameProcess && plan.boot === this.boot) return null; // 还没重启
+    // 还没重启；有「CLI 还没就绪、到点再发」的项时照常处理（看门狗那条路径在本进程里恢复过会话）。
+    if (!sameProcess && plan.boot === this.boot && !plan.items.some(x => x.state === 'waiting-ready')) return null;
     if (this.resuming) return null;
     if (!sameProcess && this.deps.appReady && !this.deps.appReady()) return null; // 窗口和钩子服务就绪后再恢复
     this.resuming = true;
     try {
       const items = plan.items.map(x => ({ ...x }));
       for (const item of items) {
-        if (item.state) {
+        // 恢复出来的会话 CLI 还没就绪、「继续」明确没发出：到点再发（resumeOne）。
+        if (item.state === 'waiting-ready' && item.retryAt > this.now()) continue;
+        if (item.state && item.state !== 'waiting-ready') {
           if (item.state === 'resuming') { item.state = 'failed'; item.note = '上次恢复途中公司 Hub 又重启了，没有再发「继续」'; this.settle(item, false); }
           continue;
         }
@@ -300,6 +303,8 @@ class HubAdmin {
         Object.assign(item, outcome);
         this.save({ resumeAfterRestart: { ...plan, items } });
       }
+      // 还有等 CLI 就绪的项：清单留着，下一轮定时器再处理；全部有结果后再回报。
+      if (items.some(x => x.state === 'waiting-ready')) { this.save({ resumeAfterRestart: { ...plan, items } }); this.bridge.changed(); return { items, waiting: true }; }
       this.save({ resumeAfterRestart: null });
       const done = items.filter(x => x.state !== 'failed' && !x.skipped), failed = items.filter(x => x.state === 'failed');
       const reasons = failed.map(x => `${x.thread ? x.thread + ' 第 ' + x.round + ' 轮' : '本机会话' + (x.title ? '「' + x.title + '」' : '')}：${x.note}`).join('；');
@@ -344,6 +349,14 @@ class HubAdmin {
         } else {
           // 正规发送入口（session:send-prompt 同一路径，等 CLI 就绪、分块提交、语义确认），只发纯「继续」。
           const receipt = await this.deps.sendPrompt(id, RESUME_TEXT, randomUUID());
+          // CLI 还没就绪（发送入口等了 60 秒没见到输入框，明确没发）：不判失败，隔 15 秒再发，最多等 5 分钟（同 company.js dispatch）。
+          // 2026-10-18 v2.1.10 真机：重启后恢复出来的 CodeAgent 会话启动慢，「继续」和随后的派发都撞上 cli-not-ready。
+          if (receipt && receipt.notSent && receipt.error === 'cli-not-ready') {
+            const { NOT_READY_RETRY_MS, NOT_READY_MAX_MS } = require('./company');
+            const since = item.notReadySince && item.notReadySince >= this.bridge.bootAt ? item.notReadySince : this.now(); // 上一个进程记的从头算
+            if (this.now() - since < NOT_READY_MAX_MS) return { state: 'waiting-ready', notReadySince: since, retryAt: this.now() + NOT_READY_RETRY_MS, note: '会话已恢复，CLI 还没就绪，稍后再发「继续」' };
+            throw new Error(`会话恢复后 CodeAgent 等了 ${Math.round((this.now() - since) / 60000)} 分钟仍没启动就绪（cli-not-ready），「继续」没有发出`);
+          }
           if (!receipt || receipt.notSent || (receipt.ok === false && !receipt.unconfirmed && receipt.sendStatus !== 'stuck')) {
             throw new Error('「继续」没有发进会话：' + (receipt?.message || receipt?.error || '原因不明'));
           }

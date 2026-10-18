@@ -97,7 +97,7 @@
       <label>自动作答</label><div class="hl-row"><select data-hl-f="enabled"><option value="1"${s.enabled ? ' selected' : ''}>开：收到问题就开 CodeAgent 会话作答</option><option value="0"${s.enabled ? '' : ' selected'}>关：只收下问题，不作答</option></select></div>
       <label>权限</label><div class="hl-muted">CodeAgent 不认禁用工具的启动参数，「不改动这台电脑、不回传源码」靠下面的说明约束；这台电脑上已注册的 MCP（AirView、内网搜索等）可以用。</div>
       <label>代码位置</label><div><textarea rows="3" data-hl-f="codeRoots" placeholder="每行一个目录，例如 D:\\code\\l2">${esc(s.codeRoots.join('\n'))}</textarea><div class="hl-muted">第一行作为 CodeAgent 会话的工作目录，其余目录一并开放读取。</div></div>
-      <label>运行</label><div class="hl-row">模型用 CodeAgent 的默认 ·
+      <label>运行</label><div class="hl-row">模型：问题里指定了模型时按指定（挑有它权限的号），否则用 CodeAgent 的默认 ·
         思考<select data-hl-f="effort">${opt(['low', 'medium', 'high', 'max'].map(x => ({ id: x, label: { low: '低', medium: '中', high: '高', max: '最高' }[x] })), s.effort)}</select>
         空闲检查间隔<select data-hl-f="pollSeconds">${opt([...new Set([10, 15, 30, 60, 120, s.pollSeconds])].sort((a, b) => a - b).map(x => ({ id: String(x), label: x + ' 秒' })), String(s.pollSeconds))}</select>
         <div class="hl-muted">任务开始后自动每 10 秒检查；结束后保持 10 分钟，随后恢复空闲间隔。</div></div>
@@ -119,7 +119,7 @@
       const rounds = t.rounds.map(r => `<div><b>第 ${r.round} 轮</b>${r.error ? ` <span class="hl-pill bad">${esc(r.error)}</span>` : ''}<pre>${esc(r.question)}</pre>${r.reply ? `<div class="hl-muted">回执（${clock(r.replyAt)}）</div><pre>${esc(r.reply)}</pre>` : ''}</div>`).join('');
       return `<div class="hl-item"><div class="hl-row"><span class="hl-pill ${tone}">${label}</span><b>${esc(t.id)}</b><span>${esc(t.title)}</span>
         <span style="flex:1"></span>${t.sessionId ? `<button class="hl-link" data-hl="open:${esc(t.sessionId)}">${t.session?.open ? '打开会话' : '找回会话'}</button>` : ''}${t.state === 'failed' ? `<button class="hl-link" data-hl="retry:${esc(t.id)}">重试</button>` : ''}</div>
-        <div class="hl-muted">收到 ${clock(t.createdAt)} · ${t.rounds.length} 轮${t.from?.title ? ' · 来自会话「' + esc(t.from.title) + '」' : ''}</div>
+        <div class="hl-muted">收到 ${clock(t.createdAt)} · ${t.rounds.length} 轮${t.model ? ' · 指定模型 ' + esc(t.model) : ''}${t.from?.title ? ' · 来自会话「' + esc(t.from.title) + '」' : ''}</div>
         <details><summary class="hl-muted">看问答</summary>${rounds}</details></div>`;
     }).join('');
   }
@@ -131,7 +131,7 @@
       const last = t.rounds[t.rounds.length - 1] || {};
       const [label, tone] = ASK_STATE[t.state] || [t.state, ''];
       const undelivered = t.rounds.some(r => (r.reply || r.error) && !r.delivered);
-      const rounds = t.rounds.map(r => `<div><b>第 ${r.round} 轮</b> <span class="hl-muted">${r.chars ? r.chars + ' 字 · ' : ''}问于 ${clock(r.sentAt)}${r.replyAt ? ' · 回复 ' + clock(r.replyAt) : ''}${r.meta?.agent ? ' · ' + (r.meta.agent === 'codex' ? 'Codex' : 'Claude') : ''}${r.meta?.fallbackReason ? '（Claude ' + esc(r.meta.fallbackReason) + '）' : ''}${r.meta?.companyAsks ? ' · 回公司查证据 ' + r.meta.companyAsks + ' 次' : ''}</span>${r.error ? ` <span class="hl-pill bad">${esc(r.error)}</span>` : ''}${r.deliveryError ? ` <span class="hl-pill bad">${esc(r.deliveryError)}</span>` : ''}
+      const rounds = t.rounds.map(r => `<div><b>第 ${r.round} 轮</b> <span class="hl-muted">${r.chars ? r.chars + ' 字 · ' : ''}问于 ${clock(r.sentAt)}${r.replyAt ? ' · 回复 ' + clock(r.replyAt) : ''}${r.meta?.agent ? ' · ' + (r.meta.agent === 'codex' ? 'Codex' : 'Claude') : ''}${r.meta?.fallbackReason ? '（Claude ' + esc(r.meta.fallbackReason) + '）' : ''}${r.meta?.companyAsks ? ' · 回公司查证据 ' + r.meta.companyAsks + ' 次' : ''}</span>${r.error ? ` <span class="hl-pill bad">${esc(r.error)}</span>` : ''}${r.deliveryError ? ` <span class="hl-pill bad">${esc(r.deliveryError)}</span>` : ''}${r.deliveryNote ? ` <span class="hl-muted">${esc(r.deliveryNote)}</span>` : ''}
         <pre>${esc(r.question)}</pre>${r.reply ? `<pre>${esc(r.reply)}</pre>` : ''}</div>`).join('');
       return `<div class="hl-item"><div class="hl-row"><span class="hl-pill ${tone}">${label}</span><b>${esc(t.id)}</b><span>${esc(t.title)}</span>${undelivered ? '<span class="hl-muted">等会话停下再送</span>' : ''}
         <span style="flex:1"></span><button class="hl-link" data-hl="open:${esc(t.sessionId)}">${t.session?.open ? '打开会话' : '找回会话'}</button></div>

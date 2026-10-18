@@ -3,16 +3,23 @@
 // 流程：Hub 先用 welink-cli 取原始数据、给每条编出处 → 先出一份按规则排的清单（立刻能看）→
 // 再请助理会话里的 CodeAgent 读同一份数据，挑重点写成五栏 → Hub 逐条核对出处，找不到出处的删掉并注明。
 // 首屏最多 10 条；空栏不显示；点过「处理了」的条目第二天不再出现。
+// 2026-10-18 改：消息取的是回看时间内全部会话（可能上千条）。交给 AI 的提问里只直接写重要的那部分
+// （单聊、@ 我的、我说过话的、提到关注词的群消息，再按新近补满预算），全部消息另存成 data/brief-input-<日期>.md 让它需要时去读。
+// 「关注群要点」改成「群里和你相关」：不用手动勾群，按 @ 你、关注词、你参与讨论自动挑。
 const D = require('./data');
 
 const SECTIONS = Object.freeze([
   { key: 'meetings', title: '今天的会' },
   { key: 'awaiting', title: '等你回复' },
   { key: 'commitments', title: '你答应过的事' },
-  { key: 'groups', title: '关注群要点' },
+  { key: 'groups', title: '群里和你相关' },
   { key: 'mail', title: '重要邮件' },
 ]);
 const FIRST_SCREEN = 10;
+const INLINE_CHARS = 40000; // 直接写进提问的消息原文上限（提问是贴进 CodeAgent 终端的，太长不稳）
+const lookback = settings => Math.max(1, Number(settings?.lookbackHours) || 36);
+const when = at => (at ? new Date(at).toLocaleString('zh-CN', { hour12: false }) : '');
+const lineOf = m => `[${m.sourceId}] ${m.group ? '群「' + m.convName + '」' : '单聊「' + m.convName + '」'} ${m.mine ? '我' : m.sender}${m.at ? ' ' + when(m.at) : ''}${m.atMe ? '（@我）' : m.atAll ? '（@所有人）' : ''}：${D.short(m.text, 200)}`;
 
 // 按规则排的清单：AI 不可用或还没整理完时先给这个。
 function fallbackBrief(snapshot, { day, now = Date.now(), settings = {}, commitments = [], done = new Set() } = {}) {
@@ -20,11 +27,11 @@ function fallbackBrief(snapshot, { day, now = Date.now(), settings = {}, commitm
   const item = (source, text, extra = {}) => ({ source, text, sourceLabel: index.get(source)?.label || '', ...extra });
   const meetings = D.todaysMeetings(snapshot, day).map(m => item(m.sourceId, `${D.clock(m.start)}${m.end ? '–' + D.clock(m.end) : ''} ${m.subject}${m.location ? ' · ' + m.location : ''}`));
   const awaiting = D.awaiting(snapshot, settings).map(m => item(m.sourceId, `${m.sender}${m.group ? '（' + m.convName + '）' : ''}等你回复 ${Math.max(1, Math.round((now - m.since) / 3600000))} 小时：${D.short(m.text, 30)}`));
-  const watched = new Set((settings.watchGroups || []).map(g => String(g.id)));
-  const groups = (snapshot.conversations || []).filter(c => watched.has(c.id)).map(c => {
-    const today = ((snapshot.messages || {})[c.id] || []).filter(m => m.at && D.dayKey(m.at) === day);
-    return today.length ? item(today[today.length - 1].sourceId, `${c.name}：今天 ${today.length} 条消息，最新是 ${today[today.length - 1].sender}「${D.short(today[today.length - 1].text, 24)}」`) : null;
-  }).filter(Boolean);
+  const hours = lookback(settings), since = now - hours * 3600000;
+  const groups = D.relatedGroups(snapshot, { keywords: settings.keywords, since }).map(r => {
+    const why = [r.atMe ? `@你 ${r.atMe} 次` : '', r.keyword ? `提到关注词 ${r.keyword} 次` : '', r.mine ? '你参与了讨论' : ''].filter(Boolean).join('，');
+    return item(r.key.sourceId, `${r.conv.name}：${hours} 小时内 ${r.count} 条，${why}；${r.key.mine ? '你' : r.key.sender}「${D.short(r.key.text, 24)}」`);
+  });
   const mail = [...(snapshot.mails || [])].sort((a, b) => Number(b.important) - Number(a.important) || (b.at || 0) - (a.at || 0)).slice(0, 5)
     .map(m => item(m.sourceId, `${m.from ? m.from + '：' : ''}${m.subject}`));
   const commits = commitments.filter(c => !c.due || c.due >= day).map(c => ({ ...c }));
@@ -35,21 +42,17 @@ function fallbackBrief(snapshot, { day, now = Date.now(), settings = {}, commitm
 function briefPrompt(snapshot, { day, now = Date.now(), settings = {}, commitments = [] } = {}) {
   const lines = [];
   for (const m of D.todaysMeetings(snapshot, day)) lines.push(`[${m.sourceId}] 会议 ${D.clock(m.start)}${m.end ? '-' + D.clock(m.end) : ''} ${m.subject}${m.location ? ' 地点 ' + m.location : ''}${m.attendees ? ' 参会 ' + m.attendees + ' 人' : ''}${m.hasFiles ? ' 有材料' : ''}`);
-  const since = now - 36 * 3600000;
-  for (const list of Object.values(snapshot.messages || {})) {
-    for (const m of list) {
-      if (m.at && m.at < since && !m.mine) continue;
-      lines.push(`[${m.sourceId}] ${m.group ? '群「' + m.convName + '」' : '单聊「' + m.convName + '」'} ${m.mine ? '我' : m.sender}${m.at ? ' ' + new Date(m.at).toLocaleString('zh-CN', { hour12: false }) : ''}：${D.short(m.text, 200)}`);
-    }
-  }
+  const picked = inlineMessages(snapshot, { now, settings: { ...settings, day } });
+  lines.push(...picked.lines);
   for (const m of snapshot.mails || []) lines.push(`[${m.sourceId}] 未读邮件 ${m.from}：${m.subject}${m.important ? '（标了重要）' : ''}${m.preview ? ' —— ' + D.short(m.preview, 120) : ''}`);
   const carry = commitments.filter(c => !c.due || c.due >= day).map(c => `- ${c.text}（截止 ${c.due || '未定'}，出处 ${c.source}）`);
   return [
-    `请帮我整理今天（${day}）的工作简报。下面是从我的 WeLink 里取到的原始数据，每条前面方括号里是出处编号。`,
+    `请帮我整理今天（${day}）的工作简报。下面是从我的 WeLink 里取到的原始数据（最近 ${lookback(settings)} 小时），每条前面方括号里是出处编号。`,
+    picked.omitted ? `下面列出了单聊、@我的、@所有人的、我说过话的和提到关注词的群消息，以及最新的一部分群消息；另有 ${picked.omitted} 条群消息没有列出，全部消息（同样带出处编号）在当前目录 ${picked.file}，判断群里有没有和我相关的事时可以去读。` : '',
     '',
     '要求：',
     '1. 只根据下面的数据写，不编造；每条必须带且只带一个出处编号（原样抄方括号里的编号）。',
-    '2. 分五栏：meetings 今天的会（时间、主题，会前要准备什么）；awaiting 等我回复的人和事；commitments 我在消息里答应过、还没做完的事（写 due 截止日期 YYYY-MM-DD，推不出就留空）；groups 关注群里和我相关的要点；mail 需要我处理的邮件。',
+    '2. 分五栏：meetings 今天的会（时间、主题，会前要准备什么）；awaiting 等我回复的人和事；commitments 我在消息里答应过、还没做完的事（写 due 截止日期 YYYY-MM-DD，推不出就留空）；groups 群里和我相关的要点（@我的、要我拿主意或跟进的、和我手上工作有关的）；mail 需要我处理的邮件。',
     '3. 每条一句话，40 字以内，先写最要紧的。五栏合计最多 10 条，没有内容的栏给空数组。是你推断出来、原文没明说的，加 "guess": true。',
     `4. 只输出一个 JSON 代码块，格式：{"meetings":[{"text":"…","source":"…"}],"awaiting":[],"commitments":[{"text":"…","source":"…","due":"${day}"}],"groups":[],"mail":[]}`,
     '',
@@ -57,6 +60,34 @@ function briefPrompt(snapshot, { day, now = Date.now(), settings = {}, commitmen
     '原始数据：',
     lines.length ? lines.join('\n') : '（今天没有取到会议、消息和邮件）',
   ].join('\n');
+}
+
+// 挑出直接写进提问的消息：先放必看的（单聊、@我、我说的、提到关注词的），再按新近补满预算；按会话、时间排好。
+function inlineMessages(snapshot, { now = Date.now(), settings = {} } = {}) {
+  const since = now - lookback(settings) * 3600000, words = (settings.keywords || []).map(w => String(w).trim()).filter(Boolean);
+  const all = Object.values(snapshot.messages || {}).flat().filter(m => !m.at || m.at >= since || m.mine);
+  const must = m => !m.group || m.mine || m.atMe || m.atAll || words.some(w => m.text.includes(w));
+  const chosen = new Set();
+  let used = 0;
+  const take = m => { const n = lineOf(m).length + 1; if (used + n > INLINE_CHARS && chosen.size) return false; chosen.add(m); used += n; return true; };
+  for (const m of all.filter(must).sort((a, b) => (b.at || 0) - (a.at || 0))) if (!take(m)) break;
+  for (const m of all.filter(m => !must(m)).sort((a, b) => (b.at || 0) - (a.at || 0))) if (!take(m)) break;
+  const order = new Map(Object.keys(snapshot.messages || {}).map((id, i) => [id, i]));
+  const lines = [...chosen].sort((a, b) => (order.get(a.conv) - order.get(b.conv)) || (a.at || 0) - (b.at || 0)).map(lineOf);
+  return { lines, omitted: all.length - chosen.size, total: all.length, file: inputFileName(settings.day) };
+}
+const inputFileName = day => `data/brief-input${day ? '-' + day : ''}.md`;
+// 全部消息的原文（给助理会话按需读）：按会话分节，每条带出处编号。
+function briefInputFile(snapshot, { day, now = Date.now(), settings = {} } = {}) {
+  const since = now - lookback(settings) * 3600000, convs = new Map((snapshot.conversations || []).map(c => [c.id, c]));
+  const parts = [`# ${day} 最近 ${lookback(settings)} 小时的 WeLink 消息（出处编号在方括号里）`, ''];
+  for (const [id, list] of Object.entries(snapshot.messages || {})) {
+    const rows = list.filter(m => !m.at || m.at >= since || m.mine);
+    if (!rows.length) continue;
+    const c = convs.get(id) || {};
+    parts.push(`## ${c.group ? '群' : '单聊'}「${c.name || id}」（${rows.length} 条）`, ...rows.map(lineOf), '');
+  }
+  return parts.join('\n');
 }
 
 // 读 CodeAgent 的回答：取 JSON，逐条核对出处；出处不在原始数据里的删掉并计数。
@@ -106,4 +137,4 @@ function mergeCommitments(previous, brief, day) {
   return [...map.values()].filter(c => !c.due || c.due >= cutoff);
 }
 
-module.exports = { SECTIONS, FIRST_SCREEN, fallbackBrief, briefPrompt, parseAgentBrief, mergeCommitments };
+module.exports = { SECTIONS, FIRST_SCREEN, INLINE_CHARS, fallbackBrief, briefPrompt, briefInputFile, inlineMessages, inputFileName, parseAgentBrief, mergeCommitments };

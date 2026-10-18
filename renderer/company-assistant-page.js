@@ -2,7 +2,7 @@
 // 公司版「助理」页（2026-10-16 选定设计 B：简报 + 对话）。页面就是和助理会话的对话：
 // 今天第一条是简报（默认收起成要点，点开看全文，每条带出处），下面是问答；输入框上方一排常用问题小标签。
 // 顶部状态：WeLink 登录（过期时扫码）、邮件和日历是否接入、数据只留本机、下一份简报时间。
-// 设置分三页（2026-10-17）：简报与提醒 / WeLink 与邮箱 / 桌宠。邮箱 Hub 先从 WeLink 账号自动读、自动配好，
+// 设置分四页（2026-10-17 起三页，10-18 加「手机」）：简报与提醒 / WeLink 与邮箱 / 手机 / 桌宠。邮箱 Hub 先从 WeLink 账号自动读、自动配好，
 // 读不到才在「WeLink 与邮箱」页请用户填一次——不让助理在对话里问。
 // 写法同无线页：盖在主区域上的一层，点左侧其他按钮自动关闭。左侧按钮只在公司版（gate.js）插入。
 function createCompanyAssistantPage({ document, window, ipcRenderer, openSession, closeOtherPanels = () => {}, showMessage }) {
@@ -156,7 +156,7 @@ function createCompanyAssistantPage({ document, window, ipcRenderer, openSession
       const answer = c.state === 'done' ? `<div class="ca-md">${markdown(c.a)}</div>`
         : c.state === 'error' ? `<p class="ca-note bad">${esc(c.error || '没答上')}<button type="button" class="ca-link" data-ca="retry:${esc(c.id)}">重问</button></p>`
           : `<p class="ca-note run">${c.state === 'queued' ? '排队中…' : '助理正在查…'}</p>`;
-      return `<div class="ca-msg user"><div class="ca-card-head"><b>我</b><span class="ca-time">${when(c.askedAt)}</span></div><div class="ca-body">${esc(c.q).replace(/\n/g, '<br>')}</div></div>
+      return `<div class="ca-msg user"><div class="ca-card-head"><b>我</b>${c.via === 'phone' ? '<span class="ca-chip">手机</span>' : ''}<span class="ca-time">${when(c.askedAt)}</span></div><div class="ca-body">${esc(c.q).replace(/\n/g, '<br>')}</div></div>
         <div class="ca-msg"><div class="ca-card-head"><b>助理</b>${c.answeredAt ? `<span class="ca-time">${when(c.answeredAt)}</span>` : ''}</div>${answer}</div>`;
     }).join('');
   }
@@ -259,8 +259,83 @@ function createCompanyAssistantPage({ document, window, ipcRenderer, openSession
     } catch (error) { if (msg) msg.textContent = '没成功：' + error.message; } finally { if (button) button.disabled = false; }
   }
 
-  const TABS = [['brief', '简报与提醒'], ['welink', 'WeLink 与邮箱'], ['pet', '桌宠']];
-  let petTab = null;
+  const TABS = [['brief', '简报与提醒'], ['welink', 'WeLink 与邮箱'], ['phone', '手机'], ['pet', '桌宠']];
+  let petTab = null, phoneTimer = null, phoneData = null;
+
+  // 「手机」页（2026-10-18）：在手机 WeLink 的专用群里和助理对话。群由用户自己在手机上建，这里只选群、开关和看往来。
+  const KIND_TAG = { other: '别人发的', stale: '过期没执行', throttled: '太快没处理', unsupported: '不是文字', failed: '没发出去', ack: '回执', done: '会话答完', stuck: '会话卡住', welcome: '接通', test: '测试', error: '没答上', info: '提示' };
+  function phoneLive() {
+    const p = phoneData.phone, st = p.settings;
+    const line = !st.groupId ? '<span class="ca-chip">还没选群</span>' : !st.enabled ? '<span class="ca-chip">没开启</span>'
+      : p.lastError ? `<span class="ca-chip warn">出错</span><span class="ca-note">${esc(p.lastError)}</span>`
+        : p.lastOkAt ? `<span class="ca-chip ok">已接通</span><span class="ca-note">每 3 秒查一次群消息，上次 ${clock(p.lastOkAt)}${p.pending ? ` · 正在答 ${p.pending} 条` : ''}</span>` : '<span class="ca-chip run">正在接通…</span>';
+    const watching = p.watching.length ? `<p class="ca-note">正在盯 ${p.watching.length} 个会话：${p.watching.map(w => esc(w.title || w.id)).join('、')}（答完或卡住时推到手机）</p>` : '';
+    const log = p.log.length ? p.log.map(x => `<div class="ca-src-row ca-phone-row"><span>${clock(x.at)} ${x.dir === 'in' ? '手机→' : '→手机'}</span>${x.kind && KIND_TAG[x.kind] ? `<span class="ca-chip${['failed', 'stale', 'throttled'].includes(x.kind) ? ' warn' : ''}">${KIND_TAG[x.kind]}</span>` : ''}<span class="ca-note" title="${esc(x.text)}">${esc(x.text)}</span></div>`).join('')
+      : '<p class="ca-note">还没有往来。</p>';
+    return `<div class="ca-row">${line}</div>${watching}<div class="ca-sec small">最近往来</div>${log}`;
+  }
+  function phoneTab() {
+    const st = phoneData.phone.settings, check = phoneData.phone.groupCheck;
+    const groups = (phoneData.conversations || []).filter(c => c.group);
+    if (st.groupId && !groups.some(g => g.id === st.groupId)) groups.unshift({ id: st.groupId, name: st.groupName || st.groupId, group: true });
+    const options = ['<option value="">— 选一个群 —</option>', ...groups.map(g => `<option value="${esc(g.id)}" data-name="${esc(g.name)}"${g.id === st.groupId ? ' selected' : ''}>${esc(g.name)}</option>`)].join('');
+    const checkLine = check && check.groupId === st.groupId ? `<span class="ca-chip${check.ok ? ' ok' : ' warn'}">${check.ok ? '成员没问题' : '有其他人'}</span><span class="ca-note">${esc(check.note)}</span>` : '';
+    return `<fieldset class="col"><legend>接通状态</legend><div data-slot="phone-live">${phoneLive()}</div></fieldset>
+      <fieldset class="col"><legend>第一次用：在手机上建一个只有你和小微助手的群</legend>
+        <ol class="ca-steps"><li>手机 WeLink 里发起群聊，拉上「小微助手」和一位同事（建群至少要 3 人）。</li>
+          <li>建好后在群设置里把这位同事移出，群里只剩你和小微助手。</li>
+          <li>群名改成「助理 CodeAgent」，在群里随便说一句，再点下面「刷新群列表」，选中这个群。</li>
+          <li>勾上「开启手机对话」并保存：Hub 会在群里发一句「已接通」，之后在群里直接跟助理说话。</li></ol>
+        <p class="ca-note">Hub 只认这个群里你本人发的文字，只往这个群发消息，回答以「【助理】」开头。超过 2 分钟的旧消息不执行，每分钟最多 20 条。</p></fieldset>
+      <fieldset class="col"><legend>选群</legend>
+        <div class="ca-row"><select data-f="phone-group">${options}</select><button type="button" class="ca-btn small" data-x="phone-refresh">刷新群列表</button><button type="button" class="ca-btn small" data-x="phone-check">检查群成员</button></div>
+        <div class="ca-row" data-slot="phone-check">${checkLine}</div></fieldset>
+      <fieldset class="col"><legend>开关与推送</legend>
+        <label><input type="checkbox" data-f="phone-enabled"${st.enabled ? ' checked' : ''}>开启手机对话</label>
+        <label><input type="checkbox" data-f="phone-pushWatched"${st.pushWatched ? ' checked' : ''}>助理派出的、让它盯着的会话答完或卡住时，推到手机</label>
+        <label><input type="checkbox" data-f="phone-pushStuck"${st.pushStuck ? ' checked' : ''}>其他会话卡住等你时也推到手机（电脑前 5 分钟内有人操作就不推）</label></fieldset>
+      <div class="ca-row end"><button type="button" class="ca-btn" data-x="phone-test"${st.groupId ? '' : ' disabled'}>发一条测试消息</button><button type="button" class="ca-btn primary" data-x="phone-save">保存</button></div>`;
+  }
+  async function mountPhoneTab(panel) {
+    const body = panel.querySelector('.ca-tab-body');
+    if (!body.innerHTML.trim()) body.innerHTML = '<p class="ca-note">正在读取…</p>';
+    try { phoneData = await call('phone-status'); } catch (error) { body.innerHTML = `<p class="ca-note bad">手机设置没能打开：${esc(error.message)}</p>`; return; }
+    if (panel.dataset.tab !== 'phone' || !body.isConnected) return;
+    body.innerHTML = phoneTab();
+    const groupSel = body.querySelector('[data-f="phone-group"]');
+    const chosen = () => { const o = groupSel.selectedOptions[0]; return { groupId: groupSel.value, groupName: o?.dataset.name || '' }; };
+    body.querySelector('[data-x="phone-refresh"]').onclick = async e => {
+      e.target.disabled = true;
+      try { await call('refresh'); await mountPhoneTab(panel); showMessage?.('群列表已刷新'); } catch (error) { e.target.disabled = false; showMessage?.('没刷新：' + error.message); }
+    };
+    body.querySelector('[data-x="phone-check"]').onclick = async e => {
+      const g = chosen(); if (!g.groupId) { showMessage?.('先选一个群'); return; }
+      e.target.disabled = true;
+      const slot = body.querySelector('[data-slot="phone-check"]');
+      try { const r = await call('phone-check-group', { groupId: g.groupId }); slot.innerHTML = `<span class="ca-chip${r.ok ? ' ok' : ' warn'}">${r.ok ? '成员没问题' : '有其他人'}</span><span class="ca-note">${esc(r.note)}</span>`; }
+      catch (error) { slot.innerHTML = `<span class="ca-note bad">没查到：${esc(error.message)}</span>`; } finally { e.target.disabled = false; }
+    };
+    body.querySelector('[data-x="phone-test"]').onclick = async e => {
+      e.target.disabled = true;
+      try { const r = await call('phone-test'); showMessage?.(r.ok ? '测试消息已发到群里，去手机上看看' : '没发出去，原因见「最近往来」'); } catch (error) { showMessage?.('没发出去：' + error.message); } finally { e.target.disabled = false; }
+    };
+    body.querySelector('[data-x="phone-save"]').onclick = async e => {
+      const g = chosen(), on = f => body.querySelector(`[data-f="phone-${f}"]`).checked;
+      if (on('enabled') && !g.groupId) { showMessage?.('先选一个群再开启'); return; }
+      e.target.disabled = true;
+      try {
+        const r = await call('phone-settings', { ...g, enabled: on('enabled'), pushWatched: on('pushWatched'), pushStuck: on('pushStuck') });
+        showMessage?.(r.welcome === false ? '已保存，但「已接通」那句没发进群里，原因见「最近往来」' : r.welcome ? '已接通：去手机上看看群里那句「已接通」' : '手机设置已保存');
+        await mountPhoneTab(panel);
+      } catch (error) { e.target.disabled = false; showMessage?.('没有保存：' + error.message); }
+    };
+    // 开着这页时每 3 秒刷新状态和往来（只换这一块，不打断正在改的选项）。
+    clearInterval(phoneTimer);
+    phoneTimer = setInterval(async () => {
+      if (panel.hidden || panel.dataset.tab !== 'phone' || !body.isConnected) { clearInterval(phoneTimer); phoneTimer = null; return; }
+      try { phoneData = await call('phone-status'); const live = body.querySelector('[data-slot="phone-live"]'); if (live) live.innerHTML = phoneLive(); } catch { /* 下次再刷 */ }
+    }, 3000);
+  }
 
   function welinkTab() {
     const d = data, s = d.settings, login = d.login;
@@ -284,13 +359,15 @@ function createCompanyAssistantPage({ document, window, ipcRenderer, openSession
   }
 
   function briefTab() {
-    const s = data.settings, watched = new Set(s.watchGroups.map(g => g.id));
-    const groups = (data.conversations || []).filter(c => c.group);
-    const known = new Set(groups.map(g => g.id));
-    const extra = s.watchGroups.filter(g => !known.has(g.id)).map(g => ({ ...g, group: true }));
+    const s = data.settings, sc = data.scope;
     const opts = (list, cur, fmt = x => x) => list.map(x => `<option value="${x}"${String(x) === String(cur) ? ' selected' : ''}>${fmt(x)}</option>`).join('');
-    return `<fieldset><legend>关注的群（简报里出「关注群要点」，关注词也在这些群里找）</legend>
-        <div class="ca-groups">${[...groups, ...extra].map(g => `<label><input type="checkbox" data-group="${esc(g.id)}" data-name="${esc(g.name)}"${watched.has(g.id) ? ' checked' : ''}>${esc(g.name)}</label>`).join('') || '<span class="ca-note">还没取到最近会话：先扫码登录、点「刷新数据」。</span>'}</div></fieldset>
+    // 2026-10-18：不再手动勾「关注群」，默认取回看时间内所有单聊和群。免打扰、置顶 welink-cli 拿不到（Q-1018-10），不做这两个设置。
+    const last = sc ? `上次取到 ${sc.withMessages} 个会话（单聊 ${sc.p2p}、群 ${sc.withMessages - sc.p2p}）共 ${sc.messages} 条消息${sc.limited ? `，按设置只取了最近 ${sc.maxConversations} 个会话` : ''}。` : '还没取过数据：先扫码登录、点「刷新数据」。';
+    return `<fieldset class="col"><legend>聊天记录范围（简报、提醒和对话都用这份数据）</legend>
+        <div class="ca-row"><label>回看最近<select data-f="lookbackHours">${opts([12, 24, 36, 48, 72], s.lookbackHours, x => x + ' 小时')}</select></label>
+          <label>会话个数<select data-f="maxConversations">${opts([0, 10, 20, 30], s.maxConversations, x => (Number(x) ? '最近 ' + x + ' 个' : '全部（默认）'))}</select></label></div>
+        <p class="ca-note">「全部」是 WeLink 最近会话里排前 50 个（welink-cli 一次最多列 50 个）中，回看时间内有消息的单聊和群，每个都取全部消息。WeLink 的免打扰、置顶信息 welink-cli 拿不到，所以没有这两项设置。</p>
+        <p class="ca-note">${last}</p></fieldset>
       <fieldset><legend>提醒</legend>
         <label>关注词（逗号分隔）<input type="text" data-f="keywords" value="${esc(s.keywords.join('，'))}"></label>
         <label>等你回复超过<select data-f="waitHours">${opts([1, 2, 3, 4, 6, 8, 12, 24], s.waitHours, x => x + ' 小时')}</select>提醒</label>
@@ -312,7 +389,9 @@ function createCompanyAssistantPage({ document, window, ipcRenderer, openSession
     panel.innerHTML = `<div class="ca-settings" role="dialog" aria-label="助理设置">
       <div class="ca-settings-head"><h3>助理设置</h3><div class="ca-tabs" role="tablist">${TABS.map(([k, label]) => `<button type="button" role="tab" class="ca-tab${k === current ? ' on' : ''}" aria-selected="${k === current}" data-ca="settings-tab:${k}">${label}</button>`).join('')}</div>
         <button type="button" class="ca-btn small" data-ca="close-panel">关闭</button></div>
-      <div class="ca-tab-body" data-tab="${current}">${current === 'brief' ? briefTab() : current === 'welink' ? welinkTab() : '<div data-slot="pet-tab"></div>'}</div></div>`;
+      <div class="ca-tab-body" data-tab="${current}">${current === 'brief' ? briefTab() : current === 'welink' ? welinkTab() : current === 'phone' ? '' : '<div data-slot="pet-tab"></div>'}</div></div>`;
+    if (current !== 'phone') { clearInterval(phoneTimer); phoneTimer = null; }
+    if (current === 'phone') { petTab = null; void mountPhoneTab(panel); return; }
     if (current === 'pet') {
       const host = panel.querySelector('[data-slot="pet-tab"]');
       try { petTab = require('./hub-pet/pet-settings-tab.js').mountPetSettingsTab(host, { ipcRenderer, window, document }); }
@@ -330,7 +409,7 @@ function createCompanyAssistantPage({ document, window, ipcRenderer, openSession
       e.target.disabled = true;
       try {
         await call('set-settings', {
-          watchGroups: [...panel.querySelectorAll('[data-group]:checked')].map(x => ({ id: x.dataset.group, name: x.dataset.name })),
+          lookbackHours: Number(v('lookbackHours')), maxConversations: Number(v('maxConversations')),
           keywords: v('keywords'), waitHours: Number(v('waitHours')), prepMinutes: Number(v('prepMinutes')), maxPerHour: Number(v('maxPerHour')),
           briefTime: v('briefTime'), summaryTime: v('summaryTime'), refreshMinutes: Number(v('refreshMinutes')),
           chips: s.chips.filter((_, i) => panel.querySelector(`[data-chip="${i}"]`)?.checked !== false),

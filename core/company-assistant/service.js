@@ -1,9 +1,14 @@
 'use strict';
 // 公司版「助理」服务（2026-10-16 定稿：简报 + 对话；6 条提醒都要；只读；数据只留在这台电脑）。
 //   取数：Hub 用 welink-cli 的查询命令（白名单见 welink.js）取会议、日程、消息、邮件，存在 <数据目录>/company-assistant/。
+//     消息（2026-10-18 用户改）：默认取回看时间（36 小时）内所有单聊和群的全部消息，不限个数、不限条数，宁可多；
+//     「全部」= welink-cli 能列出的最近 50 个会话（--count 上限 50、不能翻页；默认只给 10 个）。设置里可以限个数、调回看时长。
+//     免打扰、置顶 welink-cli 拿不到（Q-1018-10），所以不做这两个设置。不再要手动勾「关注群」。每个会话缓存已取到的消息，之后只补拉新的。
 //   简报：工作日定时（默认 08:20）生成；打开助理页时当天还没有就当场生成。先出按规则排的清单，再请 CodeAgent 挑重点，逐条核对出处。
 //   对话：固定一个 CodeAgent 会话（purpose=company-assistant，不挂 Hub 的 MCP 和「问家里」），它查 WeLink 只用工作目录里的只读包装 welink-ro.cmd。
 //   提醒：每分钟按 reminders.js 算该发的，经提醒总线（notice-bus.js）发布；每小时最多 3 条，同一件事只提醒一次。
+//   手机（2026-10-18）：用户在手机 WeLink 专用群里和助理对话（phone.js）；助理会话挂上 Hub 的会话工具（hub-tools.js，MCP 名 hub_sessions），
+//     能看、推进、新开、盯着其他会话。助理会话本身仍然只读 WeLink、不发消息，回答由 Hub 发回群里。
 const fs = require('node:fs');
 const path = require('node:path');
 const { randomUUID } = require('node:crypto');
@@ -12,11 +17,16 @@ const D = require('./data');
 const B = require('./brief');
 const R = require('./reminders');
 const { noticeBus } = require('./notice-bus');
+const { PhoneChannel, DEFAULT_PHONE, PHONE_NOTE } = require('./phone');
+const { HubTools } = require('./hub-tools');
 
 const PURPOSE = 'company-assistant';
+// 助理会话的工具或说明有变化时加 1：旧会话启动时没挂这些工具，下一次提问时换一个新会话（旧会话留在历史里）。
+const TOOLS_VERSION = 1;
 const DEFAULT_SETTINGS = Object.freeze({
   enabled: true, briefTime: '08:20', summaryTime: '18:00', waitHours: 4, prepMinutes: 15, maxPerHour: 3, refreshMinutes: 10,
-  watchGroups: [], keywords: [], myName: '', workdays: [1, 2, 3, 4, 5], cliPath: '', email: '', emailFrom: '', chips: [],
+  watchGroups: [], keywords: [], myName: '', workdays: [1, 2, 3, 4, 5], cliPath: '', email: '', emailFrom: '', chips: [], phone: DEFAULT_PHONE,
+  lookbackHours: 36, maxConversations: 0,
 });
 // 输入框上方的常用问题（设计稿 B）。fill=true 的只填进输入框，等补全再发。
 const BUILTIN_CHIPS = Object.freeze([
@@ -34,12 +44,19 @@ const INSTRUCTIONS = [
   '3. 回答先写结论；提到具体的会、消息、邮件时，时间和主题照数据原样抄，并写清出处（谁、哪个群或哪场会、几点）。没查到就说没查到，不猜。',
   '4. 数据只留在这台电脑：不上传、不转发，不在当前目录以外写文件。',
   '5. 邮件或日历报「Exchange server domain not found」时：Hub 通常已自动配好；还没好就先看 data/today.json 里 mailSetup.email，有邮箱就直接运行 welink-ro.cmd mail autodiscover --email <邮箱> 再重查，不问我；只有那里也没有邮箱时才问我一次，并提醒我可以在助理页「设置 → WeLink 与邮箱」里填。',
+  '6. 管这台电脑 Hub 里的其他会话（有哪些、做到哪了、推进、新开、卡住时替我按键、停下）用 hub_sessions 工具，直接执行，做完用一两句话复述做了什么、交给了哪个会话。给别的会话派活时只写任务本身，不要把 WeLink 消息、邮件原文整段转过去。',
+  '7. 我在手机 WeLink 上发来的问题，你照常回答；回答由 Hub 发回我手机，你自己不发消息。',
   '可用的查询：welink-ro.cmd im query-recent-conversation；im query-history-message --group-id <群号> 或 --user-account <账号> --query-count <1-100>；meeting query-list --type 1；meeting info --meeting-id <会议号>；calendar list --start YYYY-MM-DD --end YYYY-MM-DD --format json；mail list --is-read 0 --max 20；mail get；search person；contact detail。',
 ].join('\n');
 const JOB_TIMEOUT_MS = 12 * 60000;
 const FRESH_MS = 3 * 60000;
-const HISTORY_PER_CONV = 30;
-const MAX_P2P = 12;
+// 每页取 100 条（welink-cli 的上限）；一个会话最多往回翻 30 页，只为防止翻页死循环，正常回看时间内远到不了。
+const HISTORY_PAGE = 100;
+const MAX_PAGES = 30;
+const LOOKBACK_CHOICES = [12, 24, 36, 48, 72];
+const CONVERSATION_LIMIT = 50; // query-recent-conversation --count 的上限（默认 10），不能翻页
+// 消息编号比大小：真机是长整数（BigInt 比），测试数据可能是普通字符串。
+const idCmp = (a, b) => { try { const x = BigInt(a), y = BigInt(b); return x < y ? -1 : x > y ? 1 : 0; } catch { return String(a) < String(b) ? -1 : String(a) > String(b) ? 1 : 0; } };
 
 class CompanyAssistant {
   constructor(deps) {
@@ -53,6 +70,9 @@ class CompanyAssistant {
     this.refreshing = null;
     this.loginFlow = null;
     this.timers = [];
+    this.tools = deps.noTools ? null : new HubTools(this, deps);
+    this.phone = new PhoneChannel(this, deps);
+    this.toolsReady = null;
   }
 
   // ---- 本地文件（只在这台电脑的 Hub 数据目录里） ----
@@ -71,6 +91,8 @@ class CompanyAssistant {
     if ('enabled' in patch) next.enabled = !!patch.enabled;
     if (hhmm(patch.briefTime)) next.briefTime = hhmm(patch.briefTime);
     if (hhmm(patch.summaryTime)) next.summaryTime = hhmm(patch.summaryTime);
+    if ('lookbackHours' in patch && LOOKBACK_CHOICES.includes(Number(patch.lookbackHours))) next.lookbackHours = Number(patch.lookbackHours);
+    if ('maxConversations' in patch && Number.isFinite(Number(patch.maxConversations))) next.maxConversations = Math.max(0, Math.min(CONVERSATION_LIMIT, Math.round(Number(patch.maxConversations))));
     for (const [k, lo, hi] of [['waitHours', 1, 24], ['prepMinutes', 5, 60], ['maxPerHour', 1, 10], ['refreshMinutes', 5, 60]]) {
       if (k in patch && Number.isFinite(Number(patch[k]))) next[k] = Math.min(hi, Math.max(lo, Math.round(Number(patch[k]))));
     }
@@ -80,6 +102,15 @@ class CompanyAssistant {
     if ('myName' in patch) next.myName = String(patch.myName || '').trim().slice(0, 30);
     if ('cliPath' in patch) next.cliPath = String(patch.cliPath || '').trim();
     if ('email' in patch) { next.email = String(patch.email || '').trim().slice(0, 120); next.emailFrom = patch.emailFrom === 'welink' ? 'welink' : 'settings'; }
+    if (patch.phone && typeof patch.phone === 'object') {
+      const cur = { ...DEFAULT_PHONE, ...(s.phone || {}) }, q = patch.phone, np = { ...cur };
+      if ('enabled' in q) np.enabled = !!q.enabled;
+      if ('groupId' in q) { np.groupId = String(q.groupId || '').trim().slice(0, 80); np.groupName = String(q.groupName || '').trim().slice(0, 60); }
+      for (const k of ['pushWatched', 'pushStuck']) if (k in q) np[k] = !!q[k];
+      // 刚接通（或换了群）：只认这之后发的消息，不把群里以前的话当成指令。
+      if (np.enabled && np.groupId && (!cur.enabled || np.groupId !== cur.groupId)) np.since = this.now();
+      next.phone = np;
+    }
     if (Array.isArray(patch.chips)) next.chips = patch.chips.filter(c => c && String(c.text || '').trim()).slice(0, 12).map(c => ({ label: String(c.label || c.text).trim().slice(0, 16), text: String(c.text).trim().slice(0, 2000) }));
     this.write('settings.json', next);
     this.changed();
@@ -103,12 +134,28 @@ class CompanyAssistant {
     if (chat.some(c => ['queued', 'running'].includes(c.state))) this.saveChat(chat.map(c => ['queued', 'running'].includes(c.state) ? { ...c, state: 'error', error: 'Hub 重启前没答完，可点「重问」' } : c));
     if (!st.keywordSince) this.saveState({ keywordSince: this.now() });
     this.prepareWorkspace();
+    if (this.tools) this.toolsReady = this.tools.start().catch(e => { console.warn('[company-assistant] tools', e.message); });
+    this.phone.start();
     if (this.deps.noTimer) return;
     this.timers.push(setInterval(() => { void this.tick().catch(e => console.warn('[company-assistant] tick', e.message)); }, 60000));
     this.timers.push(setInterval(() => { void this.collectJob().catch(e => console.warn('[company-assistant] collect', e.message)); }, 4000));
     const first = setTimeout(() => { void this.tick().catch(() => {}); }, 15000); this.timers.push(first);
   }
-  close() { for (const t of this.timers) { clearInterval(t); clearTimeout(t); } this.timers = []; }
+  close() { for (const t of this.timers) { clearInterval(t); clearTimeout(t); } this.timers = []; this.phone.close(); this.tools?.close(); }
+  // 给助理会话挂会话工具（main.js 注册的 extraMcpProvider 调用）：只挂给 purpose=company-assistant 的会话。
+  sessionPlan({ opts = {}, id } = {}) {
+    if (opts.purpose !== PURPOSE || !this.tools?.bridge.url) return null;
+    return { mcp: this.tools.mcpEntry(opts.id || id) };
+  }
+  // 「手机」设置：刚接通时往群里发一句，顺带验证 Hub 能发进这个群。
+  async setPhone(patch = {}) {
+    const before = this.settings().phone || {};
+    const s = this.setSettings({ phone: patch });
+    const p = s.phone;
+    let welcome = null;
+    if (p.enabled && p.groupId && (!before.enabled || before.groupId !== p.groupId)) welcome = await this.phone.send(require('./phone').WELCOME, 'welcome');
+    return { ok: true, phone: this.phone.status(), welcome };
+  }
 
   // 助理会话的工作目录：说明（CLAUDE.md）、只读包装、今天的数据。
   prepareWorkspace() {
@@ -151,8 +198,8 @@ class CompanyAssistant {
     const runJson = async (label, args) => {
       try {
         let r = await this.welink(args);
-        let data = welink.parseJson(r.stdout);
-        if (data == null && !args.includes('--format')) { r = await this.welink([...args, '--format', 'json']); data = welink.parseJson(r.stdout); }
+        let data = welink.parseJsonBig(r.stdout);
+        if (data == null && !args.includes('--format')) { r = await this.welink([...args, '--format', 'json']); data = welink.parseJsonBig(r.stdout); }
         if (data == null) { errors.push({ label, text: D.short(r.stderr || r.stdout || '没有输出', 200), calendar: welink.calendarNeedsSetup(r.stderr + r.stdout) }); return null; }
         return data;
       } catch (error) { errors.push({ label, text: D.short(error.message, 200) }); return null; }
@@ -178,14 +225,9 @@ class CompanyAssistant {
         if (snap.mailSetup.ok) { for (let i = errors.length - 1; i >= 0; i -= 1) if (errors[i].calendar) errors.splice(i, 1); await queryCalendar(); }
       }
       snap.calendarNeedsSetup = errors.some(e => e.calendar);
-      const convRaw = await runJson('最近会话', ['im', 'query-recent-conversation']);
+      const convRaw = await runJson('最近会话', ['im', 'query-recent-conversation', '--count', String(CONVERSATION_LIMIT)]);
       if (convRaw) snap.conversations = D.conversations(convRaw);
-      const watched = new Set(s.watchGroups.map(g => g.id));
-      const pick = [...snap.conversations.filter(c => c.group && watched.has(c.id)), ...snap.conversations.filter(c => !c.group).slice(0, MAX_P2P)];
-      for (const conv of pick) {
-        const raw = await runJson(`消息（${conv.name}）`, ['im', 'query-history-message', conv.group ? '--group-id' : '--user-account', conv.id, '--query-count', String(HISTORY_PER_CONV)]);
-        if (raw) snap.messages[conv.id] = D.messages(raw, conv, snap.login.uid);
-      }
+      await this.collectMessages(snap, s, now, runJson);
       const mailRaw = await runJson('未读邮件', ['mail', 'list', '--is-read', '0', '--max', '20']);
       if (mailRaw) snap.mails = D.mails(mailRaw);
       snap.calendarNeedsSetup = errors.some(e => e.calendar);
@@ -195,6 +237,63 @@ class CompanyAssistant {
     try { fs.mkdirSync(path.join(this.workspace, 'data'), { recursive: true }); fs.writeFileSync(path.join(this.workspace, 'data', 'today.json'), JSON.stringify(snap, null, 1), 'utf8'); } catch { /* 下次再写 */ }
     this.pruneFiles();
     return snap;
+  }
+  // 消息：最近会话里每个会话在回看时间内的全部消息，按会话列表原顺序（最近的在前）。
+  // 已缓存的会话只补拉比缓存里最新那条更新的消息；第一次取时从最新一页往回翻，翻到早于回看时间为止。
+  // 会话列表没有时间字段，没法预先跳过安静的会话：每次刷新每个会话都要查一次（约 2 秒一次，50 个约 2 分钟，在后台跑）。
+  async collectMessages(snap, s, now, runJson) {
+    const cutoff = now - s.lookbackHours * 3600000, me = snap.login.uid, phoneGroup = s.phone?.groupId || '';
+    let list = snap.conversations.filter(c => c.id !== phoneGroup); // 手机对话的专用群不进简报
+    const limited = s.maxConversations > 0 && list.length > s.maxConversations;
+    if (limited) list = list.slice(0, s.maxConversations);
+    const cache = this.read('message-cache.json', {}), next = {}, names = D.namesOf(snap.conversations);
+    for (const conv of list) {
+      const got = await this.conversationHistory(conv, cache[conv.id], cutoff, me, s.myName, runJson, names);
+      next[conv.id] = got.cache;
+      if (got.messages.length) snap.messages[conv.id] = got.messages;
+    }
+    this.write('message-cache.json', next);
+    const all = Object.values(snap.messages);
+    snap.scope = { lookbackHours: s.lookbackHours, since: cutoff, listed: snap.conversations.length, fetched: list.length, limited, maxConversations: s.maxConversations,
+      withMessages: all.length, messages: all.reduce((n, l) => n + l.length, 0), p2p: Object.keys(snap.messages).filter(id => !snap.conversations.find(c => c.id === id)?.group).length,
+      listCap: CONVERSATION_LIMIT, listFull: snap.conversations.length >= CONVERSATION_LIMIT };
+  }
+  async conversationHistory(conv, cached, cutoff, me, myName, runJson, names = null) {
+    // 回看时间调长了（缓存覆盖的起点晚于这次的起点）：这个会话重新完整取一遍。
+    if (cached && !(cached.since <= cutoff + 60000)) cached = null;
+    const since = cached ? cached.since : cutoff;
+    const base = ['im', 'query-history-message', conv.group ? '--group-id' : '--user-account', conv.id, '--query-count', String(HISTORY_PAGE)];
+    const label = `消息（${conv.name}）`;
+    const norm = raw => D.messages(raw, conv, me, { myName, names });
+    const keep = new Map((cached?.messages || []).filter(m => !m.at || m.at >= cutoff).map(m => [m.key, m]));
+    const add = list => { for (const m of list) keep.set(m.key, m); };
+    if (cached?.newest) {
+      let from = cached.newest;
+      for (let i = 0; i < MAX_PAGES; i += 1) {
+        const raw = await runJson(label, [...base, '--message-id', from, '--query-direction', '1']);
+        const page = raw ? norm(raw) : [];
+        add(page);
+        const newest = page.reduce((x, m) => (!x || idCmp(m.key, x) > 0 ? m.key : x), null);
+        if (page.length < HISTORY_PAGE || !newest || idCmp(newest, from) <= 0) break;
+        from = newest;
+      }
+    } else {
+      let raw = await runJson(label, base);
+      for (let i = 0; raw && i < MAX_PAGES; i += 1) {
+        const page = norm(raw);
+        add(page);
+        const oldest = page[0];
+        // 这一页没满、或者最旧一条已经早于回看时间（时间读不到时只取一页）：够了。往更旧翻时，真机会把上一页最旧那条再给一次，按编号去重。
+        if (page.length < HISTORY_PAGE || !oldest || !oldest.at || oldest.at < cutoff) break;
+        raw = await runJson(label, [...base, '--message-id', oldest.key, '--query-direction', '0']);
+      }
+    }
+    return this.historyResult(keep, conv, cutoff, cached?.newest, since);
+  }
+  historyResult(keep, conv, cutoff, previousNewest, since) {
+    const messages = [...keep.values()].filter(m => !m.at || m.at >= cutoff).sort((a, b) => (a.at || 0) - (b.at || 0) || idCmp(a.key, b.key));
+    const newest = [...keep.keys()].reduce((x, k) => (!x || idCmp(k, x) > 0 ? k : x), previousNewest || null);
+    return { messages, cache: { newest, since, messages } };
   }
   // 本人邮箱：设置里填过的优先；否则读 WeLink 账号信息（onebox user-info，只读）。读到的存进设置，下次不再查。
   async accountEmail(s = this.settings()) {
@@ -227,6 +326,9 @@ class CompanyAssistant {
     try {
       const keep = D.dayKey(this.now() - 14 * 86400000);
       for (const f of fs.readdirSync(this.dir)) { const m = f.match(/^(?:raw|brief)-(\d{4}-\d\d-\d\d)\.json$/); if (m && m[1] < keep) fs.unlinkSync(this.file(f)); }
+      // 简报用的消息原文只留 3 天（量大）。
+      const recent = D.dayKey(this.now() - 3 * 86400000), data = path.join(this.workspace, 'data');
+      for (const f of fs.existsSync(data) ? fs.readdirSync(data) : []) { const m = f.match(/^brief-input-(\d{4}-\d\d-\d\d)\.md$/); if (m && m[1] < recent) fs.unlinkSync(path.join(data, f)); }
     } catch { /* 清理失败不要紧 */ }
   }
 
@@ -248,6 +350,8 @@ class CompanyAssistant {
     this.write(`brief-${day}.json`, brief);
     this.changed();
     this.queue = this.queue.filter(j => !(j.type === 'brief' && j.day === day));
+    // 全部消息原文写进助理工作目录，提问里只列重要的那部分（brief.js 的 inlineMessages）。
+    try { fs.mkdirSync(path.join(this.workspace, 'data'), { recursive: true }); fs.writeFileSync(path.join(this.workspace, B.inputFileName(day)), B.briefInputFile(snap, { day, now, settings: s }), 'utf8'); } catch { /* 写不了就只靠提问里的部分 */ }
     this.enqueue({ type: 'brief', day, prompt: B.briefPrompt(snap, { day, now, settings: s, commitments: st.commitments }) });
     return brief;
   }
@@ -305,19 +409,19 @@ class CompanyAssistant {
   }
 
   // ---- 对话 ----
-  ask(text) {
+  ask(text, { via = '' } = {}) {
     const q = String(text || '').trim();
     if (!q) throw new Error('问题是空的');
-    const item = { id: randomUUID(), q, state: 'queued', askedAt: this.now() };
+    const item = { id: randomUUID(), q, state: 'queued', askedAt: this.now(), ...(via === 'phone' ? { via } : {}) };
     this.saveChat([...this.chat(), item]);
-    this.enqueue({ type: 'chat', chatId: item.id, prompt: q });
+    this.enqueue({ type: 'chat', chatId: item.id, prompt: via === 'phone' ? PHONE_NOTE + '\n\n' + q : q });
     this.changed();
     return item;
   }
   retryChat(id) {
     const item = this.chat().find(c => c.id === id);
     if (!item) throw new Error('这条对话已经不在了');
-    return this.ask(item.q);
+    return this.ask(item.q, { via: item.via });
   }
   enqueue(job) { this.queue.push({ ...job, id: randomUUID() }); void this.pump(); }
   sessionBusy(id) {
@@ -332,7 +436,9 @@ class CompanyAssistant {
   }
   async ensureSession() {
     const st = this.state();
-    let id = st.sessionId;
+    // 旧版助理会话没挂会话工具：换一个新会话（旧的留在历史里，不再当助理）。
+    let id = st.sessionId && st.toolsVersion === TOOLS_VERSION ? st.sessionId : null;
+    if (this.toolsReady) await this.toolsReady;
     if (id && this.deps.getSession(id)) return id;
     if (id && this.deps.getSessionMetadata?.(id)) {
       try { await this.deps.resumeSession(id); } catch { /* 恢复不了就新开 */ }
@@ -342,7 +448,7 @@ class CompanyAssistant {
     id = randomUUID();
     const created = await this.deps.createSession('codeagent', { id, cwd: this.workspace, title: '公司助理', purpose: PURPOSE, autonomous: true, noInheritCursor: true });
     if (!created || created.id !== id) throw new Error('助理会话没能打开');
-    this.saveState({ sessionId: id, primed: null });
+    this.saveState({ sessionId: id, primed: null, toolsVersion: TOOLS_VERSION });
     return id;
   }
   async pump() {
@@ -388,7 +494,10 @@ class CompanyAssistant {
     this.changed();
     setTimeout(() => { void this.pump(); }, 0);
   }
-  patchChat(id, patch) { this.saveChat(this.chat().map(c => c.id === id ? { ...c, ...patch } : c)); }
+  patchChat(id, patch) {
+    this.saveChat(this.chat().map(c => c.id === id ? { ...c, ...patch } : c));
+    if (patch.state === 'done' || patch.state === 'error') { const item = this.chat().find(c => c.id === id); if (item?.via === 'phone') this.phone.settle(item); }
+  }
 
   // ---- 登录与日历初始化（只在用户点按钮时） ----
   async login() {
@@ -423,10 +532,10 @@ class CompanyAssistant {
     return { ok: true, enabled: s.enabled, now, day, settings: s, chips: [...BUILTIN_CHIPS, ...s.chips.map(c => ({ ...c, custom: true }))],
       cliFound: !!this.cli(), login: snap?.login || null, loginFlow: this.loginFlow, calendarNeedsSetup: !!snap?.calendarNeedsSetup, mailSetup: snap?.mailSetup || null,
       counts: snap ? { meetings: (snap.meetings || []).length, calendar: (snap.calendar || []).length, messages: Object.values(snap.messages || {}).reduce((n, l) => n + l.length, 0), mails: (snap.mails || []).length } : null,
-      refreshedAt: snap?.at || null, refreshing: !!this.refreshing, errors: snap?.errors || [], conversations: (snap?.conversations || []).slice(0, 60),
+      refreshedAt: snap?.at || null, refreshing: !!this.refreshing, errors: snap?.errors || [], conversations: (snap?.conversations || []).slice(0, 60), scope: snap?.scope || null,
       brief: this.brief(day), nextBriefAt: next, chat: this.chat().slice(-60), job: this.job ? { type: this.job.type, sentAt: this.job.sentAt || null } : null,
       queued: this.queue.length, session: sid ? { id: sid, open: !!this.deps.getSession(sid), busy: this.sessionBusy(sid) } : null,
-      notices: st.notices.slice(0, 10), commitments: st.commitments };
+      notices: st.notices.slice(0, 10), commitments: st.commitments, phone: this.phone.status() };
   }
   nextBriefAt(s, now) {
     const at = new Date(now); const [h, m] = s.briefTime.split(':').map(Number);
@@ -438,4 +547,4 @@ class CompanyAssistant {
   }
 }
 
-module.exports = { CompanyAssistant, PURPOSE, DEFAULT_SETTINGS, BUILTIN_CHIPS, INSTRUCTIONS };
+module.exports = { CompanyAssistant, PURPOSE, TOOLS_VERSION, DEFAULT_SETTINGS, BUILTIN_CHIPS, INSTRUCTIONS };

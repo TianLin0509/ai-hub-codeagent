@@ -99,3 +99,8 @@
 .ca-setup{background:#f5f8ff;border:1px solid #d9e5fd;border-radius:10px;padding:10px 14px;margin-bottom:10px}
 .ca-setup b{font-size:13.5px}
 .ca-setup input[type=email]{padding:4px 8px;border:1px solid #cfd9ec;border-radius:6px;font:inherit;font-size:13px;min-width:260px}
+/* 「手机」设置页（2026-10-18） */
+.ca-steps{margin:2px 0 4px;padding-left:20px;font-size:13px;line-height:1.8;color:#2d3748}
+.ca-settings select[data-f="phone-group"]{min-width:260px}
+.ca-phone-row>span:first-child{width:96px;flex:none;white-space:nowrap}
+.ca-phone-row .ca-chip{flex:none}

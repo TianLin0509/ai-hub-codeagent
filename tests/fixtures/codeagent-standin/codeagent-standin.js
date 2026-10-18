@@ -28,6 +28,19 @@ for (let i = 0; i < input.length; i += 1) {
 }
 const env = { ...process.env };
 if (env.CODEAGENT3_CONFIG_DIR) env.CLAUDE_CONFIG_DIR = env.CODEAGENT3_CONFIG_DIR;
+// 按模型派活的端到端（2026-10-18）：真 CLI 交互模式按配置目录 settings.json 的 model 定模型。
+// CODEAGENT_STANDIN_LAUNCH_LOG=<文件> 时记下每次启动的配置目录和当时 settings.json 里的模型（证据：开在哪个号、用哪个模型）；
+// CODEAGENT_STANDIN_MAP_SETTINGS_MODEL=1 时，那个模型是公司模型名（Claude 不认识）就改用 CODEAGENT_STANDIN_MODEL 跑。
+{
+  let settingsModel = '';
+  try { settingsModel = String(JSON.parse(require('fs').readFileSync(require('path').join(env.CODEAGENT3_CONFIG_DIR || '', 'settings.json'), 'utf8')).model || ''); } catch { /* 没有设置 */ }
+  if (env.CODEAGENT_STANDIN_LAUNCH_LOG) {
+    try { require('fs').appendFileSync(env.CODEAGENT_STANDIN_LAUNCH_LOG, JSON.stringify({ at: Date.now(), configDir: env.CODEAGENT3_CONFIG_DIR || null, settingsModel, args: input, hubSession: env.CLAUDE_HUB_SESSION_ID || null }) + '\n'); } catch { /* 记不下不影响启动 */ }
+  }
+  if (env.CODEAGENT_STANDIN_MAP_SETTINGS_MODEL === '1' && settingsModel && !/^(?:claude|haiku|sonnet|opus|fable)/i.test(settingsModel) && !args.includes('--model')) {
+    args.push('--model', env.CODEAGENT_STANDIN_MODEL || 'haiku');
+  }
+}
 const command = env.CODEAGENT_STANDIN_CLAUDE || 'claude';
 // Let the child own Ctrl+C, like the real CLI does.
 process.on('SIGINT', () => {});
