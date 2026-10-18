@@ -109,7 +109,11 @@
       ${'allowRemoteDiag' in s ? `<label>状态查看</label><div><select data-hl-f="allowRemoteDiag"><option value="1"${s.allowRemoteDiag ? ' selected' : ''}>允许对端查看这台电脑的状态</option><option value="0"${s.allowRemoteDiag ? '' : ' selected'}>不允许</option></select>
         <div class="hl-muted">只读：内存、进程、任务队列、号池状态（不含账号）、日志尾部（已脱敏）；不读代码和文件内容。每次查看都会在这里轻提示并记入日志。${data.hubAdmin?.lastDiag ? '最近一次：' + clock(data.hubAdmin.lastDiag.at) : ''}</div></div>` : ''}
       ${'allowRemoteMaintain' in s ? `<label>远程维护</label><div><select data-hl-f="allowRemoteMaintain"><option value="1"${s.allowRemoteMaintain ? ' selected' : ''}>允许对端远程维护这台 Hub</option><option value="0"${s.allowRemoteMaintain ? '' : ' selected'}>不允许</option></select>
-        <div class="hl-muted">能做的只有：让答完空着的通道会话休眠（你自己开的会话不动）、结束查看状态时认定为「可结束」的重启残留进程、临时调整同时处理的档位（可到点恢复）、取消排队中的问题、重试失败的问题。每次都会在这里轻提示并记入日志。${data.hubAdmin?.parallelRestore ? '临时档位将于 ' + clock(data.hubAdmin.parallelRestore.at) + ' 恢复' : ''}</div></div>` : ''}
+        <div class="hl-muted">能做的只有：让答完空着的通道会话休眠（你自己开的会话不动）、结束查看状态时认定为「可结束」的重启残留进程、临时调整同时处理的档位（可到点恢复）、取消排队中的问题、重试失败的问题、暂停 / 恢复派活给某个号。每次都会在这里轻提示并记入日志。${data.hubAdmin?.parallelRestore ? '临时档位将于 ' + clock(data.hubAdmin.parallelRestore.at) + ' 恢复' : ''}</div></div>` : ''}
+      ${'quotaGuard' in s ? `<label>额度避让</label><div><select data-hl-f="quotaGuard"><option value="1"${s.quotaGuard ? ' selected' : ''}>识别额度用完 / 限流的报错并自动避让</option><option value="0"${s.quotaGuard ? '' : ' selected'}>不识别（只认手动暂停）</option></select>
+        · Credit 不高于<input data-hl-f="creditFloor" type="number" min="0" step="1" value="${esc(s.creditFloor)}" style="width:80px">时也避让
+        · 读不到恢复时间时<select data-hl-f="quotaRetryMinutes">${opt([...new Set([15, 30, 60, 120, 240, Number(s.quotaRetryMinutes)])].sort((a, b) => a - b).map(x => ({ id: String(x), label: x + ' 分钟' })), String(s.quotaRetryMinutes))}</select>后再试
+        <div class="hl-muted">只读会话的原生记录和屏幕，不往会话里发任何按键。撞到额度的那一轮会自动换一个号新开会话重做一次；所有号都在避让时排队等恢复。各号状态见「账号与号池」页签。${data.quota && data.quota.errors ? `最近识别到 ${esc(data.quota.errors)} 条 API 报错。` : ''}</div></div>` : ''}
       <label>网络放行</label><div><select data-hl-f="autoGate"><option value="0"${s.autoGate ? '' : ' selected'}>手动：被拦时提示我去点放行页</option><option value="1"${s.autoGate ? ' selected' : ''}>自动放行（我已知晓风险）</option></select>
         <div class="hl-muted">自动放行：公司网络弹出放行页时，Hub 在后台替你点「继续访问」并重新连接；连续 3 次没放行就停下提示你，30 分钟后再试。</div></div>
       <label>给 CodeAgent<br>的说明</label><div><textarea rows="8" data-hl-f="instructions">${esc(s.instructions)}</textarea>
@@ -155,6 +159,15 @@
     const when = probedAt ? `<div class="hl-muted">获取于 ${clock(probedAt)}</div>` : '';
     return `${list}${when}<button class="hl-link" data-hl="pool-probe:${esc(id)}"${busy ? ' disabled' : ''}>${busy ? '获取中…' : '获取'}</button>`;
   }
+  // 额度感知（2026-10-18）：每个号的派活状态——可用 / 避让中（原因、预计恢复），最近读到的 Credit；可手动暂停、恢复。
+  function quotaCell(id, a, ready) {
+    const credit = a.credit ? `<div class="hl-muted">Credit 剩 ${esc(a.credit.remaining)}（${esc(a.credit.pct)}%${a.credit.bucket ? '，' + esc(a.credit.bucket) : ''}）</div>` : '';
+    if (a.avoid) {
+      const why = a.avoid.source === 'manual' ? esc(a.avoid.reason || '手动暂停') : esc(a.avoid.sample || a.avoid.reason || '');
+      return `<span class="hl-pill bad">避让中</span><div class="hl-muted">${esc(a.avoid.label || '')}${why ? '：' + why : ''}</div>${credit}<button class="hl-link" data-hl="pool-resume:${esc(id)}">恢复派活</button>`;
+    }
+    return `<span class="hl-pill ${ready ? 'ok' : ''}">${ready ? '可用' : '—'}</span>${credit}${ready ? `<button class="hl-link" data-hl="pool-pause:${esc(id)}">暂停派活</button>` : ''}`;
+  }
   function poolView() {
     if (!pool) return '<p class="hl-muted">号池状态读取中…</p>';
     if (pool.ok === false) return `<div class="hl-banner bad"><span>号池状态读取失败：${esc(pool.error)}</span></div>`;
@@ -162,7 +175,7 @@
     const method = m => m === 'idaas' ? '账号密码登录' : m === 'devuc' ? '浏览器登录' : '';
     const personalRow = `<tr data-hl-account="personal"><td><b>${esc(personal.accountLabel || (personal.present ? '已登录' : '未登录'))}</b><div class="hl-muted">个人账号</div></td><td></td>
       <td><span class="hl-pill ${personal.present ? 'ok' : 'bad'}">${personal.present ? '可用' : '未登录'}</span><div class="hl-muted">${esc(method(personal.method))}</div></td>
-      <td>${modelCell('personal', personal.models, personal.modelsProbedAt)}</td><td class="hl-num">${Number(personal.activeSessions) || 0}</td><td></td></tr>`;
+      <td>${modelCell('personal', personal.models, personal.modelsProbedAt)}</td><td class="hl-num">${Number(personal.activeSessions) || 0}</td><td data-hl-quota="personal">${quotaCell('personal', personal, !!personal.present)}</td><td></td></tr>`;
     const rows = (pool.accounts || []).map(a => {
       let [label, tone] = POOL_STATE[a.state] || [a.state, ''];
       if (a.state === 'ready' && a.sameAsPersonal) [label, tone] = ['和个人账号同号，不参与挑号', 'bad'];
@@ -172,12 +185,17 @@
       return `<tr data-hl-account="${esc(a.id)}"><td><b>${esc(a.accountLabel || '还没登录')}</b><div class="hl-muted">号池</div></td><td>${esc(a.note || '')}</td>
         <td><span class="hl-pill ${tone}">${esc(label)}</span><div class="hl-muted">${esc(method(a.method))}${esc(expiry)}</div></td>
         <td>${modelCell(a.id, a.models, a.modelsProbedAt)}</td><td class="hl-num">${Number(a.activeSessions) || 0}</td>
+        <td data-hl-quota="${esc(a.id)}">${quotaCell(a.id, a, a.state === 'ready' && !a.sameAsPersonal && !a.duplicateOf)}</td>
         <td>${relogin}<button class="hl-link" data-hl="pool-remove:${esc(a.id)}">移出号池</button></td></tr>`;
     }).join('');
     const empty = (pool.accounts || []).length ? '' : '<p class="hl-muted">号池里还没有账号：在下面添加，或导入本机已登录的号。</p>';
-    return `<div class="hl-row"><button class="hl-btn" data-hl="pool-refresh">刷新会话数</button><button class="hl-btn" data-hl="pool-probe-all"${probing.size ? ' disabled' : ''}>${probing.size ? '获取中…' : '一键获取全部模型权限'}</button></div>
+    const rules = pool.quotaRules;
+    const rulesLine = rules ? `额度报错识别规则 ${esc(rules.count)} 条${rules.errors && rules.errors.length ? `，<span style="color:#b42318">${esc(rules.errors.length)} 条写错没用：${esc(rules.errors.join('；'))}</span>` : ''}（可在数据文件 ${esc(rules.file || '')} 里增加或停用）。` : '';
+    return `<div class="hl-row"><button class="hl-btn" data-hl="pool-refresh">刷新会话数</button><button class="hl-btn" data-hl="pool-probe-all"${probing.size ? ' disabled' : ''}>${probing.size ? '获取中…' : '一键获取全部模型权限'}</button>
+      <span class="hl-muted" style="margin-left:auto">暂停时长</span><select data-hl-f="pause-hours"><option value="1">1 小时</option><option value="2" selected>2 小时</option><option value="4">4 小时</option><option value="24">24 小时</option><option value="">直到手动恢复</option></select></div>
       <div class="hl-muted" style="margin-top:6px">会话数是本机 Hub 里进行中的会话（休眠的不算）${pool.checkedAt ? '，刷新于 ' + clock(pool.checkedAt) : ''}。获取模型权限会在后台打开该号的 CodeAgent 读它自己的模型菜单，每个号约 10–20 秒，不发消息、不耗额度。</div>
-      <table class="hl-table"><thead><tr><th>账号</th><th>备注</th><th>状态</th><th>模型权限</th><th>进行中会话</th><th></th></tr></thead><tbody>${personalRow}${rows}</tbody></table>
+      <div class="hl-muted" style="margin-top:4px">派活：AI特战队通道挑号时跳过「避让中」的号。识别到额度用完或限流的报错、或 Credit 读数不高于阈值时自动避让，读不到恢复时间就 1 小时后再试，Credit 恢复后提前解除；也可以手动暂停。${rulesLine}</div>
+      <table class="hl-table"><thead><tr><th>账号</th><th>备注</th><th>状态</th><th>模型权限</th><th>进行中会话</th><th>派活</th><th></th></tr></thead><tbody>${personalRow}${rows}</tbody></table>
       ${empty}
       <div class="hl-sec"><h3>添加号池账号</h3><div class="hl-muted">号主在这台电脑上登录一次（弹出命令行窗口，输入 W3 用户名和密码，Hub 不保存密码）。号池里的号不要执行退出登录——退出会注销服务器上的这次登录，所有用它的会话一起掉线；要停用请点「移出号池」。</div>
       <div class="hl-row" style="margin-top:8px"><input data-hl-f="pool-note" maxlength="24" placeholder="备注：谁的号，例如 张工" style="width:220px"><button class="hl-btn primary" data-hl="pool-add">添加号池账号</button></div></div>
@@ -263,6 +281,15 @@
         pool = result; if (field('pool-note')) field('pool-note').value = '';
         toast('已打开登录窗口：请号主在窗口里输入 W3 用户名和密码'); void loadPool();
       }
+      else if (verb === 'pool-pause') {
+        const hours = field('pause-hours')?.value || '';
+        if (!window.confirm(`暂停派活给这个号${hours ? `（${hours} 小时后自动恢复）` : '（直到手动恢复）'}？AI特战队通道新开会话、换号重做都不再挑它；已在跑的会话不受影响。`)) return;
+        pool = await call('codeagent-pool:pause', { id: arg, hours: hours ? Number(hours) : null }); toast('已暂停派活给这个号'); void loadPool();
+      }
+      else if (verb === 'pool-resume') {
+        if (!window.confirm('恢复派活给这个号？之后通道照常挑它（如果额度确实还没恢复，撞到报错会再自动避让）。')) return;
+        pool = await call('codeagent-pool:resume', { id: arg }); toast('已恢复派活'); void loadPool();
+      }
       else if (verb === 'pool-import') { pool = await call('codeagent-pool:import', { dir: arg }); toast('已导入号池'); void loadPool(); }
       else if (verb === 'pool-login') { pool = await call('codeagent-pool:login', { id: arg }); toast('已打开登录窗口：请号主在窗口里输入 W3 用户名和密码'); void loadPool(); }
       else if (verb === 'pool-remove') {
@@ -286,6 +313,7 @@
           ...(field('allowRemoteAdmin') ? { allowRemoteAdmin: field('allowRemoteAdmin').value === '1' } : {}),
           ...(field('allowRemoteDiag') ? { allowRemoteDiag: field('allowRemoteDiag').value === '1' } : {}),
           ...(field('allowRemoteMaintain') ? { allowRemoteMaintain: field('allowRemoteMaintain').value === '1' } : {}),
+          ...(field('quotaGuard') ? { quotaGuard: field('quotaGuard').value === '1', creditFloor: Number(field('creditFloor').value) || 0, quotaRetryMinutes: Number(field('quotaRetryMinutes').value) } : {}),
           ...(field('restartGraceMinutes') ? { restartGraceMinutes: Number(field('restartGraceMinutes').value) } : {}) });
         editing = false; await load(); toast('AI特战队专用功能设置已保存');
       }

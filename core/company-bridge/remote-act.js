@@ -12,10 +12,13 @@
 //                  usePool=false：通道新开的会话只用个人账号（号池的号额度用完时从对端切走，2026-10-18 用户）。
 //   cancel-queued  取消一个还在排队（没开会话、没在答）的问题，回执写明「被对端取消」。
 //   retry          重试一个失败的问题（同页面上的「重试」按钮）。
+//   pause-account  手动让一个号避让（代称：个人 / 号 1…），可带「N 小时后自动恢复」；通道新开会话、换号重做都不再挑它（额度感知，2026-10-18）。
+//   resume-account 解除一个号的避让（手动暂停、识别到额度报错、Credit 读数，统统解除），之后照常派活。
 const os = require('node:os');
 
-const ACTIONS = ['suspend-idle', 'kill-orphans', 'set-parallel', 'cancel-queued', 'retry'];
-const LABEL = { 'suspend-idle': '让空闲的通道会话休眠', 'kill-orphans': '结束残留进程', 'set-parallel': '临时调整并行档位', 'cancel-queued': '取消排队中的问题', retry: '重试失败的问题' };
+const ACTIONS = ['suspend-idle', 'kill-orphans', 'set-parallel', 'cancel-queued', 'retry', 'pause-account', 'resume-account'];
+const LABEL = { 'suspend-idle': '让空闲的通道会话休眠', 'kill-orphans': '结束残留进程', 'set-parallel': '临时调整并行档位', 'cancel-queued': '取消排队中的问题', retry: '重试失败的问题',
+  'pause-account': '暂停派活给一个号', 'resume-account': '恢复派活给一个号' };
 // 限频：结束进程最快 60 秒一次，其余 10 秒一次（按动作分别算）。
 const MIN_INTERVAL_MS = { 'kill-orphans': 60000 };
 const DEFAULT_INTERVAL_MS = 10000;
@@ -48,6 +51,18 @@ function parseParams(action, raw = {}) {
       if (!Number.isFinite(h) || h < 0.25 || h > 24) throw new Error('restoreAfterHours 只能是 0.25–24 小时');
       out.restoreAfterHours = Math.round(h * 100) / 100;
     }
+    return out;
+  }
+  if (action === 'pause-account' || action === 'resume-account') {
+    const account = require('../codeagent-quota').normalizeAlias(p.account);
+    if (!account) throw new Error('要给出号的代称（「个人」或「号 1」这样的写法）');
+    const out = { account };
+    if (action === 'pause-account' && p.hours != null) {
+      const h = Number(p.hours);
+      if (!Number.isFinite(h) || h < 0.25 || h > 72) throw new Error('hours 只能是 0.25–72 小时（不填 = 直到手动恢复）');
+      out.hours = Math.round(h * 100) / 100;
+    }
+    if (action === 'pause-account' && p.reason != null) out.reason = String(p.reason).replace(/[\r\n\t<>]/g, ' ').trim().slice(0, 60);
     return out;
   }
   if (action === 'cancel-queued' || action === 'retry') {
@@ -83,7 +98,8 @@ class RemoteAct {
     this.admin.save({ actLast: { ...(st.actLast || {}), [action]: now } });
     this.bridge.notify('对端执行了：' + LABEL[action], `编号 ${id}`, null, { quiet: true });
     try {
-      const result = await this[{ 'suspend-idle': 'suspendIdle', 'kill-orphans': 'killOrphans', 'set-parallel': 'setParallel', 'cancel-queued': 'cancelQueued', retry: 'retry' }[action]](params, id);
+      const result = await this[{ 'suspend-idle': 'suspendIdle', 'kill-orphans': 'killOrphans', 'set-parallel': 'setParallel', 'cancel-queued': 'cancelQueued', retry: 'retry',
+        'pause-account': 'pauseAccount', 'resume-account': 'resumeAccount' }[action]](params, id);
       this.audit(`${result.ok ? 'done' : 'failed'} ${id} ${action} ${JSON.stringify(params)} → ${short(result.note, 300)}`);
       this.bridge.changed();
       return { phase: 'act', note: `${LABEL[action]}：${result.note}`, act: { action, ...result } };
@@ -237,6 +253,30 @@ class RemoteAct {
     b.saveThread(whole ? { ...t, state: 'cancelled', cancelNote: why, rounds } : { ...t, state: undefined, rounds });
     void b.link.send('status', { thread: t.id, gen: t.gen, round: r.round, state: 'error', note: why }).catch(() => {});
     return { ok: true, thread: t.id, round: r.round, whole, note: `${t.id} 第 ${r.round} 轮已取消${whole ? '（整个问题作废）' : '（之后还能追问）'}` };
+  }
+  // ---- pause-account / resume-account（额度感知，2026-10-18）----
+  accountFor(alias) {
+    const b = this.bridge, key = b.accountKey(alias);
+    if (!key) throw new Error(`这台电脑上没有「${alias}」这个号`);
+    return key;
+  }
+  avoidLabel(key) { const Q = require('../codeagent-quota'); const e = this.bridge.avoidMap()[key]; return e ? Q.describeAvoid(e) : '可用'; }
+  async pauseAccount({ account, hours, reason }) {
+    const Q = require('../codeagent-quota'), b = this.bridge, key = this.accountFor(account);
+    const before = this.avoidLabel(key);
+    const hourMs = Number(this.deps.actHourMs) > 0 ? Number(this.deps.actHourMs) : 3600000;
+    const until = hours ? this.now() + hours * hourMs : null;
+    Q.markAvoid(b.deps.dataDir, key, { source: 'manual', kind: 'quota', reason: reason ? '对端暂停：' + reason : '对端暂停', until }, this.now());
+    b.avoidChanged?.({});
+    const after = this.avoidLabel(key);
+    return { ok: true, account, before, after, until, note: `${account}：${before} → ${after}；通道新开会话和换号重做都不再挑它` };
+  }
+  async resumeAccount({ account }) {
+    const Q = require('../codeagent-quota'), b = this.bridge, key = this.accountFor(account);
+    const before = this.avoidLabel(key);
+    const r = Q.clearAvoid(b.deps.dataDir, key, { by: 'peer' }, this.now());
+    b.avoidChanged?.({}); // 排队等它恢复的问题下一轮（5 秒内）就派
+    return { ok: true, account, before, after: '可用', cleared: r.cleared, note: r.cleared ? `${account}：${before} → 可用，照常派活` : `${account} 本来就没在避让中` };
   }
   async retry({ thread }) {
     const b = this.bridge, t = b.thread(thread);

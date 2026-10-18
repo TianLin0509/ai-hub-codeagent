@@ -41,6 +41,12 @@ if (env.CODEAGENT3_CONFIG_DIR) env.CLAUDE_CONFIG_DIR = env.CODEAGENT3_CONFIG_DIR
     args.push('--model', env.CODEAGENT_STANDIN_MODEL || 'haiku');
   }
 }
+// 额度感知的端到端（2026-10-18）：配置目录里有 standin-api-base.txt 时，这个号的请求发到文件里写的本机假后端，
+// 假后端按真实样本格式回报额度错误，真 Claude Code 照常把它写成一条 API 错误消息落进原生记录、显示在屏幕上（模拟 CodeAgent 后台报错）。
+try {
+  const base = require('fs').readFileSync(require('path').join(env.CODEAGENT3_CONFIG_DIR || '', 'standin-api-base.txt'), 'utf8').trim();
+  if (/^http:\/\/127\.0\.0\.1:\d+$/.test(base)) env.ANTHROPIC_BASE_URL = base;
+} catch { /* 没有这个文件：正常调用 */ }
 const command = env.CODEAGENT_STANDIN_CLAUDE || 'claude';
 // Let the child own Ctrl+C, like the real CLI does.
 process.on('SIGINT', () => {});

@@ -21,8 +21,12 @@ const os = require('node:os');
 const path = require('node:path');
 const zlib = require('node:zlib');
 
-const SECTIONS = ['machine', 'processes', 'hub', 'pool', 'logs', 'codeagent', 'airview', 'features'];
-const SECTION_LABEL = { machine: '电脑', processes: '进程', hub: 'Hub 状态与队列', pool: '号池', logs: '日志', codeagent: 'CodeAgent', airview: '仿真', features: '功能' };
+// 三期（2026-10-18 额度感知）：
+//   errors    最近 N 条（默认 20，最多 50）CodeAgent 会话里识别到 / 疑似的 API 报错原文片段（号身份、令牌、路径已脱敏），
+//             用来把真实样本带回去核对识别规则；pool / codeagent 段另带每个号的避让状态与 Credit。
+const SECTIONS = ['machine', 'processes', 'hub', 'pool', 'logs', 'codeagent', 'airview', 'features', 'errors'];
+const SECTION_LABEL = { machine: '电脑', processes: '进程', hub: 'Hub 状态与队列', pool: '号池', logs: '日志', codeagent: 'CodeAgent', airview: '仿真', features: '功能', errors: 'API 报错' };
+const DEFAULT_ERRORS = 20, MAX_ERRORS = 50;
 const MIN_INTERVAL_MS = 30000;
 const MESSAGE_LIMIT = 60000;
 const MESSAGE_MARGIN = 400; // 量的是发前那一份，真正发出时编号、时间戳的位数可能略有不同
@@ -61,6 +65,10 @@ function parseSections(raw) {
 function parseLines(raw) {
   const n = Number(raw);
   return Number.isInteger(n) && n >= 1 ? Math.min(MAX_LOG_LINES, n) : DEFAULT_LOG_LINES;
+}
+function parseErrorsLimit(raw) {
+  const n = Number(raw);
+  return Number.isInteger(n) && n >= 1 ? Math.min(MAX_ERRORS, n) : DEFAULT_ERRORS;
 }
 
 // ---- 编解码 ----
@@ -371,23 +379,44 @@ function analyzeProcesses(snap, { hubPid, hubExe, sessionPids = [], top = TOP_N,
   };
 }
 
-// ---- 号池代称：个人 / 号 1 / 号 2（号池登记顺序），不带编号、工号掩码、备注 ----
-function poolAliases(raw) {
+// ---- 号池代称：个人 / 号 1 / 号 2，不带编号、工号掩码、备注 ----
+// 有数据目录时用落盘的固定序号（core/codeagent-quota.js aliasMap，额度感知 2026-10-18：删号后其余号的代称不变），和通道、家里号表一致；
+// 没有时（单测夹具）按号池登记顺序。
+function poolAliases(raw, dataDir = null) {
+  const ids = (raw?.accounts || []).map(a => a && a.id).filter(Boolean);
+  if (dataDir) { try { return require('../codeagent-quota').aliasMap(dataDir, ids); } catch { /* 读写不了就按登记顺序 */ } }
   const map = new Map([['personal', '个人']]);
-  (raw?.accounts || []).forEach((a, i) => { if (a && a.id) map.set(a.id, `号 ${i + 1}`); });
+  ids.forEach((id, i) => map.set(id, `号 ${i + 1}`));
   return map;
 }
-function pool(raw, extra = {}) {
+// 每个号的避让状态（额度感知，core/codeagent-quota.js）：来源、种类、原因（已脱敏的报错片段）、首次时间、预计恢复。
+function avoidView(e) {
+  if (!e) return null;
+  const Q = require('../codeagent-quota');
+  return { source: e.source, kind: e.kind, label: Q.describeAvoid(e), since: e.since || null, until: e.until == null ? null : Number(e.until), sample: e.sample || '', hits: Number(e.hits) || 1 };
+}
+function creditView(c) { return c && Number.isFinite(Number(c.remaining)) ? { remaining: Number(c.remaining), pct: Number(c.pct), bucket: c.bucket || '', at: c.at || null } : null; }
+function pool(raw, { avoid = {}, credit = {}, aliases: given = null, ...extra } = {}) {
   if (!raw) throw new Error('这台 Hub 读不到号池');
-  const aliases = poolAliases(raw);
-  const pick = (a, alias) => ({ alias, state: POOL_STATE[a.state] || String(a.state || '未知'), ready: a.state === 'ready',
+  const aliases = given || poolAliases(raw);
+  const pick = (a, alias, key) => ({ alias, state: POOL_STATE[a.state] || String(a.state || '未知'), ready: a.state === 'ready',
     activeSessions: Number(a.activeSessions) || 0, defaultModel: a.defaultModel ? String(a.defaultModel) : '', models: (Array.isArray(a.models) ? a.models : []).map(String).slice(0, 20),
     ...(a.modelsProbedAt ? { modelsProbedAt: a.modelsProbedAt } : {}), ...(a.duplicateOf ? { duplicate: true } : {}), ...(a.sameAsPersonal ? { sameAsPersonal: true } : {}),
-    ...(a.routeSwitched ? { routeSwitched: true } : {}) });
+    ...(a.routeSwitched ? { routeSwitched: true } : {}), avoid: avoidView(avoid[key]), credit: creditView(credit[key]) });
   const accounts = [];
-  if (raw.personal) accounts.push(pick(raw.personal, '个人'));
-  for (const a of raw.accounts || []) accounts.push(pick(a, aliases.get(a.id)));
-  return { accounts, ready: accounts.filter(a => a.ready).length, ...extra };
+  if (raw.personal) accounts.push(pick(raw.personal, '个人', 'personal'));
+  for (const a of raw.accounts || []) accounts.push(pick(a, aliases.get(a.id), a.id));
+  return { accounts, ready: accounts.filter(a => a.ready).length, avoiding: accounts.filter(a => a.avoid).length, ...extra };
+}
+// ---- errors：识别到 / 疑似的 API 报错原文（quota-watch.js 记下的，已脱敏），号换成代称 ----
+function errorsSection(bridge, aliases, limit = DEFAULT_ERRORS) {
+  if (!bridge.quota) throw new Error('这台 Hub 没有额度识别');
+  const list = bridge.quota.errors(limit).map(e => ({ at: e.at || null, seenAt: e.seenAt || null, account: aliases.get(e.key) || (e.key === 'personal' ? '个人' : '号池'),
+    session: e.session || null, purpose: e.purpose === 'company-bridge' ? '特战通道' : '其他会话', source: e.source === 'screen' ? '屏幕' : '原生记录',
+    structured: !!e.structured, matched: e.ruleId || null, kind: e.kind || null, text: e.text || '' }));
+  const status = bridge.quotaStatus ? bridge.quotaStatus() : null;
+  return { limit, total: (bridge.store.get('quotaErrors') || []).length, list,
+    rules: status && status.rules ? status.rules.map(r => ({ id: r.id, kind: r.kind, builtin: r.builtin })) : null, ruleErrors: status?.ruleErrors || [], guard: status ? status.on : null };
 }
 
 // ---- logs ----
@@ -495,6 +524,11 @@ async function codeagent(bridge, deps, sys, ctx, poolRaw, poolError) {
   }
   out.quota = [...quota.values()];
   out.quotaScreens = { live: live.length, read };
+  // 每个号的避让状态（额度感知，2026-10-18）
+  try {
+    const avoid = bridge.avoidMap ? bridge.avoidMap() : {};
+    out.avoid = Object.entries(avoid).map(([k, e]) => ({ account: aliases.get(k) || (k === 'personal' ? '个人' : '号池'), ...avoidView(e) }));
+  } catch (error) { out.avoidError = errText(error); }
   if (!out.quota.length && !out.quotaNote) out.quotaNote = live.length ? '开着的 CodeAgent 会话屏幕上没看到 Credit 行（Stats 面板没显示）' : '没有开着的 CodeAgent 会话，读不到额度';
   return out;
 }
@@ -620,15 +654,15 @@ function analyzeOptions(bridge, sys, ptyPids = null) {
 }
 
 // ---- 汇总 ----
-async function collect({ bridge, deps = bridge.deps, sections, lines = DEFAULT_LOG_LINES, sys = { ...defaultSys(), ...(deps.diagSys || {}) } }) {
+async function collect({ bridge, deps = bridge.deps, sections, lines = DEFAULT_LOG_LINES, errorsLimit = DEFAULT_ERRORS, sys = { ...defaultSys(), ...(deps.diagSys || {}) } }) {
   const t0 = sys.clock();
   const hubPid = Number(deps.hubPid) || process.pid;
   const ctx = { hubPid, hubStartedAt: Number(deps.hubStartedAt) || Math.round(Date.now() - process.uptime() * 1000) };
   const ptyPids = (() => { try { return (deps.sessionPtyPids?.() || []).filter(x => x && x.id && Number(x.pid) > 0); } catch { return []; } })();
   ctx.ptyPids = new Map(ptyPids.map(x => [x.id, Number(x.pid)]));
   let poolRaw = null, poolError = null;
-  if (sections.includes('pool') || sections.includes('hub') || sections.includes('codeagent')) { try { poolRaw = deps.poolDiag ? deps.poolDiag() : null; } catch (error) { poolError = error; } }
-  ctx.aliases = poolAliases(poolRaw);
+  if (sections.includes('pool') || sections.includes('hub') || sections.includes('codeagent') || sections.includes('errors')) { try { poolRaw = deps.poolDiag ? deps.poolDiag() : null; } catch (error) { poolError = error; } }
+  ctx.aliases = poolAliases(poolRaw, deps.dataDir || null);
   const out = { schema: 1, sections, at: bridge.now(), timings: {} };
   const run = async (name, fn) => {
     const s = sys.clock();
@@ -659,7 +693,13 @@ async function collect({ bridge, deps = bridge.deps, sections, lines = DEFAULT_L
   }
   await Promise.all(jobs);
   if (sections.includes('hub')) await run('hub', () => { const h = hub(bridge, deps, sys, ctx); if (ctx.processError) h.processNote = '会话内存没算出来：' + ctx.processError; return h; });
-  if (sections.includes('pool')) await run('pool', () => { if (poolError) throw poolError; return pool(poolRaw, { usePool: !!bridge.settings().usePool, models: bridge.modelTableSafe?.() || null }); });
+  if (sections.includes('pool')) await run('pool', () => {
+    if (poolError) throw poolError;
+    let avoid = {}, credit = {};
+    try { avoid = bridge.avoidMap ? bridge.avoidMap() : {}; credit = require('../codeagent-quota').creditReadings(deps.dataDir); } catch { /* 读不到避让状态不挡号池段 */ }
+    return pool(poolRaw, { usePool: !!bridge.settings().usePool, models: bridge.modelTableSafe?.() || null, avoid, credit, aliases: ctx.aliases });
+  });
+  if (sections.includes('errors')) await run('errors', () => errorsSection(bridge, ctx.aliases, errorsLimit));
   if (sections.includes('logs')) await run('logs', () => logs(sys, path.join(deps.dataDir, 'logs'), lines));
   if (sections.includes('airview')) {
     const files = out.airviewFiles; delete out.airviewFiles;
@@ -690,6 +730,10 @@ function summarize(d) {
   }
   const c = d.codeagent;
   if (c && !c.error) parts.push(`CodeAgent ${c.version ? 'v' + c.version : '版本没读到'}${(c.quota || []).length ? ' · 额度 ' + c.quota.map(q => `${q.account} ${q.pct}%`).join('、') : ''}`);
+  const avoiding = (d.pool && Array.isArray(d.pool.accounts) ? d.pool.accounts.filter(a => a.avoid).map(a => a.alias) : (c && c.avoid || []).map(a => a.account));
+  if (avoiding.length) parts.push(`避让中：${avoiding.join('、')}`);
+  const e = d.errors;
+  if (e && !e.error && Array.isArray(e.list)) parts.push(`最近 API 报错 ${e.list.length} 条（命中规则 ${e.list.filter(x => x.matched).length} 条）`);
   const failed = SECTIONS.filter(s => d[s] && d[s].error);
   if (failed.length) parts.push(`没采到：${failed.map(s => SECTION_LABEL[s]).join('、')}`);
   if (d.degraded?.length) parts.push('超长已精简：' + d.degraded[d.degraded.length - 1]);
@@ -701,6 +745,7 @@ function summarize(d) {
 const STEPS = [
   ['日志每份截到 40 行', d => { if (d.logs?.files) for (const f of d.logs.files) if (f.lines) f.lines = f.lines.slice(-40); }],
   ['日志每份截到 15 行', d => { if (d.logs?.files) for (const f of d.logs.files) if (f.lines) f.lines = f.lines.slice(-15); }],
+  ['API 报错只留最近 10 条', d => { if (d.errors?.list) d.errors.list = d.errors.list.slice(0, 10); }],
   ['进程只留前 10，残留嫌疑只留前 15', d => { if (d.processes?.top) d.processes.top = d.processes.top.slice(0, 10); if (d.processes?.leftovers) d.processes.leftovers = d.processes.leftovers.slice(0, 15); }],
   ['日志省略', d => { if (d.logs?.files) d.logs = { omitted: true, note: '回报超过单条消息上限，日志省略；可以只查 logs 段', files: d.logs.files.map(f => ({ key: f.key, label: f.label, file: f.file, sizeKB: f.sizeKB, mtime: f.mtime })) }; }],
   ['会话列表只留 20 个', d => { if (d.hub?.sessions?.list) d.hub.sessions.list = d.hub.sessions.list.slice(0, 20); }],
@@ -712,7 +757,8 @@ const STEPS = [
   ['只留各段汇总', d => {
     if (d.processes && !d.processes.error) { delete d.processes.top; delete d.processes.leftovers; delete d.processes.otherHubs; }
     if (d.hub?.queue?.threads) d.hub.queue.threads = d.hub.queue.threads.slice(0, 10).map(q => ({ thread: q.thread, phase: q.phase, round: q.round, queueNote: q.queueNote }));
-    if (d.pool?.accounts) d.pool.accounts = d.pool.accounts.map(a => ({ alias: a.alias, state: a.state, activeSessions: a.activeSessions }));
+    if (d.pool?.accounts) d.pool.accounts = d.pool.accounts.map(a => ({ alias: a.alias, state: a.state, activeSessions: a.activeSessions, ...(a.avoid ? { avoid: { label: a.avoid.label, until: a.avoid.until, source: a.avoid.source } } : {}) }));
+    if (d.errors?.list) d.errors.list = d.errors.list.slice(0, 3);
     if (d.pool) delete d.pool.models;
     if (d.airview?.recent) d.airview.recent = d.airview.recent.slice(0, 10);
     if (d.airview?.dirs) d.airview.dirs = d.airview.dirs.map(x => ({ dir: x.dir, files: x.files, error: x.error }));
@@ -740,5 +786,5 @@ const STEP_LABELS = STEPS.map(s => s[0]);
 module.exports = {
   STEP_LABELS, analyzeOptions, cmdTokens, entryScript, isCodeAgentProc, isHubScript, SUSPECT_MIN_AGE_MS,
   SECTIONS, SECTION_LABEL, MIN_INTERVAL_MS, MESSAGE_LIMIT, PROCESS_TIMEOUT_MS, DEFAULT_LOG_LINES, MAX_LOG_LINES, LOGS,
-  parseSections, parseLines, encode, decode, makeRedactor, deepRedact, analyzeProcesses, poolAliases, pool, machine, logs, hub, collect, summarize, fit, defaultSys,
+  parseSections, parseLines, parseErrorsLimit, errorsSection, DEFAULT_ERRORS, MAX_ERRORS, encode, decode, makeRedactor, deepRedact, analyzeProcesses, poolAliases, pool, machine, logs, hub, collect, summarize, fit, defaultSys,
 };

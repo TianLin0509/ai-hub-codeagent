@@ -541,10 +541,16 @@ function registerSessionIpc(ipcMain, deps) {
     // 本机各账号进行中的 CodeAgent 会话数（休眠的不算）：个人账号 = 没有号池标记的 CodeAgent 会话
     const personalActive = sessionManager.getAllSessions().filter(s => /^codeagent(?:-resume)?$/.test(String(s.kind || ''))
       && !s.codeagentPoolAccount && s.status !== 'dormant' && s.status !== 'closed').length;
-    return { ok: true, accounts, checkedAt: new Date().toISOString(),
-      usable: accounts.filter(a => a.state === 'ready' && !a.sameAsPersonal && !a.duplicateOf).length,
+    // 额度感知（2026-10-18，core/codeagent-quota.js）：每个号的避让状态（原因、预计恢复）与最近的 Credit 读数，页签上显示并可手动暂停 / 恢复。
+    const quota = require('../../core/codeagent-quota');
+    let avoid = {}, credit = {}, rules = null;
+    try { avoid = quota.activeAvoid(getHubDataDir()); credit = quota.creditReadings(getHubDataDir()); } catch { /* 读不到就都按可用显示 */ }
+    try { const loaded = quota.loadRules(getHubDataDir()); rules = { count: loaded.rules.length, file: loaded.file, errors: loaded.errors }; } catch { rules = null; }
+    const quotaOf = key => ({ avoid: avoid[key] ? { ...avoid[key], label: quota.describeAvoid(avoid[key]) } : null, credit: credit[key] || null });
+    return { ok: true, accounts: accounts.map(a => ({ ...a, ...quotaOf(a.id) })), checkedAt: new Date().toISOString(),
+      usable: accounts.filter(a => a.state === 'ready' && !a.sameAsPersonal && !a.duplicateOf).length, quotaRules: rules,
       personal: { accountLabel: pool.maskAccountId(personal.accountId), method: personal.method || null, present: !!personal.present,
-        activeSessions: personalActive, models: personalModels.models, modelsProbedAt: personalModels.probedAt || null } };
+        activeSessions: personalActive, models: personalModels.models, modelsProbedAt: personalModels.probedAt || null, ...quotaOf('personal') } };
   }
   // 一键获取模型权限：后台起这个账号的 CodeAgent 读 /model 菜单（core/codeagent-model-probe.js），一次只跑一个。
   // v2.1.6（2026-10-16 用户「按计划推进」）：新添加的号登录完成、导入本机已登录的号、以及从没获取过的号（含个人账号），
@@ -659,6 +665,28 @@ function registerSessionIpc(ipcMain, deps) {
     try {
       const { getHubDataDir } = require('../../core/data-dir');
       require('../../core/codeagent-pool').setNote(getHubDataDir(), payload?.id, payload?.note);
+      return codeagentPoolStatus();
+    } catch (error) { return { ok: false, error: error.message }; }
+  });
+  // 手动暂停 / 恢复派活给一个号（额度感知，2026-10-18）：暂停 = 标「避让中」（hours 小时后自动恢复，不填 = 直到手动恢复）；
+  // 恢复 = 解除避让（含自动识别到额度报错的）。通道下一轮挑号就按新状态。
+  ipcMain.handle('codeagent-pool:pause', (_event, payload) => {
+    try {
+      const { getHubDataDir } = require('../../core/data-dir');
+      const id = String(payload?.id || '');
+      if (id !== 'personal' && !require('../../core/codeagent-pool').readRegistry(getHubDataDir()).accounts.some(a => a.id === id)) throw new Error('没有这个账号');
+      const hours = payload?.hours == null || payload.hours === '' ? null : Number(payload.hours);
+      if (hours != null && !(hours >= 0.25 && hours <= 72)) throw new Error('暂停时长只能是 0.25–72 小时');
+      require('../../core/codeagent-quota').markAvoid(getHubDataDir(), id, { source: 'manual', reason: '在这台电脑上手动暂停', until: hours ? Date.now() + hours * 3600000 : null });
+      sendToRenderer('bridge:changed', {});
+      return codeagentPoolStatus();
+    } catch (error) { return { ok: false, error: error.message }; }
+  });
+  ipcMain.handle('codeagent-pool:resume', (_event, payload) => {
+    try {
+      const { getHubDataDir } = require('../../core/data-dir');
+      require('../../core/codeagent-quota').clearAvoid(getHubDataDir(), String(payload?.id || ''), { by: 'local' });
+      sendToRenderer('bridge:changed', {});
       return codeagentPoolStatus();
     } catch (error) { return { ok: false, error: error.message }; }
   });

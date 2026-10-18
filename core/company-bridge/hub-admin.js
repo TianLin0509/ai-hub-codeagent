@@ -22,7 +22,8 @@ const HISTORY = 20;
 // diag（2026-10-18 直查通道，diag.js）：只读，直接采集电脑与 Hub 状态回报，不经 CodeAgent、不排队；和更新 / 重启互不影响。
 // act（2026-10-18 三期远程维护，remote-act.js）：休眠空闲通道会话、结束残留进程、临时调并行档位、取消排队 / 重试问题。
 const OPS = ['update', 'restart', 'status', 'diag', 'act'];
-const CAPS = ['diag', 'act'];
+// quota（2026-10-18 额度感知）：认得 ask/followup 的 account、直查 errors 段、远程维护 pause-account / resume-account。
+const CAPS = ['diag', 'act', 'quota'];
 // 执行中的阶段；其余都是结束态。
 const LIVE = ['checking', 'downloading', 'waiting', 'applying', 'restarting'];
 const GRACE_DEFAULT_MINUTES = 3;
@@ -166,7 +167,7 @@ class HubAdmin {
     try { if (b.link.gen()) { b.store.set('pollActivity', { gen: b.link.gen(), until: now + 10 * 60000 }); b.tightenPoll?.(); } } catch { /* 只影响快慢 */ }
     b.notify('对端查看了这台电脑的状态', `编号 ${id} · ${sections.map(s => D.SECTION_LABEL[s]).join('、')}`, null, { quiet: true });
     try {
-      const raw = await D.collect({ bridge: b, sections, lines });
+      const raw = await D.collect({ bridge: b, sections, lines, errorsLimit: D.parseErrorsLimit(message.errors) });
       // 记下这次直查认定「可结束」的残留（PID + 启动时间），远程维护 kill-orphans 只认 5 分钟内这份清单（remote-act.js）
       if (raw.processes && Array.isArray(raw.processes.leftovers)) this.save({ lastDiagKillable: { at: this.now(), id, list: raw.processes.leftovers.filter(x => x.killable).map(x => ({ pid: x.pid, startedAt: x.startedAt, name: x.name })) } });
       if (ignored.length) raw.ignored = ignored;

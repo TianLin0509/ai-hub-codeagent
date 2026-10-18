@@ -27,8 +27,20 @@ const { GatePasser } = require('./gate-pass');
 const { HubAdmin } = require('./hub-admin');
 // 2026-10-18：家里按模型派活（GLM / DeepSeek 分流）。这里汇总各号的模型发给家里（模型表），家里指定模型时挑有它权限的号。
 const route = require('../codeagent-model-route');
+// 2026-10-18 额度感知：识别 CodeAgent 后台的额度 / 限流报错，把号标「避让中」，挑号时跳过；撞额度的轮次换号新开会话重做一次。
+const Q = require('../codeagent-quota');
+const { QuotaWatch } = require('./quota-watch');
+// 一轮因额度中断后最多换号重做几次（只重做一次，不循环）。
+const MAX_REHOME = 1;
+// 撞额度后旧会话还在忙（多半在自己重试）时，最多等多久再换号（审核 2026-10-18）。
+const REHOME_GRACE_MS = 60000;
+// 换号重做时带给新会话的上下文：上一会话的进展、此前各轮回答，各自的上限。
+const REHOME_PROGRESS_CHARS = 1500;
+const REHOME_CONTEXT_CHARS = 12000;
 // 模型表「明显变化」时推给家里，最快 10 分钟一次；启动后（或换了配对）先推一次，每份回执也带一份最新的。
+// 号的避让状态变了另算：最快 30 秒推一次（家里据此选号，不能等 10 分钟）。
 const MODELS_PUSH_MIN_MS = 10 * 60000;
+const AVOID_PUSH_MIN_MS = 30000;
 // 指定模型的轮次最多等多久「能跑它的号池号空出来切模型」（2026-10-18 审核：号一直有会话时不能无限排队）。
 const MODEL_SWITCH_WAIT_MS = 10 * 60000;
 // 发回家里前要去掉号身份的消息类型，和工号掩码的样子（codeagent-pool.js maskAccountId：头 4 位 + **** + 尾 2 位，或 1 位 + ***）。
@@ -88,7 +100,10 @@ const DEFAULT_SETTINGS = Object.freeze({ enabled: true, codeRoots: [], instructi
   // 直查 airview 段看这些目录下最近更新的结果文件（只看名字、大小、修改时间），连同代码位置一起（diag.js resultFiles）。
   resultDirs: ['C:/AirView'],
   // 允许对端远程维护（2026-10-18 三期，remote-act.js：休眠空闲通道会话、结束残留进程、临时调并行档位、取消排队 / 重试问题），默认开。
-  allowRemoteMaintain: true });
+  allowRemoteMaintain: true,
+  // 额度感知（2026-10-18）：识别额度 / 限流报错并避让（quotaGuard）；Stats 面板 Credit 不高于 creditFloor 也避让；
+  // 报错里读不出重置时间时，quotaRetryMinutes 分钟后再试（Credit 恢复为正时提前解除）。
+  quotaGuard: true, creditFloor: 0, quotaRetryMinutes: 60 });
 const ACTIVE_POLL_MS = 10000;
 const FOLLOWUP_WINDOW_MS = 10 * 60000;
 const EFFORTS = ['low', 'medium', 'high', 'max'];
@@ -226,6 +241,7 @@ class CompanyBridge {
     this.askHome = new AskHome({ bridge: this, deps });
     this.images = new (require('./images').BridgeImages)(this);
     this.hubAdmin = new HubAdmin({ bridge: this, deps });
+    this.quota = new QuotaWatch(this);
     this.gatePass = new GatePasser({ open: url => deps.openHiddenGate(url), logDir: path.join(deps.dataDir, 'logs'), now: () => this.now(),
       notify: (title, text) => this.notify(title, text) });
     // 升级前就配对过的电脑（入口还没隐藏时用过）直接算已解锁，不让成员升级后找不到入口。
@@ -299,6 +315,9 @@ class CompanyBridge {
     if ('allowRemoteAdmin' in patch) next.allowRemoteAdmin = patch.allowRemoteAdmin === true;
     if ('allowRemoteDiag' in patch) next.allowRemoteDiag = patch.allowRemoteDiag === true;
     if ('allowRemoteMaintain' in patch) next.allowRemoteMaintain = patch.allowRemoteMaintain === true;
+    if ('quotaGuard' in patch) next.quotaGuard = patch.quotaGuard === true;
+    if ('creditFloor' in patch) { const n = Number(patch.creditFloor); if (!Number.isFinite(n) || n < 0 || n > 100000) throw new Error('额度阈值只能是 0–100000'); next.creditFloor = n; }
+    int('quotaRetryMinutes', 5, 720, '撞到额度后多久再试（分钟）');
     if ('resultDirs' in patch) {
       const list = (Array.isArray(patch.resultDirs) ? patch.resultDirs : String(patch.resultDirs || '').split(/\r?\n/)).map(s => String(s).trim()).filter(Boolean);
       if (list.length > 10) throw new Error('仿真结果目录最多 10 个');
@@ -369,6 +388,8 @@ class CompanyBridge {
       }
     })().finally(() => { this.busy = null; });
     await this.busy;
+    // 额度感知：被动读各 CodeAgent 会话的原生记录与屏幕，识别额度报错、读 Credit（和配对无关，号池页签也用这份状态）。
+    try { await this.quota.scan({ force }); } catch (e) { console.warn('[company-bridge] quota', e.message); }
     if (this.settings().enabled && this.link.paired()) {
       if (!this.advanceBusy) this.advanceBusy = this.advance().finally(() => { this.advanceBusy = null; });
       await this.advanceBusy;
@@ -441,9 +462,12 @@ class CompanyBridge {
     if (!existing && message.type === 'followup') return; // 不认识的追问（多半属于已清理的旧问题）
     // 家里指定的模型（新版家里才带；只在开题时定，追问沿用原会话原模型）。
     const model = message.type === 'ask' && typeof message.model === 'string' ? message.model.trim().slice(0, 96) : '';
+    // 家里指定的号（代称：个人 / 号 1…，2026-10-18 额度感知）：开题时定整题，追问时只管这一轮（换号就新开会话、带上前几轮作上下文）。
+    const account = typeof message.account === 'string' ? Q.normalizeAlias(message.account) : '';
     const t = existing || { id, gen, title: short(message.title || question, 40), from: message.from || null, sessionId: null, createdAt: this.now(), rounds: [],
       ...(model ? { model } : {}) };
-    t.rounds = [...t.rounds, { round, question, receivedAt: this.now(), mid: message.mid }];
+    t.rounds = [...t.rounds, { round, question, receivedAt: this.now(), mid: message.mid, ...(account ? { account } : {}),
+      ...(typeof message.account === 'string' && message.account.trim() && !account ? { badAccount: message.account.trim().slice(0, 20) } : {}) }];
     this.saveThread(t);
     void this.link.send('status', { thread: id, gen, round, state: 'received', note: '公司已收到' }).catch(() => {});
     this.notify(existing ? '收到追问' : '收到任务', `${id}：${short(question, 60)}`, t.sessionId);
@@ -497,9 +521,27 @@ class CompanyBridge {
       if (!t || t.state !== 'queued' || t.gen !== gen) continue;
       if (t.sessionId && this.sessionBusy(t.sessionId)) continue; // 追问时原会话还在忙（例如改写上一轮），等它停下
       if (t.rounds.some(x => roundPhase(x) === 'queued' && x.retryAt > this.now())) continue; // CLI 还没就绪，到点再发
+      // 额度感知（2026-10-18）：指定的号核对一遍；追问落在避让中的号（或指定了别的号）上就换号新开会话，不再撞墙。
+      {
+        const qr = t.rounds.find(x => roundPhase(x) === 'queued');
+        if (qr && this.checkAccountRequest(t, qr) === 'rejected') continue;
+        t = this.thread(t.id) || t;
+        if (!t || t.state !== 'queued') continue;
+      }
+      const only = this.requestedKey(t);
+      // 不指定模型、要新开会话：所有能用的号都在避让中就排队，回执写明预计恢复时间，不占名额、不硬派。
+      if (!t.model && !t.sessionId) {
+        const accounts = this.routeAccounts();
+        const pick = accounts && accounts.length ? route.pickAnyRoute(accounts, { only }) : null;
+        if (pick && !pick.ok && pick.reason === 'avoid') {
+          waiting += 1;
+          this.reportQueue(t, waiting, limit, working, this.avoidQueueNote(accounts, pick.until, only));
+          continue;
+        }
+      }
       // 家里指定了模型、要新开会话：只等有这个模型的号空出来，不占别的问题的名额（没有哪个号有它的，交给 dispatch 报回）。
       if (t.model && !t.sessionId) {
-        const pick = this.pickModelRoute(t.model);
+        const pick = this.pickModelRoute(t.model, undefined, only);
         // 等「能跑它的号池号空出来切模型」最多 MODEL_SWITCH_WAIT_MS：号一直有会话就别无限排队，回家里说明并给出现在能直接用的模型。
         const qr = t.rounds.find(x => roundPhase(x) === 'queued');
         if (pick && pick.reason === 'switch' && qr) {
@@ -511,7 +553,8 @@ class CompanyBridge {
         } else if (qr && qr.switchWaitSince) t = this.patchRound(t, qr.round, { switchWaitSince: null });
         if (pick && !pick.ok && pick.reason !== 'none') {
           waiting += 1;
-          this.reportQueue(t, waiting, limit, working, `排队：等 ${pick.model} 的号空出来（${pick.reason === 'switch' ? '有它权限的号正在处理其他会话，空出来后切换' : `有它权限的号都在处理 ${this.perAccountCap()} 个问题`}）`);
+          this.reportQueue(t, waiting, limit, working, pick.reason === 'avoid' ? this.avoidQueueNote(this.routeAccounts(), pick.until, only, pick.model)
+            : `排队：等 ${pick.model} 的号空出来（${pick.reason === 'switch' ? '有它权限的号正在处理其他会话，空出来后切换' : `有它权限的号都在处理 ${this.perAccountCap()} 个问题`}）`);
           continue;
         }
       }
@@ -558,7 +601,14 @@ class CompanyBridge {
 
   // ---- 按模型派活（2026-10-18，core/codeagent-model-route.js）----
   // 能接通道会话的号（个人账号 + 号池可用的号，各自的模型和此刻的默认模型）；读不到返回 null（老环境、测试夹具没接）。
+  // 每个号带上避让状态（avoid：额度用完 / 限流 / 手动暂停，见 avoidMap），挑号时跳过避让中的号。
   routeAccounts() {
+    const list = this.routeAccountsRaw();
+    if (!list) return list;
+    const avoid = this.avoidMap();
+    return list.map(a => (avoid[a.key] ? { ...a, avoid: avoid[a.key] } : a));
+  }
+  routeAccountsRaw() {
     if (!this.deps.routeAccounts) return null;
     try { return this.deps.routeAccounts({ usePool: this.settings().usePool }) || []; }
     catch (error) { console.warn('[company-bridge] 读账号与模型清单失败：' + error.message); return null; }
@@ -576,9 +626,143 @@ class CompanyBridge {
   }
   // 每个号同时处理几个问题（设置里的每号忙时 / 闲时上限）。
   perAccountCap() { const s = this.settings(); return care.isPeak(new Date(this.now()), s.busyHours) ? s.perAccountPeak : s.perAccountIdle; }
-  pickModelRoute(model, accounts = this.routeAccounts()) {
+  pickModelRoute(model, accounts = this.routeAccounts(), only = '') {
     if (!accounts) return null;
-    return route.pickRoute(accounts, model, { working: this.workingByAccount(), cap: this.perAccountCap() });
+    return route.pickRoute(accounts, model, { working: this.workingByAccount(), cap: this.perAccountCap(), only });
+  }
+
+  // ---- 额度感知（2026-10-18，core/codeagent-quota.js、quota-watch.js）----
+  // 此刻在避让中的号：{ 键: 记录 }。关了「额度识别」时只认手动暂停。
+  avoidMap() {
+    let map = {};
+    try { map = Q.activeAvoid(this.deps.dataDir, this.now()); } catch { map = {}; }
+    if (this.settings().quotaGuard === false) for (const k of Object.keys(map)) if (map[k].source !== 'manual') delete map[k];
+    return map;
+  }
+  // 代称表（个人 / 号 1…，号池登记顺序；不在登记里的号按出现顺序往后排，和直查 diag.js 一致）。
+  aliasTable(accounts = null) {
+    let keys = [];
+    try { keys = (accounts || this.routeAccountsRaw() || []).filter(a => a.pool).map(a => a.key); } catch { keys = []; }
+    return Q.aliasMap(this.deps.dataDir, keys);
+  }
+  aliasOf(key) { if (!key) return '某个号'; return this.aliasTable().get(key) || (key === 'personal' ? '个人' : '号池里的一个号'); }
+  accountKey(alias) { return Q.keyForAlias(this.aliasTable(), alias); }
+  sessionAccountKey(sessionId) {
+    const s = sessionId && (this.deps.getSession(sessionId) || this.deps.getSessionMetadata?.(sessionId));
+    if (!s) return null;
+    return s.codeagentPoolAccount ? String(s.codeagentPoolAccount) : 'personal';
+  }
+  // 这一题新开会话时只在哪个号里挑（排队那一轮指定了号）。
+  requestedKey(t) {
+    const r = t.rounds.find(x => roundPhase(x) === 'queued');
+    return r && r.account ? this.accountKey(r.account) : '';
+  }
+  // 「所有号额度用完，预计 X 恢复」（排队说明，发回对端）。
+  avoidQueueNote(accounts, until, only = '', model = '') {
+    const avoid = this.avoidMap();
+    const keys = (accounts || []).filter(a => (!only || a.key === only) && (!model || route.canEverServe(a, model))).map(a => a.key).filter(k => avoid[k]);
+    const parts = keys.map(k => `${this.aliasOf(k)}：${Q.describeAvoid(avoid[k])}`);
+    const who = only ? `指定的${this.aliasOf(only)}在避让中` : model ? `能跑 ${model} 的号都在避让中` : '所有号都在避让中（额度用完或限流）';
+    return this.scrubText(`排队：${who}${until ? `，预计 ${Q.clock(until)} 恢复` : ''}；恢复后自动派发${parts.length ? `（${parts.join('；')}）` : ''}`);
+  }
+  // 家里指定的号：写法不对、没有这个号、在避让中 → 这一轮不发出，回报原因和现在可用的号；
+  // 追问换了号、或原会话的号在避让中 → 换号新开会话（rehome），带上前几轮作上下文。返回 'rejected' / 'switched' / 'ok'。
+  checkAccountRequest(t, r) {
+    const avoid = this.avoidMap();
+    const usable = () => {
+      const accounts = this.routeAccounts() || [];
+      const names = accounts.filter(a => !a.avoid).map(a => this.aliasOf(a.key));
+      return names.length ? `现在可用：${names.join('、')}` : '现在所有号都在避让中';
+    };
+    if (r.badAccount) { this.rejectRound(t, r, `指定的号「${r.badAccount}」写法不对（只认「个人」「号 1」这样的代称）；没有发出。${usable()}，或不指定号交给自动路由`); return 'rejected'; }
+    if (r.account) {
+      const key = this.accountKey(r.account);
+      const accounts = this.routeAccounts();
+      if (!key || (accounts && !accounts.some(a => a.key === key))) { this.rejectRound(t, r, `指定的号「${r.account}」现在不能用（不在这台电脑的账号里，或登录失效）；没有发出。${usable()}，或不指定号交给自动路由`); return 'rejected'; }
+      if (avoid[key]) { this.rejectRound(t, r, this.scrubText(`指定的${r.account}在避让中：${Q.describeAvoid(avoid[key])}${avoid[key].sample ? `（${avoid[key].sample}）` : ''}；没有发出。${usable()}，或不指定号交给自动路由`)); return 'rejected'; }
+      if (t.sessionId) {
+        const cur = this.sessionAccountKey(t.sessionId);
+        if (cur && cur !== key) { this.rehome(t, r, { why: `指定换到${r.account}`, fromKey: cur }); return 'switched'; }
+      }
+      return 'ok';
+    }
+    if (t.sessionId) {
+      const cur = this.sessionAccountKey(t.sessionId);
+      if (cur && avoid[cur]) { this.rehome(t, r, { why: `${Q.describeAvoid(avoid[cur])}`, fromKey: cur }); return 'switched'; }
+    }
+    return 'ok';
+  }
+  rejectRound(t, r, why) {
+    this.patchRound(t, r.round, { error: why, failedAt: this.now() });
+    const models = this.modelTableSafe();
+    void this.link.send('status', { thread: t.id, gen: t.gen, round: r.round, state: 'error', note: why, ...(models ? { models } : {}) }).catch(() => {});
+    this.notify('没能开始', `${t.id}：${short(why, 80)}`);
+    this.changed();
+  }
+  // 换号新开会话：hit（撞到额度，这一轮在途）时把这一轮退回排队、记一次重做；否则（排队的追问）只换会话。
+  // 旧会话不动（不发按键、不关），保温规则照常让它休眠；新会话的提问带原问题、前几轮问答和上一会话的进展（promptFor）。
+  rehome(t, r, { why, fromKey, hit = null }) {
+    const fromAlias = this.aliasOf(fromKey);
+    const progress = hit ? this.progressSince(t.sessionId, r) : '';
+    const prevSessions = [...(t.prevSessions || []), { sessionId: t.sessionId, account: fromKey, at: this.now(), why: short(why, 80) }].slice(-5);
+    const rounds = t.rounds.map(x => x.round !== r.round ? x : {
+      ...x, sentAt: null, baseline: null, landed: null, resent: null, sendUncertain: null, receiptIssue: null, promptFingerprint: null, hijacked: 0,
+      notReadySince: null, retryAt: null, queueNote: null, rewrite: false, rewriteAsked: false, resumePending: null, resumedAt: null,
+      ...(hit ? { rehomed: (Number(x.rehomed) || 0) + 1, account: undefined, requestedAccount: x.account || x.requestedAccount || undefined } : {}),
+      rehome: { from: fromAlias, why: short(why, 120), progress, at: this.now(), kind: hit ? 'quota' : 'switch' },
+    });
+    const next = this.saveThread({ ...t, sessionId: null, everAnswered: false, prevSessions, rounds });
+    const note = this.scrubText(hit ? `${fromAlias}撞到${Q.KINDS[hit.kind] || '额度上限'}（${hit.text || why}），已暂停派给它；这一轮自动换号新开会话重做`
+      : `原会话在${fromAlias}上（${why}），这一轮换号新开会话，带上前几轮问答作上下文`);
+    this.bridgeLog(`rehome ${t.id}#${r.round} from=${fromKey === 'personal' ? 'personal' : 'pool'} ${hit ? 'quota rule=' + hit.ruleId : 'switch'} session=${String(t.sessionId || '').slice(0, 8)}`);
+    void this.link.send('status', { thread: t.id, gen: t.gen, round: r.round, state: 'received', note }).catch(() => {});
+    this.notify(hit ? '撞到额度，换号重做' : '换号新开会话', `${t.id}：${short(note, 80)}`, null, { quiet: !hit });
+    this.changed();
+    return next;
+  }
+  // 上一会话在这一轮里已经写出的进展（撞额度前的最后一段回答，去掉 API 报错本身），最多 1500 字。
+  progressSince(sessionId, r) {
+    try {
+      const meta = sessionId && (this.deps.getSession(sessionId) || this.deps.getSessionMetadata?.(sessionId));
+      const finals = meta && this.deps.readFinals ? this.deps.readFinals(meta) || [] : [];
+      const since = (activeSince(r) || 0) - 5000;
+      const last = [...finals].reverse().find(f => f.id !== r.baseline && (!f.timestamp || f.timestamp >= since) && !/^\s*API\s*Error/i.test(String(f.text || '')) && String(f.text || '').trim());
+      if (!last) return '';
+      const text = String(last.text).trim();
+      return text.length > REHOME_PROGRESS_CHARS ? '…' + text.slice(-REHOME_PROGRESS_CHARS) : text;
+    } catch { return ''; }
+  }
+  // 换号后新会话的上下文：为什么换、上一会话的进展、此前各轮问答（从最近的往前放，总共不超过 12000 字）。
+  rehomeContext(t, r) {
+    const h = r.rehome || {};
+    const lines = [h.kind === 'quota'
+      ? `（说明：这个请求原先在另一个会话里处理，那个会话所用的号${h.from ? `（${h.from}）` : ''}因${h.why || '额度'}中断，现换到新会话重做。${h.progress ? '上一会话已读到的进展如下，仅供参考，请自行核实：' : ''}）`
+      : `（说明：同一编号此前的几轮在另一个会话里${h.from ? `（${h.from}）` : ''}，因${h.why || '换号'}换到这个新会话；下面附上此前各轮问答作上下文。）`];
+    if (h.progress) lines.push('', '> ' + h.progress.split('\n').join('\n> '));
+    const earlier = t.rounds.filter(x => x.round < r.round && x.reply);
+    if (earlier.length) {
+      let budget = REHOME_CONTEXT_CHARS;
+      const blocks = [];
+      for (const x of [...earlier].reverse()) {
+        const reply = String(x.reply || '');
+        const q = String(x.question || '');
+        const piece = `### 第 ${x.round} 轮提问\n${q.length > 2000 ? q.slice(0, 2000) + '…' : q}\n\n### 第 ${x.round} 轮回答\n${reply.length > budget ? reply.slice(0, Math.max(500, budget)) + '…（后略）' : reply}`;
+        if (budget <= 0) break;
+        blocks.unshift(piece); budget -= piece.length;
+      }
+      lines.push('', '此前各轮问答（同一编号，供参考）：', '', blocks.join('\n\n'), '', `## 本轮（第 ${r.round} 轮）请求`);
+    }
+    return lines.join('\n');
+  }
+  // 额度识别报来的变化（quota-watch.js）：界面刷新，尽快把新的避让状态推给对端。
+  avoidChanged({ marked = [], cleared = [] } = {}) {
+    for (const k of [...new Set(marked)]) {
+      const e = this.avoidMap()[k];
+      if (e) this.notify('暂停派给' + this.aliasOf(k), this.scrubText(Q.describeAvoid(e) + (e.sample ? '：' + e.sample : '')), null, { quiet: true });
+    }
+    for (const k of [...new Set(cleared)]) this.notify('恢复派给' + this.aliasOf(k), 'Credit 读数已恢复', null, { quiet: true });
+    this.nextPullAt = Math.min(this.nextPullAt || Infinity, this.now() + 5000);
+    this.changed();
   }
   // 有该模型权限、默认不是它的号池号上，只剩答完保温的通道会话（不在干活、没有待派的追问）时让它们休眠，号空出来就能切模型。
   // 人自己开的会话、在干活的通道会话都不动；每个模型一分钟最多试一次。返回请求休眠的会话数。
@@ -612,8 +796,13 @@ class CompanyBridge {
     const accounts = this.routeAccounts();
     if (!accounts) return null;
     const s = this.settings(), parallel = this.parallelLimitSafe();
+    let credit = {};
+    try { credit = Q.creditReadings(this.deps.dataDir); } catch { credit = {}; }
+    // 号 + 模型（额度感知，2026-10-18）：每个号一行，只用代称；避让原因脱敏。
+    const secrets = this.accountSecrets();
     return route.modelTable(accounts, { working: this.workingByAccount(), cap: this.perAccountCap(), peak: care.isPeak(new Date(this.now()), s.busyHours),
-      parallel: parallel ? { cap: parallel.cap, working: parallel.working } : null, at: this.now() });
+      parallel: parallel ? { cap: parallel.cap, working: parallel.working } : null, at: this.now(),
+      aliases: this.aliasTable(accounts), credit, describe: e => this.scrubText(Q.describeAvoid(e) + (e.source === 'error' && e.sample ? '：' + e.sample : e.source === 'credit' ? '：' + e.reason : ''), secrets) });
   }
   modelTableSafe() { try { const table = this.modelTable(); return table && table.models.length ? table : null; } catch { return null; } }
   // 启动后（或换了配对）推一次；之后模型集合、号数、高峰与否、还能并行的档位明显变化才推，最快 10 分钟一次。
@@ -621,10 +810,12 @@ class CompanyBridge {
     if (!this.link.paired()) return;
     const table = this.modelTableSafe();
     if (!table) return;
-    const gen = this.link.gen(), sig = route.tableSignature(table), last = this.modelsPush || {};
-    if (last.gen === gen && (sig === last.sig || this.now() - (last.at || 0) < MODELS_PUSH_MIN_MS)) return;
+    const gen = this.link.gen(), sig = route.tableSignature(table), avoidSig = route.avoidSignature(table), last = this.modelsPush || {};
+    // 号的避让状态变了：最快 30 秒推一次，不等 10 分钟
+    const avoidMoved = avoidSig !== (last.avoidSig || '') && this.now() - (last.at || 0) >= AVOID_PUSH_MIN_MS;
+    if (last.gen === gen && !avoidMoved && (sig === last.sig || this.now() - (last.at || 0) < MODELS_PUSH_MIN_MS)) return;
     await this.link.send('models', { gen, table });
-    this.modelsPush = { gen, sig, at: this.now() };
+    this.modelsPush = { gen, sig, avoidSig, at: this.now() };
   }
   // 指定的模型没有哪个号有：不开会话，回家里写明原因和可选模型（家里换模型重问）；不静默换模型。
   rejectModel(t, r, accounts, reason = 'none') {
@@ -669,6 +860,26 @@ class CompanyBridge {
       catch (error) { result = { ok: false, message: error.message }; }
       this.careLog(`${result?.ok ? 'suspend' : 'skip'} ${p.threadId} session=${String(p.sessionId).slice(0, 8)} ${p.reason}${result?.ok ? '' : '；跳过：' + (result?.message || result?.error || '未知')}`);
     }
+    this.suspendRehomed(all, bySession);
+  }
+  // 因额度换号后留下的旧会话（prevSessions）：不再有问题指向它，停下来（不在干活）就让它休眠，不占内存（审核 2026-10-18）。
+  // 仍是某个问题的当前会话、或在忙的不动；人在里面打过字的（sessionInputAt 晚于换号时间）不动。
+  suspendRehomed(all, current) {
+    const seen = new Set();
+    for (const t of all) {
+      for (const p of t.prevSessions || []) {
+        const id = p && p.sessionId;
+        if (!id || seen.has(id) || current.has(id)) continue;
+        seen.add(id);
+        const s = this.deps.getSession(id);
+        if (!s || s.status === 'dormant' || s.status === 'closed' || this.sessionBusy(id)) continue;
+        if ((Number(this.deps.sessionInputAt?.(id)) || 0) > (p.at || 0) + 5000) continue;
+        let result;
+        try { result = this.deps.suspendSession(id, { reason: 'company-bridge-rehomed', minIdleMs: 60000, excludePinned: true, excludeFocused: true, excludeMeeting: true }); }
+        catch (error) { result = { ok: false, message: error.message }; }
+        this.careLog(`${result?.ok ? 'suspend' : 'skip'} ${t.id} session=${String(id).slice(0, 8)} 换号后的旧会话${result?.ok ? '' : '；跳过：' + (result?.message || result?.error || '未知')}`);
+      }
+    }
   }
   careLog(line) { this.appendLog('company-session-care.log', line); }
   appendLog(name, line) {
@@ -683,6 +894,10 @@ class CompanyBridge {
   promptFor(t, r, s) {
     if (r.rewrite) return `（编号 ${t.id}，第 ${r.round} 轮）你上一条回答里有成段的源码。按规则不能回传源码：请把整份回答重写一遍，代码部分改成文字说明或几行伪代码，其余内容保持。直接输出重写后的完整回答。`;
     const roots = s.codeRoots.length ? s.codeRoots.map(p => '- ' + p).join('\n') : '- （未设置，请在当前目录里找）';
+    // 换号新开的会话（额度中断重做、追问换号）：完整说明 + 为什么换、上一会话的进展、此前各轮问答 + 本轮请求。
+    if (r.rehome) {
+      return [s.instructions, '', '代码位置：', roots, '', `## 成员请求（编号 ${t.id}${r.round > 1 ? `，第 ${r.round} 轮` : ''}）`, '', this.rehomeContext(t, r), '', r.question].join('\n');
+    }
     if (r.round === 1 || !t.everAnswered) {
       return [s.instructions, '', '代码位置：', roots, '', `## 成员请求（编号 ${t.id}${r.round > 1 ? `，第 ${r.round} 轮` : ''}）`, '', r.question].join('\n');
     }
@@ -707,21 +922,28 @@ class CompanyBridge {
         let created = null;
         let poolLanes = 0;
         try { poolLanes = s.usePool ? Number(this.deps.poolLanes?.()) || 0 : 0; } catch { poolLanes = 0; }
+        // 指定了号（代称，advance 已核过）：只在它里面挑。避让中的号一律不挑（额度感知）。
+        const only = r.account ? this.accountKey(r.account) : '';
+        let fallbackPersonal = !only || only === 'personal';
         if (t.model) {
           // 家里指定了模型：在有它权限的号里（个人账号 + 号池）挑进行中会话最少的；用它的配置目录定模型（session-manager codeAgentRouteModel）。
           // 挑不出号不退回个人账号或别的模型。
           const accounts = this.routeAccounts();
           if (!accounts) throw new Error('这台公司 Hub 读不到账号与模型清单，不能按指定模型开会话；可以不指定模型重问');
-          const pick = this.pickModelRoute(t.model, accounts);
+          const pick = this.pickModelRoute(t.model, accounts, only);
           if (!pick.ok && pick.reason === 'none') return this.rejectModel(t, r, accounts);
-          if (!pick.ok) return; // 刚才还有空的号，这会儿被占了：留在队里，下一轮再派
+          if (!pick.ok) return; // 刚才还有空的号，这会儿被占了（或刚进避让）：留在队里，下一轮再派
           if (pick.model !== t.model) t = this.saveThread({ ...(this.thread(t.id) || t), model: pick.model });
           created = await this.deps.createSession('codeagent', { ...opts, codeagentRouteModel: pick.model,
             ...(pick.account.pool ? { codeagentAccount: 'pool', codeagentPoolPick: pick.account.key } : {}) });
           this.bridgeLog(`route ${t.id} model=${pick.model} account=${pick.account.pool ? 'pool' : 'personal'}${pick.switchModel ? ' 切默认模型' : ''}`);
         } else {
           const accounts = this.routeAccounts();
-          const pick = accounts && accounts.length ? route.pickAnyRoute(accounts, { working: this.workingByAccount(), cap: this.perAccountCap() }) : null;
+          const pick = accounts && accounts.length ? route.pickAnyRoute(accounts, { working: this.workingByAccount(), cap: this.perAccountCap(), only }) : null;
+          if (pick && !pick.ok && pick.reason === 'avoid') return; // 刚进避让：留在队里，advance 报排队原因
+          // 号池开失败时退回个人账号：个人账号在避让中、或指定的是号池里的号时不退
+          const personal = (accounts || []).find(a => a.key === 'personal');
+          if (personal && personal.avoid) fallbackPersonal = false;
           const poolOpts = pick && pick.ok ? (pick.account.pool ? { codeagentAccount: 'pool', codeagentPoolPick: pick.account.key } : null)
             : poolLanes > 0 ? { codeagentAccount: 'pool' } : null;
           if (pick && pick.ok) this.bridgeLog(`route ${t.id} model=(default) account=${pick.account.pool ? 'pool' : 'personal'} active=${pick.account.activeSessions || 0}`);
@@ -730,7 +952,10 @@ class CompanyBridge {
             catch (error) { console.warn('[company-bridge] 号池开会话失败，改用个人账号：' + error.message); created = null; }
           }
         }
-        if (!created && !t.model) created = await this.deps.createSession('codeagent', opts);
+        if (!created && !t.model) {
+          if (!fallbackPersonal) throw new Error(only && only !== 'personal' ? `在指定的${r.account}上没能开会话` : '号池开会话失败，个人账号在避让中，没有可用的号');
+          created = await this.deps.createSession('codeagent', opts);
+        }
         if (!created || created.id !== sessionId) throw new Error('会话创建结果与预留编号不一致');
         // 开会话要十几秒：期间可能已解除配对。重新读一次，作废了就不再发问题。
         const latest = this.thread(t.id);
@@ -786,6 +1011,27 @@ class CompanyBridge {
     if (!r) { this.saveThread(t); return; }
     // 公司 Hub 远程重启前中断的轮次：等 hub-admin 恢复会话、发「继续」后再收（期间会话关着，不能按「会话已关闭」判失败）。
     if (r.resumePending) return;
+    // 额度感知（2026-10-18）：这一轮发出后，会话所在的号撞到额度 / 限流报错 → 不判失败，换号新开会话重做一次；
+    // 重做的那次又撞到就不再换（不循环），如实报回。会话还在自己重试也不等它（旧会话不动，保温规则照常收）。
+    // 换号前先确认旧会话停下了（审核 2026-10-18）：还在忙（CodeAgent 可能在自己重试）就等 REHOME_GRACE_MS；
+    // 等的过程中它自己重试成功、写出了回答，就不换号，照常收这份回答（避免两个号同时答同一题）。
+    const hit = this.settings().quotaGuard !== false ? this.quota.hitFor(t.sessionId, activeSince(r)) : null;
+    if (hit && !(r.quotaHitIgnored && r.quotaHitIgnored >= hit.at)) {
+      const after = this.lastFinal(t.sessionId);
+      const recovered = after && after.id !== r.baseline && (!after.timestamp || after.timestamp > hit.at) && String(after.text || '').trim() && !/^\s*API\s*Error/i.test(String(after.text || ''));
+      if (recovered) {
+        t = this.patchRound(t, r.round, { quotaHitIgnored: hit.at });
+        this.bridgeLog(`rehome-skip ${t.id}#${r.round} 撞额度后原会话自己答出来了，不换号`);
+      } else {
+        if (this.sessionBusy(t.sessionId) && this.now() - hit.at < REHOME_GRACE_MS) return;
+        if ((Number(r.rehomed) || 0) >= MAX_REHOME) {
+          const alias = this.aliasOf(hit.key);
+          return this.failRound(t, r, this.scrubText(`这一轮已经因额度换过一次号，换到${alias}重做后，${alias}也撞到了${Q.KINDS[hit.kind] || '额度上限'}（${hit.text}）；按规则只换号重做一次，这一轮不再换号。等号恢复后可在「AI特战队专用功能」里点重试，或追问重问`));
+        }
+        this.rehome(t, r, { why: Q.KINDS[hit.kind] || '额度上限', fromKey: hit.key, hit });
+        return;
+      }
+    }
     if (this.sessionBusy(t.sessionId)) return;
     const since = activeSince(r);
     const final = this.lastFinal(t.sessionId);
@@ -884,7 +1130,11 @@ class CompanyBridge {
     const actual = answered || session?.codeagentActualModel || null;
     const routed = t.model ? { requestedModel: t.model, actualModel: actual }
       : session?.codeagentLaunchModel ? { actualModel: actual || session.codeagentLaunchModel } : {};
-    const meta = { model: answered || session?.currentModel?.id || session?.model || null, ...routed, elapsedSec: Math.round((this.now() - (r.firstSentAt || r.sentAt || r.receivedAt || this.now())) / 1000), codeLinesRemoved: removed, rewritten: !!r.rewriteAsked, ...extraMeta };
+    // 哪个号作答（只用代称）、对端指定的号、因额度中断从哪个号换过来（额度感知，2026-10-18）。
+    const accountKey = this.sessionAccountKey(t.sessionId);
+    const accountMeta = { ...(accountKey ? { accountAlias: this.aliasOf(accountKey) } : {}), ...(r.account || r.requestedAccount ? { requestedAccount: r.account || r.requestedAccount } : {}),
+      ...(r.rehome ? { rehomedFrom: r.rehome.from || null, rehomeKind: r.rehome.kind || null } : {}) };
+    const meta = { model: answered || session?.currentModel?.id || session?.model || null, ...routed, ...accountMeta, elapsedSec: Math.round((this.now() - (r.firstSentAt || r.sentAt || r.receivedAt || this.now())) / 1000), codeLinesRemoved: removed, rewritten: !!r.rewriteAsked, ...extraMeta };
     // 回答落账和回执入发件箱放在同一个事务：要么都成，要么都不成（下一轮再收）。之后发件箱负责重发。
     // 每份回执带一份最新的模型表（家里据此更新本地存的那份）。
     const models = this.modelTableSafe();
@@ -977,7 +1227,8 @@ class CompanyBridge {
     const t = this.thread(id);
     if (!t) throw new Error('找不到这个问题');
     if (t.state === 'cancelled' || t.gen !== this.link.gen()) throw new Error('这个问题属于上一次配对，已作废');
-    const rounds = t.rounds.map(x => x.error && !x.reply ? { ...x, error: null, sentAt: null, failedAt: null, baseline: null, hijacked: 0, notReadySince: null, retryAt: null } : x);
+    // 额度中断换号重做过的（rehomed）重新给一次换号机会
+    const rounds = t.rounds.map(x => x.error && !x.reply ? { ...x, error: null, sentAt: null, failedAt: null, baseline: null, hijacked: 0, notReadySince: null, retryAt: null, rehomed: 0 } : x);
     this.saveThread({ ...t, rounds }); this.changed();
     void this.tick({ force: true });
     return this.status();
@@ -996,7 +1247,16 @@ class CompanyBridge {
       care: this.careState || null,
       hubAdmin: this.hubAdmin.status(),
       models: this.modelTableSafe(),
+      quota: this.quotaStatus(),
     };
+  }
+  // 额度识别的概况（设置页、号池页签显示）：规则条数、规则文件、写错的规则、最近识别到的报错条数。
+  quotaStatus() {
+    try {
+      const loaded = Q.loadRules(this.deps.dataDir);
+      return { on: this.settings().quotaGuard !== false, rules: loaded.rules.map(r => ({ id: r.id, kind: r.kind, builtin: r.builtin, origin: r.origin })), ruleErrors: loaded.errors,
+        file: loaded.file, errors: (this.store.get('quotaErrors') || []).length };
+    } catch (error) { return { on: this.settings().quotaGuard !== false, error: error.message }; }
   }
   // quiet：只在界面上给一条轻提示，不弹系统通知（对端直查这类不需要人处理的事，diag.js）。
   notify(title, text, sessionId = null, { quiet = false } = {}) { try { this.deps.onNotify?.({ title: 'AI特战队 · ' + title, text, sessionId, ...(quiet ? { quiet: true } : {}) }); } catch {} }

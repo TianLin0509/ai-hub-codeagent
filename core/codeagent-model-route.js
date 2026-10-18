@@ -74,7 +74,7 @@ function listModels(accounts) {
   return [...seen.values()];
 }
 // 此刻就能开会话的模型（有号的默认就是它，或有空闲的号池号可以切过去）：等不到切换时回执里告诉家里可以换哪个。
-function servableNow(accounts) { return listModels(accounts).filter(m => accounts.some(a => canServe(a, m))); }
+function servableNow(accounts) { return listModels(accounts).filter(m => accounts.some(a => canServe(a, m) && !a.avoid)); }
 function canonicalModel(accounts, model) { return listModels(accounts).find(m => eq(m, model)) || ''; }
 
 // 挑号。working：各号上通道正在处理的问题数（键 personal / 号池编号）；cap：每号同时处理的上限。
@@ -83,10 +83,20 @@ function canonicalModel(accounts, model) { return listModels(accounts).find(m =>
 //   switch = 能跑它的号池号都在跑别的模型的会话（排队等它们空出来，最多等一阵，见 company.js）；
 //   busy   = 能用的号都到了每号上限（排队）。
 // 同等条件下：进行中会话少的优先，其次不用切模型的，再次号池优先（个人账号留给号主自己），最后按上次分配时间轮转。
-function pickRoute(accounts, model, { working = {}, cap = Infinity } = {}) {
-  const all = accounts.filter(a => canEverServe(a, model));
-  if (!all.length) return { ok: false, reason: 'none', model: '' };
+// 额度感知（2026-10-18，core/codeagent-quota.js）：账号带 avoid（避让中：额度用完 / 限流 / 手动暂停）的不参与挑号；
+// 能跑这个模型的号全在避让中 → { ok:false, reason:'avoid', until: 最早恢复时间 }（排队等恢复，回执写明，不硬派）。
+// only：家里指定了号（键），只在它里面挑。
+const avoided = a => !!(a && a.avoid);
+function earliestUntil(list) {
+  const times = list.map(a => a.avoid && a.avoid.until).filter(x => Number.isFinite(Number(x)) && x != null).map(Number);
+  return times.length ? Math.min(...times) : null;
+}
+function pickRoute(accounts, model, { working = {}, cap = Infinity, only = '' } = {}) {
+  const everyone = accounts.filter(a => canEverServe(a, model) && (!only || a.key === only));
+  if (!everyone.length) return { ok: false, reason: 'none', model: '' };
   const canonical = canonicalModel(accounts, model);
+  const all = everyone.filter(a => !avoided(a));
+  if (!all.length) return { ok: false, reason: 'avoid', model: canonical, until: earliestUntil(everyone) };
   const ready = all.filter(a => canServe(a, canonical));
   if (!ready.length) return { ok: false, reason: 'switch', model: canonical };
   const free = ready.filter(a => (Number(working[a.key]) || 0) < cap);
@@ -107,9 +117,12 @@ function pickRoute(accounts, model, { working = {}, cap = Infinity } = {}) {
 //   4. 上次分配时间早的优先（轮转；个人账号的时间另存，见 codeagent-pool.js markPersonalAssigned）；
 //   5. 全部相同时号池优先（个人账号留给号主自己）。
 // 返回 { ok, account } 或 { ok:false, reason:'none' }。
-function pickAnyRoute(accounts, { working = {}, cap = Infinity } = {}) {
-  const all = (accounts || []).filter(a => a && a.key);
-  if (!all.length) return { ok: false, reason: 'none' };
+function pickAnyRoute(accounts, { working = {}, cap = Infinity, only = '' } = {}) {
+  const everyone = (accounts || []).filter(a => a && a.key && (!only || a.key === only));
+  if (!everyone.length) return { ok: false, reason: 'none' };
+  // 避让中的号不挑；全都在避让中就排队等最早恢复的那个（额度感知，2026-10-18）。
+  const all = everyone.filter(a => !avoided(a));
+  if (!all.length) return { ok: false, reason: 'avoid', until: earliestUntil(everyone) };
   const free = all.filter(a => (Number(working[a.key]) || 0) < cap);
   const candidates = free.length ? free : all;
   // 个人账号默认模型不确定（personalDefaultModel 留空）时同样排到后面，仍可兜底（2026-10-18 独立审核）。
@@ -123,16 +136,33 @@ function pickAnyRoute(accounts, { working = {}, cap = Infinity } = {}) {
 
 // 发给家里的模型表：按模型聚合，只有模型名、号数、通道在处理几个、还能并行几个；不含账号名、工号、备注。
 // 「几个号能用」只算真能派的号（个人账号只算它的默认模型）。parallel：通道整体 { cap, working }；cap 是每号上限（忙时 / 闲时）。
-function modelTable(accounts, { working = {}, cap = Infinity, peak = false, parallel = null, at = Date.now() } = {}) {
+// 2026-10-18 额度感知：模型表升级为「号 + 模型」——另附每个号一行 accountRows（代称、模型、进行中会话、通道在处理几个、
+// 避让状态与原因、预计恢复、Credit 剩余），家里据此可以自己选号（ask_company 的 account）。只有代称，不含编号、工号、备注。
+// aliases：键 → 代称（个人 / 号 1…）；credit：键 → 最近一次 Credit 读数；describe：避让原因的说明文字（调用方已脱敏）。
+function modelTable(accounts, { working = {}, cap = Infinity, peak = false, parallel = null, at = Date.now(), aliases = null, credit = {}, describe = null } = {}) {
   const globalFree = parallel ? Math.max(0, (Number(parallel.cap) || 0) - (Number(parallel.working) || 0)) : Infinity;
+  const perCap = a => (avoided(a) ? 0 : Math.max(0, (Number.isFinite(cap) ? cap : 0) - (Number(working[a.key]) || 0)));
   const models = listModels(accounts).map(id => {
     const own = accounts.filter(a => canEverServe(a, id));
     const ready = own.filter(a => canServe(a, id));
-    const free = ready.reduce((n, a) => n + Math.max(0, (Number.isFinite(cap) ? cap : 0) - (Number(working[a.key]) || 0)), 0);
+    const free = ready.reduce((n, a) => n + perCap(a), 0);
     const busy = own.filter(a => eq(a.defaultModel, id)).reduce((n, a) => n + (Number(working[a.key]) || 0), 0);
-    return { id, label: require('./codeagent-models').modelLabel(id), primary: isPrimary(id), accounts: own.length, working: busy, free: Math.min(free, globalFree) };
+    const avoidedCount = own.filter(avoided).length;
+    return { id, label: require('./codeagent-models').modelLabel(id), primary: isPrimary(id), accounts: own.length, working: busy, free: Math.min(free, globalFree),
+      ...(avoidedCount ? { avoided: avoidedCount } : {}) };
   }).sort((a, b) => Number(b.primary) - Number(a.primary) || a.id.localeCompare(b.id));
-  return { schema: 1, at, peak: !!peak, models, parallel: parallel ? { cap: Number(parallel.cap) || 0, working: Number(parallel.working) || 0 } : null };
+  const table = { schema: 1, at, peak: !!peak, models, parallel: parallel ? { cap: Number(parallel.cap) || 0, working: Number(parallel.working) || 0 } : null };
+  if (aliases) {
+    table.accountRows = accounts.filter(a => aliases.get(a.key)).map(a => {
+      const c = credit && credit[a.key];
+      return { alias: aliases.get(a.key), pool: !!a.pool, models: (a.models || []).filter(m => canEverServe(a, m)), defaultModel: a.defaultModel || '',
+        activeSessions: Number(a.activeSessions) || 0, working: Number(working[a.key]) || 0, free: Math.min(perCap(a), globalFree),
+        avoid: a.avoid ? { kind: a.avoid.kind || 'quota', source: a.avoid.source || 'error', since: a.avoid.since || null, until: a.avoid.until == null ? null : Number(a.avoid.until),
+          reason: describe ? describe(a.avoid) : String(a.avoid.reason || '') } : null,
+        credit: c && Number.isFinite(Number(c.remaining)) ? { remaining: Number(c.remaining), pct: Number(c.pct), bucket: c.bucket || '', at: c.at || null } : null };
+    }).sort((x, y) => Number(x.pool) - Number(y.pool) || x.alias.localeCompare(y.alias, 'zh'));
+  }
+  return table;
 }
 
 // 推送节流用的「明显变化」：模型集合、各模型号数、高峰与否、还能并行的档位（0 / 1 / 2 个以上）变了才算。
@@ -140,5 +170,10 @@ function tableSignature(table) {
   if (!table) return '';
   return JSON.stringify([table.peak, (table.models || []).map(m => [m.id.toLowerCase(), m.accounts, Math.min(2, m.free)])]);
 }
+// 避让状态的签名（哪些号在避让、到什么时候）：变了就尽快推给家里，不等 10 分钟节流（额度感知，2026-10-18）。
+function avoidSignature(table) {
+  if (!table || !Array.isArray(table.accountRows)) return '';
+  return JSON.stringify(table.accountRows.filter(r => r.avoid).map(r => [r.alias, r.avoid.source, r.avoid.until]));
+}
 
-module.exports = { routeAccounts, personalAccount, personalModels, canServe, canEverServe, servableNow, pickRoute, pickAnyRoute, modelTable, tableSignature, listModels, canonicalModel, isPrimary, hasModel };
+module.exports = { routeAccounts, personalAccount, personalModels, canServe, canEverServe, servableNow, pickRoute, pickAnyRoute, modelTable, tableSignature, avoidSignature, listModels, canonicalModel, isPrimary, hasModel, earliestUntil };
