@@ -170,15 +170,21 @@ function createCurlGeoProbe(options = {}) {
     : DEFAULT_ENDPOINTS;
   const timeoutMs = Math.max(1000, Number(options.timeoutMs) || DEFAULT_TIMEOUT_MS);
   const curlBin = options.curlBin || (process.platform === 'win32' ? 'curl.exe' : 'curl');
+  // 走 Windows 系统代理（公司办公代理）时的后备：用 Electron 自己的网络栈（和浏览器一样认系统代理、公司根证书、
+  // 自动带 Windows 登录做代理认证）。2026-10-18 用户：公司 2.1.10 底栏一直「出口未知」，而同一个代理用 PowerShell 能通。
+  const systemFetch = typeof options.systemFetch === 'function' ? options.systemFetch : null;
+  const isWin = (options.platform || process.platform) === 'win32';
 
-  return async function probeRoute({ route, proxy }) {
+  return async function probeRoute({ route, proxy, systemProxy = false }) {
     const routeName = route === 'proxy' ? 'proxy' : 'direct';
-    if (routeName === 'proxy' && !String(proxy || '').trim()) {
+    // 系统代理用自动配置脚本（PAC）时读不出地址：不跑 curl，直接走系统网络栈（它认 PAC）。
+    const pacOnly = routeName === 'proxy' && systemProxy && !String(proxy || '').trim();
+    if (routeName === 'proxy' && !String(proxy || '').trim() && !(pacOnly && systemFetch)) {
       return { ok: false, route: routeName, errorCode: 'proxy_not_configured', error: '未配置 VPN 代理' };
     }
 
     let lastError = null;
-    for (const endpoint of endpoints) {
+    for (const endpoint of pacOnly ? [] : endpoints) {
       const args = [
         '--silent',
         '--show-error',
@@ -195,6 +201,9 @@ function createCurlGeoProbe(options = {}) {
       ];
       if (routeName === 'proxy') args.push('--proxy', String(proxy));
       else args.push('--noproxy', '*');
+      // 公司办公代理两个常见坑：Windows 自带 curl（Schannel）默认检查证书吊销，代理后面连不上吊销服务器就报错；
+      // 代理要 Windows 登录认证（NTLM / Kerberos），--proxy-user : 让 curl 用当前登录身份。浏览器和 PowerShell 都默认这么做。
+      if (routeName === 'proxy' && systemProxy && isWin) args.push('--ssl-no-revoke', '--proxy-anyauth', '--proxy-user', ':');
       args.push(endpoint.url);
 
       try {
@@ -207,6 +216,18 @@ function createCurlGeoProbe(options = {}) {
         return normalizeRouteResult(normalizeGeoPayload(parsed, endpoint.name), routeName);
       } catch (error) {
         lastError = error;
+      }
+    }
+
+    if (routeName === 'proxy' && systemProxy && systemFetch) {
+      for (const endpoint of endpoints) {
+        try {
+          const text = await systemFetch(endpoint.url, { timeoutMs });
+          const parsed = JSON.parse(String(text || '').replace(/^\uFEFF/, ''));
+          return { ...normalizeRouteResult(normalizeGeoPayload(parsed, endpoint.name), routeName), via: 'system-fetch' };
+        } catch (error) {
+          lastError = error;
+        }
       }
     }
 
@@ -390,9 +411,11 @@ function createNetworkEgressMonitor(options = {}) {
       lastHealthyForeign = null;
       consecutiveForeignFailures = 0;
     }
+    // 读不出代理地址但 xGate 开着（公司电脑，代理可能是自动配置脚本）：照样按系统代理探一次出口。
+    const pacProbe = !rawProxy && !!(tunnel && tunnel.xgate);
     const [foreignResult, domesticResult] = await Promise.all([
-      rawProxy
-        ? Promise.resolve(probe({ route: 'proxy', proxy: rawProxy }))
+      rawProxy || pacProbe
+        ? Promise.resolve(probe({ route: 'proxy', proxy: rawProxy, systemProxy: proxySource === 'system' || pacProbe }))
         : Promise.resolve({ ok: false, errorCode: 'proxy_not_configured', error: '未配置 VPN 代理' }),
       Promise.resolve(probe({ route: 'direct', proxy: '' })),
     ]);

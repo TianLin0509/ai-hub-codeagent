@@ -5024,9 +5024,9 @@ function mountFloatingInput(sessionId, termContainer, terminal, pane = {}) {
       modelChip.classList.toggle('switching', !!rail.model.pending);
       modelChip.title = webRoute
         ? '通过 ChatGPT 网页回答，本地 Codex 执行工具。点击调整网页档位或打开专用设置。'
-        : `${rail.model.id || rail.model.label}${session?.codeagentActualModel && session.codeagentActualModel !== rail.model.id ? ` · 最近一轮实际是 ${session.codeagentActualModel}` : ''}${session?.codeagentPoolAccount ? ` · 号池账号 ${session.codeagentPoolLabel || ''}` : ''} — 点击切换模型`;
+        : `${rail.model.id || rail.model.label}${session?.codeagentActualModel && session.codeagentActualModel !== (rail.model.id || rail.model.label) ? ` · 最近一轮实际是 ${session.codeagentActualModel}` : ''}${session?.codeagentPoolAccount ? ` · 号池账号 ${session.codeagentPoolLabel || ''}` : ''} — 点击切换模型`;
       modelChip.disabled = false;
-      const logoClass = `composer-model-logo ${modelClass(rail.model.id)}`.trim();
+      const logoClass = `composer-model-logo ${modelClass(rail.model.id || require('../core/codeagent-models').iconModelId(session))}`.trim();
       if (modelChipLogo.className !== logoClass) modelChipLogo.className = logoClass;
       const initial = (rail.model.label || '?').trim().charAt(0).toUpperCase();
       if (modelChipLogo.textContent !== initial) modelChipLogo.textContent = initial;
@@ -8820,9 +8820,15 @@ ipcRenderer.on('session-created', async (_e, { session }) => {
   if (pendingResume) _pendingDormantResumes.delete(session.id);
   paintSidebarResumePending(session.id, false);
   if (wasDormant) {
+    // CodeAgent 唤醒：主进程给的显示名为空（或只是占位）时保留本地已有的，不等下一轮回答完才恢复（2026-10-18 用户反馈 v2.1.11）。
+    const codeAgentModels = require('../core/codeagent-models');
+    const keepModel = codeAgentModels.isCodeAgentSession(session) && existing && existing.currentModel
+      && codeAgentModels.isPlaceholderModel(session.currentModel) && !codeAgentModels.isPlaceholderModel(existing.currentModel);
     sessions.set(session.id, {
       ...existing,
       ...session,
+      ...(keepModel ? { currentModel: existing.currentModel } : {}),
+      ...(!session.codeagentActualModel && existing?.codeagentActualModel ? { codeagentActualModel: existing.codeagentActualModel } : {}),
       status: 'idle',
       _resumePending: false,
       // preserve persisted UX state
@@ -9246,6 +9252,7 @@ ipcRenderer.on('session-updated', (_e, { session }) => {
   // CodeAgent：回答里的真实模型与当初请求的模型（core/codeagent-models.js）。
   if (session.codeagentActualModel) local.codeagentActualModel = session.codeagentActualModel;
   if (session.codeagentRequestedModel) local.codeagentRequestedModel = session.codeagentRequestedModel;
+  if (session.codeagentLaunchModel) local.codeagentLaunchModel = session.codeagentLaunchModel;
   if (typeof session.codeagentModelPick === 'boolean') local.codeagentModelPick = session.codeagentModelPick;
   if (session.codeagentForkSourceSessionId) local.codeagentForkSourceSessionId = session.codeagentForkSourceSessionId;
   if (session.codeagentPoolAccount) { local.codeagentPoolAccount = session.codeagentPoolAccount; local.codeagentPoolLabel = session.codeagentPoolLabel || ''; }
@@ -9369,6 +9376,10 @@ function persistWorkscene(flush = false) {
           : null,
         currentModel: s.currentModel || null,
         ...(typeof s.codeagentModelPick === 'boolean' ? { codeagentModelPick: s.codeagentModelPick } : {}),
+        ...(s.codeagentActualModel ? { codeagentActualModel: s.codeagentActualModel } : {}),
+        ...(s.codeagentRequestedModel ? { codeagentRequestedModel: s.codeagentRequestedModel } : {}),
+        ...(s.codeagentLaunchModel ? { codeagentLaunchModel: s.codeagentLaunchModel } : {}),
+        ...(s.codeagentRouteModel ? { codeagentRouteModel: s.codeagentRouteModel } : {}),
         ...(s.codeagentForkSourceSessionId ? { codeagentForkSourceSessionId: s.codeagentForkSourceSessionId } : {}),
         ...(s.codeagentPoolAccount ? { codeagentPoolAccount: s.codeagentPoolAccount, codeagentPoolLabel: s.codeagentPoolLabel || '' } : {}),
         effort: s.effort || null,
@@ -9696,7 +9707,11 @@ sessionImmersive = require('./session-immersive').createSessionImmersiveControll
         meta.currentModel = resolvedModel;
         healedUnsafeSessionModels += 1;
       }
-      if (!resolvedModel || !resolvedModel.id) {
+      const codeAgentModels = require('../core/codeagent-models');
+      if (codeAgentModels.isCodeAgentSession(meta)) {
+        // CodeAgent 不拿清单第一项顶（DS 号的会话会被标成 GLM，2026-10-18 用户反馈 v2.1.11）：上一轮实际模型，没有就占位。
+        resolvedModel = codeAgentModels.dormantDisplayModel({ ...meta, currentModel: resolvedModel });
+      } else if (!resolvedModel || !resolvedModel.id) {
         const opts = modelOptionsFor(meta.kind || 'claude');
         if (opts.length > 0) {
           resolvedModel = { id: opts[0].id, displayName: opts[0].label };
@@ -9731,6 +9746,10 @@ sessionImmersive = require('./session-immersive').createSessionImmersiveControll
         meetingId: meta.meetingId || null,
         currentModel: resolvedModel,
         ...(typeof meta.codeagentModelPick === 'boolean' ? { codeagentModelPick: meta.codeagentModelPick } : {}),
+        ...(meta.codeagentActualModel ? { codeagentActualModel: meta.codeagentActualModel } : {}),
+        ...(meta.codeagentRequestedModel ? { codeagentRequestedModel: meta.codeagentRequestedModel } : {}),
+        ...(meta.codeagentLaunchModel ? { codeagentLaunchModel: meta.codeagentLaunchModel } : {}),
+        ...(meta.codeagentRouteModel ? { codeagentRouteModel: meta.codeagentRouteModel } : {}),
         ...(meta.codeagentForkSourceSessionId ? { codeagentForkSourceSessionId: meta.codeagentForkSourceSessionId } : {}),
         ...(meta.codeagentPoolAccount ? { codeagentPoolAccount: meta.codeagentPoolAccount, codeagentPoolLabel: meta.codeagentPoolLabel || '' } : {}),
         effort: meta.effort || null,

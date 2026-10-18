@@ -82,4 +82,42 @@ async function readLastAssistantMessage(transcriptPath) {
   return null;
 }
 
-module.exports = { readLastAssistantMessage };
+// 同步读最后一条回答的模型（AI特战队通道发回执前用，core/company-bridge/company.js answerModel）：
+// 回执与 main.js 异步补记实际模型之间有竞争，发回执那一刻直接读一次。只读文件尾部（最多 maxBytes），读不到返回空串。
+function readLastAssistantModelSync(transcriptPath, { maxBytes = 4 * 1024 * 1024 } = {}) {
+  if (!transcriptPath) return '';
+  const CHUNK = 65536;
+  let fd;
+  try {
+    fd = fs.openSync(transcriptPath, 'r');
+    const size = fs.fstatSync(fd).size;
+    let pos = size, tail = '', scanned = 0;
+    while (pos > 0 && scanned < maxBytes) {
+      const readLen = Math.min(CHUNK, pos);
+      pos -= readLen; scanned += readLen;
+      const buf = Buffer.alloc(readLen);
+      fs.readSync(fd, buf, 0, readLen, pos);
+      tail = buf.toString('utf-8') + tail;
+      const lines = tail.split('\n');
+      const firstFragment = pos === 0 ? null : lines.shift();
+      for (let i = lines.length - 1; i >= 0; i--) {
+        const line = lines[i].trim();
+        if (!line || !line.includes('"assistant"')) continue;
+        let entry;
+        try { entry = JSON.parse(line); } catch { continue; }
+        if (!entry || entry.type !== 'assistant' || entry.isSidechain) continue;
+        const model = entry.message && typeof entry.message.model === 'string' ? entry.message.model.trim() : '';
+        // 合成的占位回答（如被打断时 CLI 自己写的 <synthetic>）不算模型。
+        if (model && !model.startsWith('<')) return model;
+      }
+      tail = firstFragment == null ? '' : firstFragment;
+    }
+  } catch {
+    // 读不到不影响回执
+  } finally {
+    if (fd !== undefined) { try { fs.closeSync(fd); } catch {} }
+  }
+  return '';
+}
+
+module.exports = { readLastAssistantMessage, readLastAssistantModelSync };

@@ -3,9 +3,12 @@
 html, body { margin: 0; padding: 0; background: transparent; overflow: hidden; width: 100%; height: 100%;
   font-family: "Microsoft YaHei UI", "Microsoft YaHei", sans-serif; user-select: none; -webkit-user-select: none; }
 #stage { position: absolute; inset: 0; }
+/* 大小与脚的位置由 pet.js 写入（2026-10-18）：--body 身体边长（原大小 150px），--feet 图里脚下那圈透明边的高度，
+   身体往下挪这么多，脚正好踩在窗口底边上方 6px（主进程按这个贴到任务栏上沿）。窗口宽固定 280px。 */
+:root { --body: 150px; --feet: 0px; }
 
 /* 身体：150×150，窗口底部居中。transform 每帧由 pet.js 写入（只改 transform / opacity，不触发排版）。 */
-#body { position: absolute; left: 65px; bottom: 6px; width: 150px; height: 150px; transform-origin: 50% 92%;
+#body { position: absolute; left: calc((280px - var(--body)) / 2); bottom: calc(6px - var(--feet)); width: var(--body); height: var(--body); transform-origin: 50% 92%;
   will-change: transform; cursor: grab; }
 #body.dragging { cursor: grabbing; }
 #layers { position: absolute; inset: 0; }
@@ -14,42 +17,37 @@ html, body { margin: 0; padding: 0; background: transparent; overflow: hidden; w
 .cel.sheet { background-size: 500% 500%; }
 .cel.next { opacity: 0; }
 
-#shadow { position: absolute; left: 92px; bottom: 7px; width: 96px; height: 14px; border-radius: 50%;
+#shadow { position: absolute; left: calc((280px - var(--body) * 0.64) / 2); bottom: 7px; width: calc(var(--body) * 0.64); height: calc(var(--body) * 0.093); border-radius: 50%;
   background: radial-gradient(closest-side, rgba(40, 52, 80, .22), rgba(40, 52, 80, 0)); will-change: transform, opacity; }
 
-/* 气泡：一次一句，8 秒后收进小圆点。 */
-.bubble { position: absolute; bottom: 162px; left: 50%; max-width: 236px; box-sizing: border-box; transform: translateX(-50%);
+/* 气泡：一次一句，8 秒后收进小圆点。
+   水平位置由 pet.js 的 layoutOverlays 写入（2026-10-18 审核）：对着看得见的身体居中，贴边时只放在屏幕里看得见的那一段，
+   --tail-x 是小尾巴离气泡左边的距离（指着身体），--to-dot-x 是收进小圆点时往哪边飞。 */
+.bubble { position: absolute; z-index: 2; bottom: calc(var(--body) - var(--feet) + 12px); left: 22px; max-width: 236px; box-sizing: border-box;
   background: #fff; color: #1f2733; border-radius: 14px; padding: 9px 13px; font-size: 13.5px; line-height: 1.55;
-  box-shadow: 0 6px 18px rgba(20, 30, 50, .16), 0 0 0 1px rgba(20, 30, 50, .05); cursor: pointer;
+  box-shadow: 0 6px 18px rgba(20, 30, 50, .16), 0 0 0 1px rgba(20, 30, 50, .05); cursor: pointer; transform-origin: var(--tail-x, 50%) 100%;
   display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
-.bubble::after { content: ""; position: absolute; left: 50%; bottom: -6px; margin-left: -6px; border: 6px solid transparent;
+.bubble::after { content: ""; position: absolute; left: var(--tail-x, 50%); bottom: -6px; margin-left: -6px; border: 6px solid transparent;
   border-top-color: #fff; border-bottom: 0; }
 .bubble.in { animation: bubble-in 260ms cubic-bezier(.2, 1.4, .4, 1) both; }
 .bubble.out { animation: bubble-out 320ms cubic-bezier(.5, 0, .8, .4) both; }
-@keyframes bubble-in { from { opacity: 0; transform: translateX(-50%) translateY(8px) scale(.82); } to { opacity: 1; transform: translateX(-50%) translateY(0) scale(1); } }
-@keyframes bubble-out { to { opacity: 0; transform: translateX(-50%) translate(var(--to-dot-x, 40px), 30px) scale(.2); } }
+@keyframes bubble-in { from { opacity: 0; transform: translateY(8px) scale(.82); } to { opacity: 1; transform: none; } }
+@keyframes bubble-out { to { opacity: 0; transform: translate(var(--to-dot-x, 40px), 30px) scale(.2); } }
+@keyframes panel-in { from { opacity: 0; transform: translateY(8px) scale(.82); } to { opacity: 1; transform: none; } }
 
-/* 贴边时气泡往屏幕里面靠，不被屏幕边切掉。 */
-body.dock-right .bubble { left: auto; right: 65px; transform: none; }
-body.dock-right .bubble::after { left: auto; right: 34px; }
-body.dock-left .bubble { left: 65px; transform: none; }
-body.dock-left .bubble::after { left: 34px; }
-body.dock-right .bubble.in, body.dock-left .bubble.in { animation-name: bubble-in-docked; }
-body.dock-right .bubble.out, body.dock-left .bubble.out { animation-name: bubble-out-docked; }
-@keyframes bubble-in-docked { from { opacity: 0; transform: translateY(8px) scale(.82); } to { opacity: 1; transform: none; } }
-@keyframes bubble-out-docked { to { opacity: 0; transform: translateY(30px) scale(.2); } }
-
-.dot { position: absolute; bottom: 140px; left: 186px; min-width: 20px; height: 20px; border-radius: 10px; border: 2px solid #fff;
+/* 小圆点：身体右上角；left 由 pet.js 写入，贴边时挪回屏幕里看得见的那一段。 */
+.dot { position: absolute; bottom: calc(var(--body) * 0.933 - var(--feet)); left: calc((280px - var(--body)) / 2 + var(--body) * 0.807); min-width: 20px; height: 20px; border-radius: 10px; border: 2px solid #fff;
+  z-index: 2; /* 压在身体方框（含透明边）上面，不然贴边挪进来后会被身体那层挡住、点不到 */
   background: #3478f6; color: #fff; font-size: 11px; font-weight: 700; padding: 0 5px; box-sizing: border-box; cursor: pointer;
   box-shadow: 0 2px 6px rgba(52, 120, 246, .35); font-family: inherit; line-height: 16px; }
 .dot.bump { animation: dot-bump 420ms cubic-bezier(.2, 1.6, .4, 1); }
 @keyframes dot-bump { from { transform: scale(.4); } to { transform: scale(1); } }
-body.dock-right .dot { left: 70px; }
 
-/* 展开面板：点气泡或小圆点后显示完整内容。2026-10-17 打磨：标题行 + 类别小标签 + 右对齐的「在助理里打开」。 */
-.panel { position: absolute; left: 10px; right: 10px; bottom: 162px; max-height: 172px; box-sizing: border-box; background: #fff;
+/* 展开面板：点气泡或小圆点后显示完整内容。2026-10-17 打磨：标题行 + 类别小标签 + 右对齐的「在助理里打开」。
+   left / right 由 pet.js 写入：贴边时让出伸出屏幕的那一截，「在助理里打开 ›」和 × 都点得到。 */
+.panel { position: absolute; z-index: 3; left: 10px; right: 10px; bottom: calc(var(--body) - var(--feet) + 12px); max-height: 172px; box-sizing: border-box; background: #fff;
   color: #1f2733; border-radius: 12px; padding: 8px 4px 8px 12px; box-shadow: 0 10px 28px rgba(20, 30, 50, .18), 0 2px 6px rgba(20, 30, 50, .08), 0 0 0 1px rgba(20, 30, 50, .06);
-  display: flex; flex-direction: column; animation: bubble-in-docked 200ms cubic-bezier(.2, 1.2, .4, 1) both; }
+  display: flex; flex-direction: column; animation: panel-in 200ms cubic-bezier(.2, 1.2, .4, 1) both; }
 .panel[hidden] { display: none; }
 .panel-head { display: flex; align-items: center; gap: 6px; padding: 0 6px 6px 0; border-bottom: 1px solid #edf0f5; margin-bottom: 6px; }
 .panel-head b { font-size: 12.5px; color: #4a5568; font-weight: 600; }

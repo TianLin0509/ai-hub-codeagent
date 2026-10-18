@@ -506,8 +506,21 @@ if (process.env.CLAUDE_HUB_E2E === '1' && process.env.CLAUDE_HUB_EGRESS_FIXTURE)
   }
 }
 const windowsNetworkContext = require('./core/windows-network-context').createWindowsNetworkContext();
+// 系统代理出口的后备探测（2026-10-18）：独立的会话分区，代理模式固定为「系统设置」，不受 Hub 其他会话的代理影响。
+let egressProbeSession = null;
+async function systemProxyFetch(url, { timeoutMs = 12000 } = {}) {
+  const { session } = require('electron');
+  if (!egressProbeSession) {
+    egressProbeSession = session.fromPartition('egress-probe');
+    await egressProbeSession.setProxy({ mode: 'system' });
+  }
+  const response = await egressProbeSession.fetch(url, { headers: { Accept: 'application/json', 'User-Agent': 'AI-Hub-Network-Monitor/1.0' }, signal: AbortSignal.timeout(timeoutMs), bypassCustomProtocolHandlers: true });
+  if (!response.ok) throw new Error('HTTP ' + response.status);
+  return response.text();
+}
 const networkEgressMonitor = createNetworkEgressMonitor({
   getProxy: () => getHubConfig().proxy,
+  systemFetch: (url, opts) => systemProxyFetch(url, opts),
   getSystemProxy: () => windowsNetworkContext.systemProxy(),
   getTunnel: () => windowsNetworkContext.tunnel(),
   statePath: path.join(getHubDataDir(), 'network-egress-state.json'),
@@ -2169,6 +2182,7 @@ try {
     onChanged: () => sendToRenderer('bridge:changed', {}),
     onNotify: notice => {
       sendToRenderer('bridge:notification', notice);
+      if (notice?.quiet) return; // 轻提示（对端直查）：只在界面上提一句，不弹系统通知
       try { void desktopNotificationController?.show({ sessionId: notice.sessionId || 'company-bridge', title: notice.title, body: notice.text, kind: 'bridge' }); } catch (error) { console.warn('[company-bridge] notification', error.message); }
     },
   };
@@ -2209,6 +2223,8 @@ try {
       // CodeAgent 的原生记录是 Claude 格式，按 Claude 读最终回答。
       readFinals: meta => { const r = live.read({ ...meta, id: meta.id || meta.hubId, kind: 'claude' }); return r && r.available ? r.records : []; },
       readReceipt: (meta, round) => require('./core/company-bridge/receipt-reader').readCompanyReceipt(meta, round),
+      // 发回执前从原生记录读一次最后一条回答的模型（不等 observeCodeAgentModel 异步补记）。
+      lastAnswerModel: meta => require('./core/read-last-assistant').readLastAssistantModelSync(meta && meta.transcriptPath),
       // 「问家里」的 MCP 和命令行由 Hub 自己的程序以 Node 方式运行（公司版脚本在 app.asar 里，系统 node 读不到）。
       nodeExecutable: process.execPath,
       // 放行页自动点击（设置里打开后才用）：看不见的窗口，默认会话，和通道请求共用网络状态。
@@ -2218,6 +2234,64 @@ try {
       currentVersion: require('./core/distribution').editionVersion || app.getVersion(),
       relaunch: () => { app.relaunch(); app.quit(); },
       listSessionIds: () => [...(sessionManager.sessions?.keys?.() || [])],
+      // 直查（core/company-bridge/diag.js）：Hub 主进程、各会话终端的 PID（算进程树与内存）、号池各号状态（发回前换成「号 1 / 个人」代称）。
+      hubPid: process.pid,
+      hubExecPath: process.execPath,
+      hubStartedAt: Math.round(Date.now() - process.uptime() * 1000),
+      // 残留判定的最短存活时间（默认嫌疑 10 分钟、可结束 30 分钟）：只有隔离测试实例能改短（同 role.js 的做法）。
+      leftoverMinAgeMs: process.env.CLAUDE_HUB_DATA_DIR && process.env.CLAUDE_HUB_DIAG_LEFTOVER_MIN_AGE_MS ? Number(process.env.CLAUDE_HUB_DIAG_LEFTOVER_MIN_AGE_MS) : undefined,
+      // 远程维护「N 小时后恢复」的 1 小时：只有隔离测试实例能缩短（core/company-bridge/remote-act.js）。
+      actHourMs: process.env.CLAUDE_HUB_DATA_DIR && process.env.CLAUDE_HUB_ACT_HOUR_MS ? Number(process.env.CLAUDE_HUB_ACT_HOUR_MS) : undefined,
+      // 直查二期：CodeAgent 命令（跑 --version）、会话屏幕（读 Stats 面板的 Credit 额度）、各功能最近一次成功 / 错误。
+      codeagentCommand: () => require('./core/codeagent-config').resolveCodeAgentConfig(process.env).command,
+      readTerminalScreen: id => {
+        const entry = sessionManager.sessions?.get?.(id);
+        const text = sessionManager.getSessionBuffer(id);
+        if (text == null) return null;
+        return { text, cols: Number(entry?.pty?.cols) || 120, rows: Number(entry?.pty?.rows) || 30 };
+      },
+      featureStatus: () => {
+        const out = {};
+        try { out.forum = companyForumService ? companyForumService.status() : null; } catch (error) { out.forum = { error: error.message }; }
+        try {
+          if (!companyAssistantService) out.assistant = null;
+          else {
+            // 不调 status()（它要找 welink-cli、整理会话列表，慢）：只读设置、今天的简报、当天数据的登录与错误、手机通道状态
+            const a = companyAssistantService, snap = a.snapshot(), b = a.brief(), ph = a.phone?.status?.() || null;
+            out.assistant = { enabled: a.settings().enabled, login: snap?.login || null, refreshedAt: snap?.at || null, errors: snap?.errors || [], brief: b ? { generatedAt: b.generatedAt, by: b.by, total: b.total, organizing: b.organizing, note: b.note } : null,
+              phone: ph ? { active: ph.active, lastPollAt: ph.lastPollAt, lastOkAt: ph.lastOkAt, lastError: ph.lastError } : null };
+          }
+        } catch (error) { out.assistant = { error: error.message }; }
+        try {
+          const roles = hubPetController?._roles;
+          if (!roles) out.pet = null;
+          else {
+            const snap = roles.snapshot();
+            // 下载过的形象：包文件的修改时间就是最后一次下载成功的时间
+            let lastSuccessAt = null;
+            for (const r of snap.roles || []) {
+              if (!r.installed || r.bundled) continue;
+              try { const m = fs.statSync(path.join(roles.root || '', r.id, 'pack.json')).mtimeMs; if (!lastSuccessAt || m > lastSuccessAt) lastSuccessAt = Math.round(m); } catch { /* 没有包文件 */ }
+            }
+            out.pet = { state: snap.state, roles: snap.roles, lastSuccessAt };
+          }
+        } catch (error) { out.pet = { error: error.message }; }
+        return out;
+      },
+      sessionPtyPids: () => [...(sessionManager.sessions?.entries?.() || [])].map(([id, s]) => ({ id, pid: Number(s?.pty?.pid) || 0 })),
+      poolDiag: () => {
+        const pool = require('./core/codeagent-pool');
+        const personalDir = require('./core/codeagent-config').resolveCodeAgentConfig(process.env).configDir;
+        const creds = pool.readCredentials(personalDir);
+        // 个人账号的模型清单和默认模型与模型表同一口径（core/codeagent-model-route.js personalModels，不确定时留空）。
+        const known = require('./core/codeagent-model-route').personalModels({ dataDir: getHubDataDir(), personalDir });
+        const personalActive = sessionManager.getAllSessions().filter(s => /^codeagent(?:-resume)?$/.test(String(s.kind || ''))
+          && !s.codeagentPoolAccount && s.status !== 'dormant' && s.status !== 'closed').length;
+        return {
+          personal: { state: pool.accountState(creds), expiresAt: creds.expiresAt || null, models: known.models || [], defaultModel: known.defaultModel || '', activeSessions: personalActive },
+          accounts: pool.listAccounts(getHubDataDir(), { activeCounts: sessionManager.codeagentPoolActiveCounts?.() || {}, personalAccountId: creds.accountId || '' }),
+        };
+      },
       // 重启后恢复被中断的会话（hub-admin.js resumeInterrupted）：主窗口加载完、钩子服务在听之后再恢复，会话状态才能被界面和 hook 接住。
       appReady: () => !!hookPort && !!mainWindow && !mainWindow.isDestroyed() && !mainWindow.webContents.isLoading(),
     });

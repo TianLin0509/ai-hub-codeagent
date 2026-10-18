@@ -104,3 +104,7 @@
 .ca-settings select[data-f="phone-group"]{min-width:260px}
 .ca-phone-row>span:first-child{width:96px;flex:none;white-space:nowrap}
 .ca-phone-row .ca-chip{flex:none}
+/* 侧栏顶部常驻的「助理」一栏（2026-10-18） */
+.session-sec-header.sec-resident{padding-left:10px}
+.session-item.resident-placeholder{cursor:pointer;color:#4a5568}
+.session-item.resident-placeholder .sl-time{color:#3478f6}

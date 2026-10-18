@@ -30,7 +30,21 @@ function registerCompanyBridgeIpc(ipcMain, service, { openGate } = {}) {
     handlers['send-pairing'] = () => service.sendPairingToInbox();
     // 通道串里的「补收」按钮（2026-10-16）：和会话里 AI 调 recollect_company 是同一个动作，编号须属于这个会话。
     // 公司联动面板的「让公司 Hub 更新」（2026-10-17）：和 company_hub_update 工具同一个动作。
-    handlers['hub-admin'] = request => service.hubAdmin({ op: String(request?.op || 'update'), force: request?.force === true });
+    handlers['hub-admin'] = request => service.hubAdmin({ op: String(request?.op || 'update'), force: request?.force === true,
+      ...(request?.op === 'diag' ? { sections: request.sections, lines: request.lines } : {}),
+      ...(request?.op === 'act' ? { action: String(request.action || ''), params: request.params || {} } : {}) });
+    // 卡片上的远程维护按钮（2026-10-18 三期）：等回报期间每次调用顺带看一眼通道。
+    handlers['act-result'] = async request => {
+      const id = String(request?.id || '');
+      if (service.actView(id).status === '等待回报') await service.checkNow().catch(() => {});
+      return { ok: true, ...service.actView(id) };
+    };
+    // 「公司电脑状态」卡片（2026-10-18 直查）：等回报期间每次调用顺带看一眼通道，回报到了就返回完整内容。
+    handlers['diag-result'] = async request => {
+      const id = request?.id ? String(request.id) : '';
+      if (id && service.diagView(id).status === '等待回报') await service.checkNow().catch(() => {});
+      return { ok: true, ...service.diagLatest(id || undefined) };
+    };
     handlers.recollect = request => service.recollect(String(request?.sessionId || ''), { thread: String(request?.thread || '') });
   } else {
     handlers.pair = request => service.pair(String(request?.code || ''));

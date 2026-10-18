@@ -33,6 +33,11 @@ const RESUME_META_FIELDS = [
   'currentModel',
   'codeagentModelPick',
   'codeagentRouteModel',
+  // CodeAgent 上一轮回答里的实际模型、当初请求的模型、通道这次实际启动的模型：渲染层漏带时沿用落盘值，
+  // 否则休眠 / 重启后显示名和侧栏图标退回占位或清单第一项（2026-10-18 用户反馈 v2.1.11）。
+  'codeagentActualModel',
+  'codeagentRequestedModel',
+  'codeagentLaunchModel',
   'codeagentForkSourceSessionId',
   'codeagentPoolAccount',
   'codeagentPoolLabel',
@@ -302,6 +307,9 @@ function handlePersistSessions(list, meetingList, deps) {
     if (typeof authoritative?.codeagentModelPick === 'boolean') session.codeagentModelPick = authoritative.codeagentModelPick;
     if (authoritative?.codeagentForkSourceSessionId) session.codeagentForkSourceSessionId = authoritative.codeagentForkSourceSessionId;
     if (authoritative?.codeagentRouteModel) session.codeagentRouteModel = authoritative.codeagentRouteModel;
+    for (const field of ['codeagentActualModel', 'codeagentRequestedModel', 'codeagentLaunchModel']) {
+      if (authoritative?.[field]) session[field] = authoritative[field];
+    }
     if (authoritative?.codeagentPoolAccount) { session.codeagentPoolAccount = authoritative.codeagentPoolAccount; session.codeagentPoolLabel = authoritative.codeagentPoolLabel || ''; }
     const previous = previousSessionsById.get(session.hubId);
     const changed = !previous

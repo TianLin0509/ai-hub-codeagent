@@ -53,6 +53,11 @@ function mountPetSettingsTab(container, { ipcRenderer, window, document }) {
         <button type="button" class="pet-tab-mini" data-pet="check"${checking || activeId ? ' disabled' : ''}>检查新形象</button></div>
       ${st.failedId && st.error ? `<p class="pet-tab-note bad">${esc(st.error)}</p>` : ''}
       <div class="pet-tab-grid">${roles.map(card).join('')}</div>
+      <div class="pet-tab-row">
+        <div><b>大小</b><small>拖动滑块，桌面上的桌宠跟着变大变小；脚的位置不动。</small></div>
+        <div class="pet-tab-size"><input type="range" min="${SIZE_MIN}" max="${SIZE_MAX}" step="1" value="${sizePct(s.scale)}" data-pet-size aria-label="桌宠大小"><span data-pet-size-label>${sizePct(s.scale)}%</span>
+          <button type="button" class="pet-tab-mini" data-pet="sizeReset"${sizePct(s.scale) === 100 ? ' disabled' : ''}>原大小</button></div>
+      </div>
       <div class="pet-tab-head"><h4>行为</h4></div>
       <div class="pet-tab-row">
         <div><b>说话频率</b><small>${esc(MODE_NOTES[s.mode] || '')}；每小时最多开口 3 次。</small></div>
@@ -75,6 +80,23 @@ function mountPetSettingsTab(container, { ipcRenderer, window, document }) {
       </div>`;
   }
 
+  // 大小滑块（2026-10-18 用户：连续调）：拖动时边拖边改（约 60ms 一次，不重画分页免得打断拖动）。
+  // 拖动中带 live：主进程只改内存、实时挪窗口，不写盘；松手（change）再发一次不带 live 的，只写这一次。
+  const SIZE_MIN = 60, SIZE_MAX = 160;
+  const sizePct = v => Math.round((Number(v) || 1) * 100);
+  let sizeTimer = null, sizeWant = null, sizeSent = null;
+  const sendSize = () => { if (sizeWant == null || sizeWant === sizeSent) return; sizeSent = sizeWant; void ipcRenderer.invoke('hub-pet:set-settings', { scale: sizeWant / 100, live: true }).catch(() => {}); };
+  function pushSize(final) {
+    if (final) {
+      clearTimeout(sizeTimer); sizeTimer = null;
+      sizeSent = null;
+      void ipcRenderer.invoke('hub-pet:set-settings', { scale: sizeWant / 100 }).then(next => { if (next) { data = next; render(); } }).catch(() => {});
+      return;
+    }
+    if (sizeTimer) return;
+    sendSize();
+    sizeTimer = setTimeout(function tick() { sizeTimer = null; if (sizeWant !== sizeSent) { sendSize(); sizeTimer = setTimeout(tick, 60); } }, 60);
+  }
   async function refresh() {
     try {
       const [settings, roles] = await Promise.all([ipcRenderer.invoke('hub-pet:get-settings'), ipcRenderer.invoke('hub-pet:roles')]);
@@ -96,6 +118,7 @@ function mountPetSettingsTab(container, { ipcRenderer, window, document }) {
       if (kind === 'quietHour') return void save({ quietHour: !data.quietHour });
       if (kind === 'silentToday') return void save({ silentToday: !data.silentToday });
       if (kind === 'resetPosition') return void save({ resetPosition: true });
+      if (kind === 'sizeReset') return void save({ scale: 1 });
       if (kind === 'check') { void ipcRenderer.invoke('hub-pet:roles-check').then(r => { if (r) packs = r; render(); }); return; }
       if (kind === 'download') {
         void ipcRenderer.invoke('hub-pet:role-download', btn.dataset.id).then(async r => { if (r) packs = r; data = (await ipcRenderer.invoke('hub-pet:get-settings')) || data; render(); });
@@ -111,7 +134,17 @@ function mountPetSettingsTab(container, { ipcRenderer, window, document }) {
     const cardEl = event.target.closest('.pet-tab-card.installed:not(.current)');
     if (cardEl) { event.preventDefault(); void save({ role: cardEl.dataset.role }); }
   });
+  container.addEventListener('input', event => {
+    const range = event.target.closest('input[data-pet-size]');
+    if (!range) return;
+    const label = container.querySelector('[data-pet-size-label]');
+    if (label) label.textContent = range.value + '%';
+    sizeWant = Number(range.value);
+    pushSize(false);
+  });
   container.addEventListener('change', event => {
+    const range = event.target.closest('input[data-pet-size]');
+    if (range) { sizeWant = Number(range.value); pushSize(true); return; }
     const input = event.target.closest('input[data-pet]');
     if (input) void save({ [input.dataset.pet]: input.checked });
   });

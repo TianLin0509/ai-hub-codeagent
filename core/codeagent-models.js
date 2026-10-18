@@ -184,6 +184,41 @@ function isCodeAgentSession(session) {
   return /^codeagent(?:-resume)?$/.test(String(session && session.kind || ''));
 }
 
+// 沿用 CodeAgent 当前模型、又不知道预计模型时的显示名（session-manager）。
+const PLACEHOLDER_LABEL = 'CodeAgent 当前模型';
+// 会话的显示名是不是「没有具体模型」：没有 id，显示名为空或是占位。
+function isPlaceholderModel(model) {
+  if (!model || typeof model !== 'object') return true;
+  if (clean(model.id)) return false;
+  const label = clean(model.displayName);
+  return !label || label === PLACEHOLDER_LABEL;
+}
+// Hub 启动时休眠 CodeAgent 会话的显示模型（renderer 加载休眠会话）。2026-10-18 用户反馈 v2.1.11：存下的当前模型为空时
+// 以前拿模型清单第一项（GLM-5.2-WX-Auto）顶上，DS 号的会话被标成 GLM。现在：
+//   - 存了当前模型：用它；但它和上一轮回答里的实际模型不是同一家、又不是本次明确选的（codeagentModelPick），以实际为准；
+//   - 没存：用上一轮回答里的实际模型；也没有就显示占位「CodeAgent 当前模型」。不拿清单第一项顶。
+// 返回 { id, displayName }；id 只在本来就存了具体模型时非空（实际模型只作显示名，内部模型仍按原来的空值）。
+function dormantDisplayModel(meta) {
+  const saved = meta && meta.currentModel && typeof meta.currentModel === 'object' ? meta.currentModel : null;
+  const actual = clean(meta && meta.codeagentActualModel);
+  const savedId = clean(saved && saved.id);
+  if (savedId) {
+    const conflict = actual && isSafeModelId(actual) && meta.codeagentModelPick !== true
+      && savedId.toLowerCase() !== actual.toLowerCase() && modelFamily(savedId) !== modelFamily(actual);
+    return conflict ? { id: actual, displayName: modelLabel(actual) } : { ...saved };
+  }
+  if (actual && isSafeModelId(actual)) return { id: '', displayName: modelLabel(actual) };
+  const label = clean(saved && saved.displayName);
+  return { id: '', displayName: label || PLACEHOLDER_LABEL };
+}
+
+// 定头像 / 侧栏图标用的模型：当前模型；CodeAgent 当前模型还空着（沿用默认、第一轮回答前或刚恢复）时看上一轮回答里的实际模型。
+function iconModelId(session) {
+  const current = clean(session && session.currentModel && session.currentModel.id);
+  if (current) return current;
+  return isCodeAgentSession(session) ? clean(session.codeagentActualModel) : '';
+}
+
 // 收到一条回答（原生记录里的 model）后会话元数据怎么改。返回 null 表示不用改。
 // - 记下实际模型 codeagentActualModel（界面提示用）；
 // - 实际模型和请求的不是同一家（或认不出是同一家）：说明请求没生效（常见原因是没有该模型权限），
@@ -359,6 +394,11 @@ module.exports = {
   normalizeModel,
   modelFamily,
   modelLabel,
+  PLACEHOLDER_LABEL,
+  isPlaceholderModel,
+  iconModelId,
+  isCodeAgentSession,
+  dormantDisplayModel,
   observeModel,
   mismatchNotice,
   configuredModels,

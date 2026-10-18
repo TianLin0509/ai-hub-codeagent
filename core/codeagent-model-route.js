@@ -17,15 +17,26 @@ const hasModel = (account, model) => (account.models || []).some(m => eq(m, mode
 // 日常主力（2026-10-18 用户：大家平时优先用 GLM）：GLM 一族标主力，其余是分流用的模型。
 const isPrimary = model => /^glm/i.test(String(model || ''));
 
+// 个人账号此刻启动会用的模型（只用于判定和显示，不改写它的 settings.json）：规则见 codeagent-pool.js personalDefaultModel。
+// 2.1.11 要求「settings.json 写了模型且在菜单里」才算已知，没写或写分档名 GLM-5.2-WX 时个人账号整个从模型表消失（用户 2026-10-18 反馈）。
+function personalModels({ dataDir, personalDir, fsModule = fs }) {
+  if (!personalDir) return { models: [], defaultModel: '' };
+  const known = pool.accountModels(personalDir, fsModule, dataDir ? pool.personalModelsFile(dataDir) : null);
+  const defaultModel = pool.personalDefaultModel(pool.readSettingsModel(personalDir, fsModule), known);
+  const models = (known.models || []).slice();
+  if (defaultModel && !models.some(m => eq(m, defaultModel))) models.push(defaultModel);
+  return { models, defaultModel };
+}
+
+// 个人账号的进行中会话数（activeSessions）包含号主自己手动开的、助理和论坛的会话（main.js routeAccounts）：
+// 号主自己忙的时候它少接通道的活。
 function personalAccount({ dataDir, personalDir, activeSessions = 0, now = Date.now(), fsModule = fs }) {
   if (!personalDir) return null;
   const creds = pool.readCredentials(personalDir, fsModule);
   if (pool.accountState(creds, now) !== 'ready') return null;
-  const known = pool.accountModels(personalDir, fsModule, pool.personalModelsFile(dataDir));
-  // 此刻启动会用的模型：settings.json 写了就是它；没写时取菜单标的默认，清单只有一个时就是那一个；都不知道就留空（不拿它分流）。
-  const own = pool.readSettingsModel(personalDir, fsModule);
-  const defaultModel = own || known.defaultModel || (known.models.length === 1 ? known.models[0] : '');
-  return { key: 'personal', pool: false, models: known.models || [], defaultModel, activeSessions: Number(activeSessions) || 0, lastAssignedAt: 0 };
+  const { models, defaultModel } = personalModels({ dataDir, personalDir, fsModule });
+  return { key: 'personal', pool: false, models, defaultModel, activeSessions: Number(activeSessions) || 0,
+    lastAssignedAt: dataDir ? pool.personalLastAssignedAt(dataDir, fsModule) : 0 };
 }
 
 // 能接通道会话的号：个人账号（登录有效）+ 号池里可用的号（登录有效、不与个人账号或别的号重复）。
@@ -38,7 +49,7 @@ function routeAccounts({ dataDir, personalDir = '', activeCounts = {}, personalA
     for (const a of pool.listAccounts(dataDir, { activeCounts, personalAccountId, now, fsModule })) {
       if (a.state !== 'ready' || a.sameAsPersonal || a.duplicateOf) continue;
       out.push({ key: a.id, pool: true, models: a.models || [], defaultModel: pool.effectiveModel(a.dir, fsModule),
-        activeSessions: a.activeSessions || 0, lastAssignedAt: a.lastAssignedAt || 0 });
+        activeSessions: a.activeSessions || 0, lastAssignedAt: a.lastAssignedAt || 0, routeSwitched: !!a.routeSwitched });
     }
   }
   return out;
@@ -86,6 +97,30 @@ function pickRoute(accounts, model, { working = {}, cap = Infinity } = {}) {
   return { ok: true, account, model: canonical, switchModel: needSwitch(account) === 1 };
 }
 
+// 不指定模型时挑号（2026-10-18 用户反馈 v2.1.11：通道只开号池的号、从不开他自己的个人账号）。
+// 以前「号池有可用的号就开在号池，个人账号只在号池开会话失败时兜底」，并行上限却把个人账号算作 1 条通道。
+// 现在候选是个人账号 + 号池里能用的号（routeAccounts 已筛过），个人账号不要求默认模型已知。挑法依次：
+//   1. 每号上限：通道在这个号上处理的问题数没到上限的优先（都到了就不看上限，名额由通道整体上限管，dispatch 前已核过）；
+//   2. 避开：为通道切过模型、上面还有会话的号池号（它此刻跑的不是原来的默认模型），清单未知的号池号（可能落到没权限的默认模型），
+//      默认模型不确定的个人账号；只剩它们时照用；
+//   3. 进行中会话最少（个人账号的会话数含号主自己开的、助理和论坛的会话，号主自己忙时它少接活）；
+//   4. 上次分配时间早的优先（轮转；个人账号的时间另存，见 codeagent-pool.js markPersonalAssigned）；
+//   5. 全部相同时号池优先（个人账号留给号主自己）。
+// 返回 { ok, account } 或 { ok:false, reason:'none' }。
+function pickAnyRoute(accounts, { working = {}, cap = Infinity } = {}) {
+  const all = (accounts || []).filter(a => a && a.key);
+  if (!all.length) return { ok: false, reason: 'none' };
+  const free = all.filter(a => (Number(working[a.key]) || 0) < cap);
+  const candidates = free.length ? free : all;
+  // 个人账号默认模型不确定（personalDefaultModel 留空）时同样排到后面，仍可兜底（2026-10-18 独立审核）。
+  const avoid = a => (a.pool ? ((a.routeSwitched && a.activeSessions > 0) || !(a.models || []).length) : !a.defaultModel) ? 1 : 0;
+  const account = candidates.slice().sort((x, y) => avoid(x) - avoid(y)
+    || (Number(x.activeSessions) || 0) - (Number(y.activeSessions) || 0)
+    || (Number(x.lastAssignedAt) || 0) - (Number(y.lastAssignedAt) || 0)
+    || Number(!x.pool) - Number(!y.pool))[0];
+  return { ok: true, account };
+}
+
 // 发给家里的模型表：按模型聚合，只有模型名、号数、通道在处理几个、还能并行几个；不含账号名、工号、备注。
 // 「几个号能用」只算真能派的号（个人账号只算它的默认模型）。parallel：通道整体 { cap, working }；cap 是每号上限（忙时 / 闲时）。
 function modelTable(accounts, { working = {}, cap = Infinity, peak = false, parallel = null, at = Date.now() } = {}) {
@@ -106,4 +141,4 @@ function tableSignature(table) {
   return JSON.stringify([table.peak, (table.models || []).map(m => [m.id.toLowerCase(), m.accounts, Math.min(2, m.free)])]);
 }
 
-module.exports = { routeAccounts, personalAccount, canServe, canEverServe, servableNow, pickRoute, modelTable, tableSignature, listModels, canonicalModel, isPrimary, hasModel };
+module.exports = { routeAccounts, personalAccount, personalModels, canServe, canEverServe, servableNow, pickRoute, pickAnyRoute, modelTable, tableSignature, listModels, canonicalModel, isPrimary, hasModel };

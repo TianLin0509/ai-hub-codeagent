@@ -54,3 +54,7 @@
 .pet-tab-card .pet-tab-mini{margin-top:5px;padding:2px 12px;font-size:12px}
 .pet-tab-bar{display:block;width:76%;height:4px;margin-top:9px;border-radius:2px;background:#e8edf5;overflow:hidden}
 .pet-tab-bar i{display:block;height:100%;background:#3478f6;border-radius:2px;transition:width .2s}
+/* 大小滑块（2026-10-18） */
+.pet-tab-size{flex:none;display:flex;align-items:center;gap:10px}
+.pet-tab-size input[type=range]{width:220px;accent-color:#3478f6;cursor:pointer}
+.pet-tab-size span{min-width:42px;text-align:right;font-size:12.5px;color:#4a5568;font-variant-numeric:tabular-nums}

@@ -134,6 +134,8 @@ function _buildSessionPayload(hubId, data) {
     // CodeAgent：回答里的真实模型与当初请求的模型（core/codeagent-models.js observeModel）。
     codeagentActualModel: typeof data.codeagentActualModel === 'string' ? data.codeagentActualModel : null,
     codeagentRequestedModel: typeof data.codeagentRequestedModel === 'string' ? data.codeagentRequestedModel : null,
+    // 没指定模型、却落在为通道切过模型的号上时这次实际启动用的模型（session-manager _resolveCodeAgentPool）；回执写实际模型用。
+    codeagentLaunchModel: typeof data.codeagentLaunchModel === 'string' ? data.codeagentLaunchModel : null,
     codeagentModelPick: typeof data.codeagentModelPick === 'boolean' ? data.codeagentModelPick : null,
     // AI特战队通道里家里指定的模型（core/codeagent-model-route.js）；恢复时沿用，追问不换模型。
     codeagentRouteModel: typeof data.codeagentRouteModel === 'string' ? data.codeagentRouteModel : null,

@@ -448,6 +448,16 @@ function codeAgentRouteModel(opts) {
   const id = opts.codeagentRouteModel.trim();
   return require('./codeagent-models').isSafeModelId(id) ? id : '';
 }
+// CodeAgent 会话第一轮回答前的「预计模型」（只作显示名）：恢复的会话 → 上一轮回答里的实际模型；
+// 号池号 → 这次同步配置定下的模型；个人账号 → 纠正后的默认模型（core/codeagent-model-route.js personalModels）。
+function codeAgentExpectedModel(opts, { pool = null, configDir = '' } = {}) {
+  const models = require('./codeagent-models');
+  const actual = opts && typeof opts.codeagentActualModel === 'string' ? opts.codeagentActualModel.trim() : '';
+  if (actual && models.isSafeModelId(actual)) return actual;
+  if (pool) return pool.model || '';
+  try { return require('./codeagent-model-route').personalModels({ dataDir: getHubDataDir(), personalDir: configDir }).defaultModel || ''; }
+  catch { return ''; }
+}
 function shouldPickCodeAgentModel(opts) {
   // model 也来自分支、历史恢复和场景元数据；只有本次操作的明确意图才能打开菜单。
   return !!(opts && opts.model && opts.codeagentModelPick === true && !codeAgentReadOnly(opts));
@@ -1440,7 +1450,8 @@ class SessionManager extends EventEmitter {
     if (!opts.codeagentPoolAccount) pool.markAssigned(dataDir, account.id);
     // 没指定模型、却只能落在为通道切过模型且还有会话的号上（或恢复到这样的号）：记下这次实际启动用的模型，回执里写明（审核 2026-10-18）。
     const switched = !routeModel && fs.existsSync(path.join(account.dir, pool.ROUTE_MARKER));
-    return { account, label: pool.label(account), launchModel: switched ? sync.model || '' : '' };
+    // model：这次启动号目录里定下的模型（syncSharedConfig 算出），新会话第一轮回答前拿它作显示名（预计模型）。
+    return { account, label: pool.label(account), launchModel: switched ? sync.model || '' : '', model: sync.model || '' };
   }
 
   _createSession(kind = 'powershell', opts = {}) {
@@ -1550,6 +1561,10 @@ class SessionManager extends EventEmitter {
       if (String(personal.defaultModel).toLowerCase() !== routeModel.toLowerCase()) {
         throw new Error(`个人账号此刻的默认模型是 ${personal.defaultModel || '未知'}，通道不改个人账号的默认模型；${routeModel} 请用号池里有它权限的号`);
       }
+    }
+    // AI特战队通道在个人账号上新开会话：记下分配时间，和号池各号一起轮转（core/codeagent-model-route.js pickAnyRoute）。
+    if (isCodeAgent && !codeagentPool && opts.purpose === 'company-bridge' && freshLaunch) {
+      try { require('./codeagent-pool').markPersonalAssigned(getHubDataDir()); } catch (error) { console.warn('[codeagent-pool] 记个人账号分配时间：' + error.message); }
     }
 
     if (isClaude) {
@@ -2015,9 +2030,14 @@ class SessionManager extends EventEmitter {
     } else if (isCodeAgent) {
       const mid = require('./codeagent-config').normalizeCodeAgentModel(opts.model);
       const routeModel = codeAgentRouteModel(opts);
+      // 沿用 CodeAgent 当前模型的会话：内部 currentModel.id 仍记为空（main.js observeCodeAgentModel 按第一条回答的实际模型补上），
+      // 显示名先填「预计模型」，不再一律写「CodeAgent 当前模型」（2026-10-18 用户反馈 v2.1.11）：
+      // 恢复的会话用上一轮实际模型；号池号用这次同步配置定下的模型；个人账号用纠正后的默认模型。都不知道才写占位。
+      const expected = !routeModel && !shouldPickCodeAgentModel(opts)
+        ? codeAgentExpectedModel(opts, { pool: codeagentPool, configDir: codeagentConfig.configDir }) : '';
       currentModel = routeModel ? { id: routeModel, displayName: require('./codeagent-models').modelLabel(routeModel) }
         : !shouldPickCodeAgentModel(opts)
-        ? { id: '', displayName: 'CodeAgent 当前模型' }
+        ? { id: '', displayName: expected ? require('./codeagent-models').modelLabel(expected) : require('./codeagent-models').PLACEHOLDER_LABEL }
         : { id: mid, displayName: require('./codeagent-models').modelLabel(mid) };
     }
 
@@ -2126,6 +2146,9 @@ class SessionManager extends EventEmitter {
       // 身份待绑定：main.js 的 hook 路由据此接受第一个 hook 上报的原生 id（见 codeagentIdentityPending）。
       ...(codeagentPool ? { codeagentPoolAccount: codeagentPool.account.id, codeagentPoolLabel: codeagentPool.label } : {}),
       ...(codeagentPool && codeagentPool.launchModel ? { codeagentLaunchModel: codeagentPool.launchModel } : {}),
+      // 恢复的会话保留上一轮回答里的实际模型（resume-session-handlers 传入）：显示名、侧栏图标在新一轮回答前就对。
+      ...(isCodeAgent && typeof opts.codeagentActualModel === 'string' && require('./codeagent-models').isSafeModelId(opts.codeagentActualModel)
+        ? { codeagentActualModel: opts.codeagentActualModel.trim() } : {}),
       ...(isCodeAgent ? { codeagentConfigDir: codeagentConfig.configDir, codeagentIdentityPending: !codeagentLaunch.sessionId,
         codeagentForkSourceSessionId: opts.forkCCSessionId || opts.codeagentForkSourceSessionId || undefined,
         codeagentModelPick: shouldPickCodeAgentModel(opts) } : {}),
@@ -3648,6 +3671,7 @@ class SessionManager extends EventEmitter {
       ...(info.currentModel ? { model: info.currentModel.id } : {}),
       ...(info.currentModel ? { currentModel: info.currentModel } : {}),
       ...(info.codeagentActualModel ? { codeagentActualModel: info.codeagentActualModel } : {}),
+      ...(info.codeagentLaunchModel ? { codeagentLaunchModel: info.codeagentLaunchModel } : {}),
       ...(info.codeagentRequestedModel ? { codeagentRequestedModel: info.codeagentRequestedModel } : {}),
       ...(typeof info.codeagentModelPick === 'boolean' ? { codeagentModelPick: info.codeagentModelPick } : {}),
       ...(info.codeagentRouteModel ? { codeagentRouteModel: info.codeagentRouteModel } : {}),

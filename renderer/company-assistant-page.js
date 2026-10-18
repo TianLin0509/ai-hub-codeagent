@@ -246,7 +246,7 @@ function createCompanyAssistantPage({ document, window, ipcRenderer, openSession
     if (verb === 'settings') return openSettings();
     if (verb === 'setup-mail') return setupMail(page.querySelector('[data-f="setup-email"]'), page.querySelector('[data-f="setup-msg"]'), button);
     if (verb === 'settings-tab') return openSettings(arg);
-    if (verb === 'open-session') { const r = await call('open-session'); close(); await openSession(r.sessionId); }
+    if (verb === 'open-session') return window.__companyAssistantOpenSession();
   }
 
   async function setupMail(input, msg, button) {
@@ -439,6 +439,11 @@ function createCompanyAssistantPage({ document, window, ipcRenderer, openSession
     clearInterval(timer); timer = null; window.removeEventListener('resize', onResize);
   }
   nav();
+  // 侧栏「助理」一栏的占位行（助理会话还没打开时）点进来：恢复或新开助理会话，再选中它。
+  window.__companyAssistantOpenSession = async () => {
+    try { const r = await call('open-session'); close(); await openSession(r.sessionId); }
+    catch (error) { showMessage?.('助理会话没能打开：' + error.message); }
+  };
   document.addEventListener('click', e => { if (page && !page.hidden && e.target.closest('#scene-rail button:not(#btn-company-assistant)')) close(); });
   ipcRenderer.on('company-assistant:changed', () => { if (page && !page.hidden) void load().catch(() => {}); });
   ipcRenderer.on('company-assistant:notice', (_e, notice) => {

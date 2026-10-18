@@ -288,6 +288,8 @@ function createResumeSessionHandler(deps) {
       ...(meta.codeagentPoolAccount && /^codeagent(?:-resume)?$/.test(meta.kind) ? { codeagentPoolAccount: meta.codeagentPoolAccount } : {}),
       // 通道会话家里指定过模型：恢复时仍按它定号的默认模型（追问沿用原模型，core/codeagent-model-route.js）。
       ...(meta.codeagentRouteModel && /^codeagent(?:-resume)?$/.test(meta.kind) ? { codeagentRouteModel: meta.codeagentRouteModel } : {}),
+      // 上一轮回答里的实际模型：恢复后第一轮回答前就按它显示（session-manager codeAgentExpectedModel），不显示占位。
+      ...(meta.codeagentActualModel && /^codeagent(?:-resume)?$/.test(meta.kind) ? { codeagentActualModel: meta.codeagentActualModel } : {}),
       ...(meta.runtimeBackend === 'claude-stream-json' ? { ...meta.nativeConfig, nativeRuntime: meta.nativeRuntime } : {}),
       resumeTranscriptPath: resumeTranscriptPath || undefined,
       // Code Agent 没有身份时从头开：--continue 会接上这个目录里最近的别的对话（它不认 --session-id，身份只能等 hook）。

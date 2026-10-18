@@ -123,6 +123,14 @@ function isWirelessSession(item) {
 function isTezhanSession(item) {
   return item?.purpose === 'company-bridge' || /^(?:AI特战队|特战)\s*[·・]|^\d{4}-Q\d+-[a-z0-9]+$/.test(String(item?.title || '').trim());
 }
+// 公司版助理会话常驻侧栏顶部（2026-10-18 用户：「希望助理是以一个常驻会话形式出现在左侧栏」）。
+// 公司侧栏有「特战」「置顶」「今天 / 3 天」「项目」「模型」五个筛选，任何一个都可能把助理会话筛掉（他在公司就看不到它）：
+// 助理不进普通分组，单独放在最上面的「助理」一栏，不受筛选影响；有多个（换代留下的旧助理）时只放最新的。
+const RESIDENT_PURPOSE = 'company-assistant';
+function companyAssistantOn() {
+  try { return require('../core/company-assistant/gate').companyAssistantEnabled(); } catch { return false; }
+}
+
 function isCompanyEdition() {
   try { return require('../core/distribution').target === 'company'; } catch { return false; }
 }
@@ -389,7 +397,8 @@ function _sessionWarningText(session) {
     const routeLabel = vpnNic ? 'VPN' : xgate ? 'xGate' : systemProxy ? '代理' : proxyShort ? 'VPN' : '直连';
     const foreign = egress && egress.foreign;
     const domestic = egress && egress.domestic;
-    const displayRoute = proxyShort ? foreign : domestic;
+    // 读不出代理地址（自动配置脚本）但 xGate 开着时，主进程照样按系统代理探了出口：探到了就显示它（公司直连本来就出不去）。
+    const displayRoute = proxyShort || (xgate && foreign && foreign.ok) ? foreign : domestic;
     const alert = egress && egress.alert;
     const clashDelay = proxyShort && proxy?.clashDelay?.status === 'ok' ? proxy.clashDelay : null;
 
@@ -688,7 +697,12 @@ sessionListEl.addEventListener('keydown', event => {
     doc.dispatchEvent(new doc.defaultView.CustomEvent('sidebar:open-search', { detail }));
   }
   function filteredSidebarItems(sessionMap = getSessions()) {
-    return collectSidebarItems(sessionMap).filter(item => sideFilterPasses(item) && projectFilter.matches(item) && (modelFilter === 'all' || sessionFamilies(item, sessionMap).has(modelFilter)));
+    return collectSidebarItems(sessionMap).filter(item => item.purpose !== RESIDENT_PURPOSE && sideFilterPasses(item) && projectFilter.matches(item) && (modelFilter === 'all' || sessionFamilies(item, sessionMap).has(modelFilter)));
+  }
+  // 常驻的助理会话：同用途里最近活动的那个。
+  function residentAssistant(sessionMap = getSessions()) {
+    const list = collectSidebarItems(sessionMap).filter(item => item.purpose === RESIDENT_PURPOSE);
+    return list.sort((a, b) => latestActivityTime(b) - latestActivityTime(a))[0] || null;
   }
   function revealSearchItem(id, memberId = null) {
     const item = collectSidebarItems().find(entry => entry.id === id);
@@ -878,7 +892,7 @@ sessionListEl.addEventListener('keydown', event => {
           : (SLOT_LABELS_M[idx] || `Slot ${idx + 1}`);
         const avatarSrc = sub && sub.kind
           // *-resume 没有专属 svg，归一到基础 kind 头像（assets 只有 5+1 个基础 logo）
-          ? `assets/ai-logos/${_logoKind(sub.kind, sub.currentModel?.id) || String(sub.kind).replace(/-resume$/, '')}.svg`
+          ? `assets/ai-logos/${_logoKind(sub.kind, require('../core/codeagent-models').iconModelId(sub)) || String(sub.kind).replace(/-resume$/, '')}.svg`
           : '';
         const modelLabel = sub && sub.currentModel ? (typeof modelShort === 'function' ? modelShort(sub.currentModel) : sub.currentModel.id) : '';
         const subRuntime = sub ? getSessionRuntimeTruth(sub) : null;
@@ -918,7 +932,7 @@ sessionListEl.addEventListener('keydown', event => {
         if (!member) return '';
         let state = partitionSidebarSessions([member], { sessionMap, groupMemberIds: new Set([id]) }).states.get(id) || 'idle';
         if (getSessionRuntimeTruth(member).state === RUNTIME_DORMANT && !member._resumePending && state !== 'error') state = 'dorm';
-        return _sessionKindHtml(member.kind, member.currentModel ? modelShort(member.currentModel) : '', state, '', member.currentModel?.id || '');
+        return _sessionKindHtml(member.kind, member.currentModel ? modelShort(member.currentModel) : '', state, '', require('../core/codeagent-models').iconModelId(member));
       }).join('');
       const answered = s._meeting.answeredThisTurn?.size || 0;
       const progress = memberTotal ? Math.min(100, answered / memberTotal * 100) : 0;
@@ -1033,7 +1047,7 @@ sessionListEl.addEventListener('keydown', event => {
     // 在途时标签里就是当前那一步和耗时，悬停看编号与全程。
     const bridge = bridgeBadge(s.id);
     const bridgeHtml = bridge ? `<span class="bt-badge" data-state="${escapeHtml(bridge.state)}" data-role="${escapeHtml(bridge.role || '')}" title="${escapeHtml(bridge.sub)}">${escapeHtml(bridge.chip)}</span>` : '';
-    div.innerHTML = _sessionKindHtml(s.kind, modelTxt, isDormant && !isResumePending && !issue ? 'dorm' : dotCls, dormantStateTip || runtimeTruthSummary(runtimeTruth), s.currentModel?.id || '')
+    div.innerHTML = _sessionKindHtml(s.kind, modelTxt, isDormant && !isResumePending && !issue ? 'dorm' : dotCls, dormantStateTip || runtimeTruthSummary(runtimeTruth), require('../core/codeagent-models').iconModelId(s))
       + '<span class="sl-title">' + _warningHtml(anyWarning) + poolHtml + bridgeHtml + escapeHtml(displayTitle) + '</span>'
       + timeHtml(s, showUnread ? Math.max(1, unreadCount) : 0);
     if (child) div.className += ' child';
@@ -1069,6 +1083,26 @@ sessionListEl.addEventListener('keydown', event => {
     });
     renderTarget.appendChild(h);
     if (!collapsed) for (const item of items) appendItem(item);
+  }
+  // 「助理」一栏：常驻最上面，不受筛选影响；会话还没打开时放一行「点击打开」。
+  if (companyAssistantOn()) {
+    const resident = residentAssistant(sessionMap);
+    const h = doc.createElement('div');
+    h.className = 'session-sec-header sec-resident';
+    h.dataset.sidebarRenderKey = 'section:sec-resident';
+    h.innerHTML = '<span>助理</span><span class="sec-rule"></span>';
+    renderTarget.appendChild(h);
+    if (resident) appendItem(resident);
+    else {
+      const row = doc.createElement('div');
+      row.className = 'session-item slim resident-placeholder';
+      row.dataset.sidebarRenderKey = 'resident-placeholder';
+      row.tabIndex = 0;
+      row.innerHTML = '<span class="sl-title">公司助理</span><span class="sl-time">点击打开</span>';
+      row.title = '打开公司助理的 CodeAgent 会话（没开着就恢复或新开一个）';
+      row.addEventListener('click', () => { void doc.defaultView?.__companyAssistantOpenSession?.(); });
+      renderTarget.appendChild(row);
+    }
   }
   if (sections.failed.length) appendSecHeader('异常', sections.failed, 'sec-failed');
   if (sections.active.length) appendSecHeader('活跃', sections.active, 'sec-active');

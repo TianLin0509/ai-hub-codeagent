@@ -19,7 +19,10 @@ const { randomUUID } = require('node:crypto');
 const { BARE_CONTINUE, transcriptTurnFinished } = require('./receipt-reader');
 
 const HISTORY = 20;
-const OPS = ['update', 'restart', 'status'];
+// diag（2026-10-18 直查通道，diag.js）：只读，直接采集电脑与 Hub 状态回报，不经 CodeAgent、不排队；和更新 / 重启互不影响。
+// act（2026-10-18 三期远程维护，remote-act.js）：休眠空闲通道会话、结束残留进程、临时调并行档位、取消排队 / 重试问题。
+const OPS = ['update', 'restart', 'status', 'diag', 'act'];
+const CAPS = ['diag', 'act'];
 // 执行中的阶段；其余都是结束态。
 const LIVE = ['checking', 'downloading', 'waiting', 'applying', 'restarting'];
 const GRACE_DEFAULT_MINUTES = 3;
@@ -63,8 +66,11 @@ class HubAdmin {
 
   // 报回家里：带上当前版本与发行源上的最新版本。
   report(id, phase, note, extra = {}) {
-    const payload = { id: id || null, gen: this.bridge.link.gen(), phase, note, current: this.current(), latest: this.latest(), at: this.now(), ...extra };
-    const history = [{ ...payload }, ...(this.state().history || [])].slice(0, HISTORY);
+    // caps：这台 Hub 认得的远程指令能力；对端据此判断能不能发直查，版本旧的不白等（2026-10-18 审核）。
+    const payload = { id: id || null, gen: this.bridge.link.gen(), phase, note, current: this.current(), latest: this.latest(), at: this.now(), caps: CAPS, ...extra };
+    // 直查的回报内容（压缩包）不进本机历史，只记摘要。
+    const { diag: _diag, ...brief } = payload;
+    const history = [brief, ...(this.state().history || [])].slice(0, HISTORY);
     this.save({ history });
     if (!this.bridge.link.paired()) return Promise.resolve();
     return this.bridge.link.send('hub-admin-status', payload).catch(() => {});
@@ -96,6 +102,15 @@ class HubAdmin {
     if (seen.includes(id)) return true; // 发件箱重发、服务端重放
     this.save({ seen: [id, ...seen].slice(0, 50) });
     if (message.op === 'status') { void this.report(id, 'status', this.describe()); return true; }
+    if (message.op === 'act') {
+      this.actTask = this.act(id, message).catch(error => { try { return Promise.resolve(this.report(id, 'failed', '远程维护没做完：' + error.message)).catch(() => null); } catch { return null; } });
+      return true;
+    }
+    if (message.op === 'diag') {
+      // 回报本身也可能在 Hub 退出的瞬间失败（库已关）：一律兜住，不留未处理的 rejection（2026-10-18 审核）。
+      this.diagTask = this.diag(id, message).catch(error => { try { this.auditDiag(`failed ${id} ${error.message}`); return Promise.resolve(this.report(id, 'failed', '直查没做完：' + error.message)).catch(() => null); } catch { return null; } });
+      return true;
+    }
     if (this.bridge.settings().allowRemoteAdmin === false) { void this.report(id, 'refused', '公司端没允许远程更新（公司 Hub「AI特战队专用功能」设置里可以打开）'); return true; }
     if (message.op === 'update' && !this.controller()) { void this.report(id, 'unsupported', '这台 Hub 不是安装版，不能远程更新'); return true; }
     if (message.op === 'restart' && !this.deps.relaunch) { void this.report(id, 'unsupported', '这台 Hub 不能远程重启'); return true; }
@@ -130,6 +145,67 @@ class HubAdmin {
     if (j && LIVE.includes(j.phase)) parts.push(`远程指令 ${j.id} 进行中（${j.note || j.phase}）`);
     parts.push(this.bridge.settings().allowRemoteAdmin === false ? '远程更新：未允许' : `远程更新：已允许（重启前最多等 ${this.graceMinutes()} 分钟）`);
     return parts.join(' · ');
+  }
+
+  // ---- 直查（2026-10-18，diag.js）：采集 → 脱敏 → 压缩 → 一条 hub-admin-status（phase:'diag'）报回 ----
+  // 限频：同类最快 30 秒一次；同一时间只跑一条。每次写审计日志（logs/company-diag.log），界面给一条不打断的轻提示。
+  async diag(id, message) {
+    const D = require('./diag');
+    const { sections, ignored } = D.parseSections(message.sections);
+    const lines = D.parseLines(message.lines);
+    const now = this.now(), last = Number(this.state().lastDiagAt) || 0;
+    if (this.bridge.settings().allowRemoteDiag === false) return this.refuseDiag(id, sections, '这台电脑没允许对端查看状态（「AI特战队专用功能」设置的「状态查看」里可以打开）');
+    if (this.diagRunning) return this.refuseDiag(id, sections, '上一条直查还在采集，这条没处理；等它回报后再发');
+    if (now - last < D.MIN_INTERVAL_MS && now >= last) {
+      return this.refuseDiag(id, sections, `${D.MIN_INTERVAL_MS / 1000} 秒内只查一次：上一次在 ${Math.round((now - last) / 1000)} 秒前，稍后再发`);
+    }
+    this.diagRunning = true;
+    this.save({ lastDiagAt: now });
+    const b = this.bridge;
+    // 对端在看：接下来一段时间加快检查通道，紧接着的追查能更快送到（同 company.js saveThread 的追问窗口）。
+    try { if (b.link.gen()) { b.store.set('pollActivity', { gen: b.link.gen(), until: now + 10 * 60000 }); b.tightenPoll?.(); } } catch { /* 只影响快慢 */ }
+    b.notify('对端查看了这台电脑的状态', `编号 ${id} · ${sections.map(s => D.SECTION_LABEL[s]).join('、')}`, null, { quiet: true });
+    try {
+      const raw = await D.collect({ bridge: b, sections, lines });
+      // 记下这次直查认定「可结束」的残留（PID + 启动时间），远程维护 kill-orphans 只认 5 分钟内这份清单（remote-act.js）
+      if (raw.processes && Array.isArray(raw.processes.leftovers)) this.save({ lastDiagKillable: { at: this.now(), id, list: raw.processes.leftovers.filter(x => x.killable).map(x => ({ pid: x.pid, startedAt: x.startedAt, name: x.name })) } });
+      if (ignored.length) raw.ignored = ignored;
+      // 号身份取一次快照，整份结果共用（逐个字符串读盘会卡住主进程）。
+      const secrets = b.accountSecrets();
+      b.secretsSnapshot = secrets; // 量大小时每次封装消息也要脱敏：这次直查期间共用这一份，结束即清（finally）
+      const redact = D.makeRedactor({ scrub: s => b.scrubText(s, secrets), extra: process.env.HUB_UNLOCK_PHRASE ? [process.env.HUB_UNLOCK_PHRASE] : [] });
+      const result = D.deepRedact(raw, redact);
+      const base = { id, gen: b.link.gen(), phase: 'diag', current: this.current(), latest: this.latest(), at: this.now() };
+      const draftNote = D.summarize(result) + ' · 超长已精简：进程只留前 5，残留嫌疑只留前 5，会话列表省略';
+      const measure = data => {
+        // 量的时候按最长的样子算：段落、整张降级清单、耗时位数都带上（2026-10-18 审核）。
+        const item = b.link.prepare('hub-admin-status', { ...base, note: draftNote, diag: data, diagBytes: 99999, elapsedMs: 9999999, sections, degraded: [...D.STEP_LABELS, '全部省略'] });
+        return Buffer.byteLength(JSON.stringify({ to: item.to, mid: item.mid, blob: item.blob }), 'utf8');
+      };
+      const fitted = b.link.paired() ? D.fit(result, measure) : { data: D.encode(result), result, degraded: [], bytes: 0 };
+      const note = D.summarize({ ...result, degraded: fitted.degraded });
+      this.auditDiag(`diag ${id} sections=${sections.join(',')}${ignored.length ? ' ignored=' + ignored.join(',') : ''} elapsed=${result.elapsedMs}ms bytes=${fitted.bytes}${fitted.degraded.length ? ' degraded=' + fitted.degraded.length : ''}`);
+      await this.report(id, 'diag', note, { diag: fitted.data, diagBytes: fitted.bytes, elapsedMs: result.elapsedMs, sections, ...(fitted.degraded.length ? { degraded: fitted.degraded } : {}) });
+      this.save({ lastDiag: { id, at: this.now(), sections, elapsedMs: result.elapsedMs, bytes: fitted.bytes, degraded: fitted.degraded.length } });
+      return fitted;
+    } finally {
+      // 限频从这次采集结束算（采集慢时，紧接着的下一次不会马上又压上来）
+      this.diagRunning = false; this.bridge.secretsSnapshot = null;
+      try { this.save({ lastDiagAt: this.now() }); } catch { /* 库已关 */ }
+    }
+  }
+  refuseDiag(id, sections, why) {
+    this.auditDiag(`refused ${id} sections=${sections.join(',')} ${why}`);
+    return this.report(id, 'refused', '直查：' + why);
+  }
+  auditDiag(line) { try { this.bridge.appendLog?.('company-diag.log', line); } catch { /* 审计日志写不了不挡回报 */ } }
+
+  // ---- 远程维护（2026-10-18 三期，remote-act.js）----
+  remoteAct() { if (!this.actor) { const { RemoteAct } = require('./remote-act'); this.actor = new RemoteAct(this); } return this.actor; }
+  async act(id, message) {
+    const out = await this.remoteAct().run(id, message);
+    await this.report(id, out.phase, out.note, { act: out.act });
+    return out;
   }
 
   async runUpdate(job) {
@@ -206,6 +282,8 @@ class HubAdmin {
   }
   // 由通道定时器调用：等待阶段看能不能重启了；重启阶段看进程是不是真的退出了（看门狗）。
   async advance() {
+    // 远程维护临时调的并行档位：到点恢复（remote-act.js）
+    if (this.state().parallelRestore) { try { await this.remoteAct().restoreDue(); } catch (e) { console.warn('[hub-admin] 恢复并行档位', e.message); } }
     const job = this.job();
     if (!job || !LIVE.includes(job.phase)) return;
     if (['applying', 'restarting'].includes(job.phase)) {
@@ -432,7 +510,7 @@ class HubAdmin {
   status() {
     const s = this.state();
     return { job: s.job || null, history: (s.history || []).slice(0, 5), current: this.current(), installed: !!this.controller(),
-      graceMinutes: this.graceMinutes(), resumeAfterRestart: s.resumeAfterRestart || null, resumeIssues: this.resumeIssues() };
+      graceMinutes: this.graceMinutes(), resumeAfterRestart: s.resumeAfterRestart || null, resumeIssues: this.resumeIssues(), lastDiag: s.lastDiag || null, parallelRestore: s.parallelRestore || null };
   }
 }
 

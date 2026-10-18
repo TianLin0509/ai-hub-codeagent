@@ -97,6 +97,7 @@
       <label>自动作答</label><div class="hl-row"><select data-hl-f="enabled"><option value="1"${s.enabled ? ' selected' : ''}>开：收到问题就开 CodeAgent 会话作答</option><option value="0"${s.enabled ? '' : ' selected'}>关：只收下问题，不作答</option></select></div>
       <label>权限</label><div class="hl-muted">CodeAgent 不认禁用工具的启动参数，「不改动这台电脑、不回传源码」靠下面的说明约束；这台电脑上已注册的 MCP（AirView、内网搜索等）可以用。</div>
       <label>代码位置</label><div><textarea rows="3" data-hl-f="codeRoots" placeholder="每行一个目录，例如 D:\\code\\l2">${esc(s.codeRoots.join('\n'))}</textarea><div class="hl-muted">第一行作为 CodeAgent 会话的工作目录，其余目录一并开放读取。</div></div>
+      ${Array.isArray(s.resultDirs) ? `<label>仿真结果目录</label><div><textarea rows="2" data-hl-f="resultDirs" placeholder="每行一个目录，例如 C:/AirView">${esc(s.resultDirs.join('\n'))}</textarea><div class="hl-muted">对端查看状态时，列出这些目录和代码位置下最近更新的结果文件（只看文件名、大小、修改时间，不读内容）。</div></div>` : ''}
       <label>运行</label><div class="hl-row">模型：问题里指定了模型时按指定（挑有它权限的号），否则用 CodeAgent 的默认 ·
         思考<select data-hl-f="effort">${opt(['low', 'medium', 'high', 'max'].map(x => ({ id: x, label: { low: '低', medium: '中', high: '高', max: '最高' }[x] })), s.effort)}</select>
         空闲检查间隔<select data-hl-f="pollSeconds">${opt([...new Set([10, 15, 30, 60, 120, s.pollSeconds])].sort((a, b) => a - b).map(x => ({ id: String(x), label: x + ' 秒' })), String(s.pollSeconds))}</select>
@@ -105,6 +106,10 @@
       ${'allowRemoteAdmin' in s ? `<label>远程更新</label><div><select data-hl-f="allowRemoteAdmin"><option value="1"${s.allowRemoteAdmin ? ' selected' : ''}>允许家里远程更新 / 重启这台 Hub</option><option value="0"${s.allowRemoteAdmin ? '' : ' selected'}>不允许</option></select>
         ${'restartGraceMinutes' in s ? `· 重启前最多等<select data-hl-f="restartGraceMinutes">${opt([...new Set([0, 1, 3, 5, 10, 15, 30, Number(s.restartGraceMinutes)])].sort((a, b) => a - b).map(x => ({ id: String(x), label: x ? x + ' 分钟' : '不等' })), String(s.restartGraceMinutes))}</select>` : ''}
         <div class="hl-muted">只更新到发行源上的正式版本；重启前先等手上的任务答完，到时还没答完的先记下、中断，重启后自动恢复会话发「继续」接着做，回执照常发回（家里带 force 时不等）。${data.hubAdmin?.history?.[0] ? '最近一次：' + esc(data.hubAdmin.history[0].note) + '（' + clock(data.hubAdmin.history[0].at) + '）' : ''}</div></div>` : ''}
+      ${'allowRemoteDiag' in s ? `<label>状态查看</label><div><select data-hl-f="allowRemoteDiag"><option value="1"${s.allowRemoteDiag ? ' selected' : ''}>允许对端查看这台电脑的状态</option><option value="0"${s.allowRemoteDiag ? '' : ' selected'}>不允许</option></select>
+        <div class="hl-muted">只读：内存、进程、任务队列、号池状态（不含账号）、日志尾部（已脱敏）；不读代码和文件内容。每次查看都会在这里轻提示并记入日志。${data.hubAdmin?.lastDiag ? '最近一次：' + clock(data.hubAdmin.lastDiag.at) : ''}</div></div>` : ''}
+      ${'allowRemoteMaintain' in s ? `<label>远程维护</label><div><select data-hl-f="allowRemoteMaintain"><option value="1"${s.allowRemoteMaintain ? ' selected' : ''}>允许对端远程维护这台 Hub</option><option value="0"${s.allowRemoteMaintain ? '' : ' selected'}>不允许</option></select>
+        <div class="hl-muted">能做的只有：让答完空着的通道会话休眠（你自己开的会话不动）、结束查看状态时认定为「可结束」的重启残留进程、临时调整同时处理的档位（可到点恢复）、取消排队中的问题、重试失败的问题。每次都会在这里轻提示并记入日志。${data.hubAdmin?.parallelRestore ? '临时档位将于 ' + clock(data.hubAdmin.parallelRestore.at) + ' 恢复' : ''}</div></div>` : ''}
       <label>网络放行</label><div><select data-hl-f="autoGate"><option value="0"${s.autoGate ? '' : ' selected'}>手动：被拦时提示我去点放行页</option><option value="1"${s.autoGate ? ' selected' : ''}>自动放行（我已知晓风险）</option></select>
         <div class="hl-muted">自动放行：公司网络弹出放行页时，Hub 在后台替你点「继续访问」并重新连接；连续 3 次没放行就停下提示你，30 分钟后再试。</div></div>
       <label>给 CodeAgent<br>的说明</label><div><textarea rows="8" data-hl-f="instructions">${esc(s.instructions)}</textarea>
@@ -272,13 +277,15 @@
       else if (verb === 'unpair') { if (!window.confirm('解除当前配对？之后需要对端重新生成配对码。')) return; data = await call('bridge:unpair'); render(); }
       else if (verb === 'reset-instructions') { field('instructions').value = data.defaultInstructions; editing = true; }
       else if (verb === 'save') {
-        await call('bridge:set-settings', { enabled: field('enabled').value === '1', codeRoots: field('codeRoots').value, effort: field('effort').value,
+        await call('bridge:set-settings', { enabled: field('enabled').value === '1', codeRoots: field('codeRoots').value, ...(field('resultDirs') ? { resultDirs: field('resultDirs').value } : {}), effort: field('effort').value,
           pollSeconds: Number(field('pollSeconds').value), instructions: field('instructions').value,
           ...(field('perAccountPeak') ? { maxParallel: Number(field('maxParallel').value), maxParallelIdle: Number(field('maxParallelIdle').value),
             perAccountPeak: Number(field('perAccountPeak').value), perAccountIdle: Number(field('perAccountIdle').value),
             memFloorPct: Number(field('memFloorPct').value), busyHours: field('busyHours').value, usePool: field('usePool').value === '1' } : {}),
           ...(field('autoGate') ? { autoGate: field('autoGate').value === '1' } : {}),
           ...(field('allowRemoteAdmin') ? { allowRemoteAdmin: field('allowRemoteAdmin').value === '1' } : {}),
+          ...(field('allowRemoteDiag') ? { allowRemoteDiag: field('allowRemoteDiag').value === '1' } : {}),
+          ...(field('allowRemoteMaintain') ? { allowRemoteMaintain: field('allowRemoteMaintain').value === '1' } : {}),
           ...(field('restartGraceMinutes') ? { restartGraceMinutes: Number(field('restartGraceMinutes').value) } : {}) });
         editing = false; await load(); toast('AI特战队专用功能设置已保存');
       }
