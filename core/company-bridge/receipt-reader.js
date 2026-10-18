@@ -32,11 +32,34 @@ function withoutClipboardImages(text) {
   const bodies = at >= 0 ? [text, text.slice(0, at)] : [text];
   return bodies.flatMap(body => [/\[Image #\d+\]/g, /\[Image #\d+\] ?/g, /\[Image #\d+\]\s*/g].map(re => body.replace(re, '')));
 }
-function matchesRequest(group, request) {
-  if (request.promptFingerprint) {
-    if (receiptPromptFingerprint(group.text) === request.promptFingerprint) return true;
-    return withoutClipboardImages(String(group.text || '')).some(text => receiptPromptFingerprint(text) === request.promptFingerprint);
+// 2026-10-18 v2.1.9 发布验收（D:\Temp\hub-restart-resume-03pDZw）：机器负载重，第一次发送粘贴进了 CodeAgent 输入框、
+// 回车没生效；3 分钟后通道判「没送达」重发，又粘贴一遍，一个回车把两份一起提交——原生记录里是一条用户消息、正文是
+// 同一段提问连写两遍（中间隔一个空行）。它确实是本轮的提问，只是重复了。整条由同一段文字重复 N 遍组成时，取出那一段再比。
+function repeatedCopy(text) {
+  const s = String(text || '').replace(/\r\n?/g, '\n').trim();
+  const head = s.slice(0, 40);
+  if (!head) return null;
+  for (let at = s.indexOf(head, 1); at > 0; at = s.indexOf(head, at + 1)) {
+    const copy = s.slice(0, at).trim();
+    if (!copy) continue;
+    let rest = s.slice(at), n = 1;
+    while (rest.startsWith(copy)) { rest = rest.slice(copy.length).trimStart(); n += 1; }
+    if (!rest && n > 1) return copy;
   }
+  return null;
+}
+// 一条用户输入可能对应的提问指纹：原文；去掉剪贴板图片占位符与看图块；以及其中「同一段连写多遍」的单份。
+function requestFingerprints(raw) {
+  const out = new Set();
+  for (const variant of [raw, ...withoutClipboardImages(raw)]) {
+    const text = promptText(variant);
+    out.add(promptFingerprint(text));
+    for (const copy of [repeatedCopy(text), repeatedCopy(variant)]) if (copy) out.add(promptFingerprint(promptText(copy)));
+  }
+  return out;
+}
+function matchesRequest(group, request) {
+  if (request.promptFingerprint) return requestFingerprints(String(group.text || '')).has(request.promptFingerprint);
   // Upgrade compatibility for an already-dispatched round. New dispatches use
   // exact normalized content, not a task number merely quoted in user prose.
   if (!group.at || group.at < (request.sentAt || 0) - 5000) return false;
@@ -125,8 +148,14 @@ function readCompanyReceipt(meta, request) {
   if (header !== identity) return unavailable('原生记录身份与公司会话不一致');
   if (baselineIndex === null) return unavailable('未找到本次发送前的答复基线，暂不确认回执归属');
   const candidates = groups.filter(group => group.start > baselineIndex && matchesRequest(group, request));
-  if (candidates.length !== 1) return unavailable('未能唯一核对本次请求对应的原生用户输入，请查看公司会话');
-  const group = candidates[0];
+  if (!candidates.length) return unavailable('未能唯一核对本次请求对应的原生用户输入，请查看公司会话');
+  // 同一轮的提问在记录里出现了不止一次（通道补发、人在终端里重发了同一段）：都是这一个请求，不再判「不唯一」。
+  // 归属看最后一份：取最后一段首尾相连的重复（中间没有别的真实输入）里、最靠后且已有最终正文的那一份；
+  // 都还没有正文就按最后一份等。更早、被别的输入隔开的那几份不算，防串题的原规则不变。
+  const run = [candidates[candidates.length - 1]];
+  for (let i = groups.indexOf(run[0]) - 1; i >= 0 && candidates.includes(groups[i]); i -= 1) run.unshift(groups[i]);
+  const answeredIn = g => [...g.records.values()].some(record => record.index > baselineIndex && record.index < g.end);
+  const group = [...run].reverse().find(answeredIn) || run[run.length - 1];
   if (stats.pendingLineBytes && !Number.isFinite(group.end)) return unavailable('原生记录末行尚未写完整，等待追加后再核对回执');
   // Corruption before this actual request cannot change its ownership. A bad
   // row inside the request may hide a user boundary or answer: never skip it
@@ -149,7 +178,8 @@ function transcriptHasRequest(meta, request, fsModule = fs) {
   const dir = require('node:path').dirname(bound);
   let names;
   try { names = fsModule.readdirSync(dir).filter(name => name.endsWith('.jsonl')); } catch { return null; }
-  const since = request.sentAt - 5000;
+  // 从第一次发出算起：重发前先核对时，第一次发出后才慢慢落进记录的那一份也算送到了（不必再发第二遍）。
+  const since = Math.min(request.sentAt, request.firstSentAt || request.sentAt) - 5000;
   for (const name of names) {
     const file = require('node:path').join(dir, name);
     try { if (fsModule.statSync(file).mtimeMs < since) continue; } catch { continue; }
@@ -167,4 +197,30 @@ function transcriptHasRequest(meta, request, fsModule = fs) {
   return false;
 }
 
-module.exports = { readCompanyReceipt, receiptPromptFingerprint, transcriptHasRequest, BARE_CONTINUE };
+// 会话的上一轮是不是已经答完（hub-admin.js 重启后恢复本机会话前用）：最后一条有效记录是带正文的 end_turn 回答。
+// 之后又有工具调用 / 工具结果、真实提问、「继续」、被打断的占位、后台通知或排队中的输入，都算没答完。
+// 斜杠命令回显、压缩摘要、附件、系统行不改变判断。返回 true / false / null（读不到记录，不下结论）。
+function transcriptTurnFinished(meta, fsModule = fs) {
+  const file = meta?.transcriptPath;
+  if (!file) return null;
+  let raw;
+  try { raw = fsModule.readFileSync(file, 'utf8'); } catch { return null; }
+  let finished = null;
+  for (const line of raw.split('\n')) {
+    if (!line.trim()) continue;
+    let row; try { row = JSON.parse(line); } catch { continue; }
+    if (!row || row.isSidechain) continue;
+    if (meta.ccSessionId && row.sessionId && row.sessionId !== meta.ccSessionId) continue;
+    if (row.type === 'assistant') {
+      finished = row.message?.stop_reason === 'end_turn' && !!bodyText(row).trim();
+    } else if (row.type === 'user') {
+      if (isToolResultEntry(row)) { finished = false; continue; }
+      const text = bodyText(row).trimStart();
+      if (row.isCompactSummary || /^<(?:local-command-|command-name>)/.test(text)) continue;
+      finished = false;
+    } else if (row.type === 'attachment' && row.attachment?.type === 'queued_command') finished = false;
+  }
+  return finished;
+}
+
+module.exports = { readCompanyReceipt, receiptPromptFingerprint, transcriptHasRequest, transcriptTurnFinished, BARE_CONTINUE };

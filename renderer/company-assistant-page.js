@@ -342,7 +342,7 @@ function createCompanyAssistantPage({ document, window, ipcRenderer, openSession
 
   const onResize = () => place();
   async function open() {
-    build(); closeOtherPanels(); window.__assistantHide?.(); window.__wirelessHide?.(); window.setShellNavActive?.('company-assistant');
+    build(); closeOtherPanels(); window.__assistantHide?.(); window.__wirelessHide?.(); window.__companyForumHide?.(); window.setShellNavActive?.('company-assistant');
     page.hidden = false; document.body.classList.add('company-assistant-page-open'); place();
     const btn = nav(); btn?.classList.add('active'); btn?.classList.remove('has-unread');
     window.addEventListener('resize', onResize);

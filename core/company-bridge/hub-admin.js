@@ -16,7 +16,7 @@
 // 回执照常发回家里。恢复失败的通道轮次按现有失败流程报回家里（家里可补收或追问）；本机会话在侧栏标「重启打断」。
 // 指令状态存在通道数据库里：重启后读替换脚本留下的结果（takeLastResult），通道接通时报回家里。
 const { randomUUID } = require('node:crypto');
-const { BARE_CONTINUE } = require('./receipt-reader');
+const { BARE_CONTINUE, transcriptTurnFinished } = require('./receipt-reader');
 
 const HISTORY = 20;
 const OPS = ['update', 'restart', 'status'];
@@ -338,7 +338,10 @@ class HubAdmin {
           if (!live) throw new Error('会话没能恢复');
         }
         if (b.sessionBusy(id)) { ok = true; note = '恢复后它已自己接着做'; }
-        else {
+        else if (item.kind === 'local' && this.localFinished(id)) {
+          // 本机会话在关闭途中其实已经答完（最后一条记录是完整的回答）：恢复会话就够了，不补「继续」。
+          return this.settleOutcome(item, { state: 'resumed', skipped: true, note: '重启前已答完，不用继续', at: this.now() }, true);
+        } else {
           // 正规发送入口（session:send-prompt 同一路径，等 CLI 就绪、分块提交、语义确认），只发纯「继续」。
           const receipt = await this.deps.sendPrompt(id, RESUME_TEXT, randomUUID());
           if (!receipt || receipt.notSent || (receipt.ok === false && !receipt.unconfirmed && receipt.sendStatus !== 'stuck')) {
@@ -348,11 +351,19 @@ class HubAdmin {
         }
       }
     } catch (error) { ok = false; note = short(error.message, 120); }
-    const outcome = { state: ok ? 'resumed' : 'failed', note, at: this.now() };
+    return this.settleOutcome(item, { state: ok ? 'resumed' : 'failed', note, at: this.now() }, ok);
+  }
+  settleOutcome(item, outcome, ok) {
     // 落结果出错也不能卡住清单：否则这一项一直停在「恢复中」，后面的会话都轮不到（2026-10-17 审核）。
     try { this.settle({ ...item, ...outcome }, ok); }
     catch (error) { console.warn('[hub-admin] 恢复结果没能落下：' + (error && error.message)); }
     return outcome;
+  }
+  // 本机会话（不是通道轮次）重启前是不是已经答完：读原生记录，最后一条有效记录是带正文的完整回答（receipt-reader.js）。
+  // 读不到记录不下结论，照旧发「继续」。
+  localFinished(id) {
+    const meta = this.deps.getSession?.(id) || this.deps.getSessionMetadata?.(id);
+    try { return (this.deps.transcriptTurnFinished || transcriptTurnFinished)(meta) === true; } catch { return false; }
   }
   // 结果落到各自的地方：通道轮次继续在途（只清标记、记下恢复时间）或按失败流程报回家里；本机会话失败记进侧栏标记。
   settle(item, ok) {

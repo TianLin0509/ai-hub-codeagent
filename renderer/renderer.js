@@ -8672,6 +8672,17 @@ if (require('../core/company-assistant/gate').companyAssistantEnabled()) {
     window.__companyAssistantHide = () => companyAssistantPage.close();
   } catch (error) { console.warn('[company-assistant] 助理页未启动：', error.message); }
 }
+// 公司版「论坛」页（2026-10-18）：稼先社区、心声社区今天的热帖 + AI 摘要；只在公司版启用（core/company-forum/gate.js）。
+if (require('../core/company-forum/gate').companyForumEnabled()) {
+  try {
+    const companyForumPage = require('./company-forum-page').createCompanyForumPage({
+      document, window, ipcRenderer,
+      closeOtherPanels: () => { window.hubWorkspaces?.close(); memoryPanel.close(); capabilityPanel.close(); accountCenterPanel.close(); },
+      showMessage: message => showToast(message),
+    });
+    window.__companyForumHide = () => companyForumPage.close();
+  } catch (error) { console.warn('[company-forum] 论坛页未启动：', error.message); }
+}
 const openConfigModal = configModal.open;
 const setCodexProfileForm = configModal.setCodexProfileForm;
 document.addEventListener('hub-config-saved', () => {

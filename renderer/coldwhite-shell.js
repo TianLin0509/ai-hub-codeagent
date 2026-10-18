@@ -23,7 +23,7 @@ function installColdwhiteShell(doc = globalThis.document) {
   require('./status-footer-layout').installStatusFooterLayout(doc);
   const panelIds = ['cloud-page', 'hub-workspace', 'rules-panel', 'writing-panel', 'account-page', 'xresearch-panel', 'study-panel', 'ran-panel'];
   const watched = new Set();
-  const navigation = ['btn-home','btn-rules','btn-assistant','btn-company-assistant','btn-research','btn-study','btn-ran','btn-wireless','btn-rail-memo','btn-rail-capabilities','btn-cloud','btn-rail-accounts','btn-writing'];
+  const navigation = ['btn-home','btn-rules','btn-assistant','btn-company-assistant','btn-company-forum','btn-research','btn-study','btn-ran','btn-wireless','btn-rail-memo','btn-rail-capabilities','btn-cloud','btn-rail-accounts','btn-writing'];
   let scheduled = false;
   const sync = () => {
     scheduled = false;
@@ -48,6 +48,8 @@ function installColdwhiteShell(doc = globalThis.document) {
       if (current === 'btn-home' && doc.body.classList.contains('wireless-page-open')) current = 'btn-wireless';
       // 公司版「助理」页（core/company-assistant）
       if (current === 'btn-home' && doc.body.classList.contains('company-assistant-page-open')) current = 'btn-company-assistant';
+      // 公司版「论坛」页（core/company-forum）
+      if (current === 'btn-home' && doc.body.classList.contains('company-forum-page-open')) current = 'btn-company-forum';
       if (current === 'btn-home' && (doc.body.classList.contains('assistant-session-active') || doc.body.classList.contains('assistant-page-open'))) current = 'btn-assistant';
     }
     for (const id of navigation) {

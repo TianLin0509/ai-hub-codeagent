@@ -32,14 +32,17 @@ function createHubPetController({
   noticeBus, isAssistantBusy = () => false,
   canShow = () => true, debug = false, watchFullscreen = true,
   logger = console, now = () => Date.now(),
-  fetchImpl = globalThis.fetch, roleSources = null,
+  fetchImpl = globalThis.fetch, roleSources = null, autoRoleDelayMs = 2500,
 } = {}) {
   // now 是「现在几点」（可在单测里固定）；窗口移动的动画计时一律用真实时钟 Date.now()。
   if (typeof BrowserWindow !== 'function') throw new Error('BrowserWindow is required');
   // 形象：程序自带的（公司版只带小猫、企鹅）+ 在线下载到数据目录的（core/hub-pet/role-packs.js）。
   const roles = createRolePackStore({ assetsDir, dataDir, logger, fetchImpl, ...(roleSources ? { sources: roleSources } : {}),
     emit: (channel, payload) => { try { sendToRenderer?.(channel, payload); } catch (_) {} } });
-  const settings = createSettingsStore({ dataDir, company, logger, roleOk: id => roles.installed(id) });
+  // 设置里记住的形象：装了的，或者是在线可下载的已知形象（2026-10-18：2.1.8 选了兔子等的用户升级后，
+  // 记忆不能因为一次别的设置写盘就被改成小猫；显示时没装照样先用小猫，见 currentRole）。
+  const knownRole = id => ROLES.some(r => r.id === id);
+  const settings = createSettingsStore({ dataDir, company, logger, roleOk: id => roles.installed(id) || knownRole(id) });
   const speech = new SpeechQueue({ now });
   const chatterTrack = {};
   // 存的形象被删掉（或换到没带这只的版本）时用小猫顶上。
@@ -432,6 +435,8 @@ function createHubPetController({
     'hub-pet-menu:act': (event, payload) => { if (fromMenu(event)) menuAct(payload || {}); },
     'hub-pet:open-notice': (event, item) => {
       if (!fromPet(event) || !item) return;
+      // 「形象没下载下来」的提示：直接打开「助理 → 设置 → 桌宠」。
+      if (/^pet-role-missing-/.test(String(item.id || ''))) { openAssistant({ settingsTab: 'pet' }); return; }
       openAssistant({ noticeId: String(item.id || '').slice(0, 160), sessionId: item.sessionId ? String(item.sessionId).slice(0, 160) : undefined });
     },
     'hub-pet:signal': (event, patch) => { if (fromMain(event)) setSignal(patch); },
@@ -467,7 +472,7 @@ function createHubPetController({
         evaluate();
         return true;
       }
-      if (req.op === 'state') return { lastSent: lastSent ? JSON.parse(lastSent) : null, bounds: alive() ? win.getBounds() : null, visible: alive() && win.isVisible(), petPid: alive() ? win.webContents.getOSProcessId() : null, fullscreenWatch: fsWatch.isRunning(), lastRelease };
+      if (req.op === 'state') return { lastSent: lastSent ? JSON.parse(lastSent) : null, bounds: alive() ? win.getBounds() : null, visible: alive() && win.isVisible(), petPid: alive() ? win.webContents.getOSProcessId() : null, fullscreenWatch: fsWatch.isRunning(), lastRelease, autoRole: { ...autoRole }, role: settings.get().role };
       if (req.op === 'metrics') {
         const pid = alive() ? win.webContents.getOSProcessId() : null;
         return (app?.getAppMetrics?.() || []).filter(m => m.pid === pid || m.type === 'GPU').map(m => ({ pid: m.pid, type: m.type, cpu: m.cpu && m.cpu.percentCPUUsage }));
@@ -511,6 +516,51 @@ function createHubPetController({
     else evaluate();
   }
 
+  // ---------- 记住的形象没装：后台补下载（2026-10-18） ----------
+  // 2.1.9 起兔子、柴犬、仓鼠、玄凤改成在线下载。之前选了它们的用户升级后，设置里还记着，但这台电脑上没有图：
+  // 启动后在后台用设置页同一条下载路径（多源、字节数 + SHA-256 校验）补装，装好就换上；
+  // 下载不成功时，只说一次温和的提示，指到「助理 → 设置 → 桌宠」。每次启动最多试一次，不反复联网。
+  let autoRoleTimer = null;
+  let autoRole = { phase: 'idle', id: null, error: null };   // 隔离测试读
+  function rememberedMissingRole() {
+    const want = settings.get().role;
+    return want && knownRole(want) && !roles.installed(want) ? want : null;
+  }
+  async function restoreRememberedRole() {
+    const want = rememberedMissingRole();
+    if (!want || disposed || autoRole.phase !== 'idle') return autoRole;
+    // 用户正在设置页里自己下载，就交给那边，不抢。
+    if (roles.snapshot().state.phase === 'downloading') { autoRole = { phase: 'skipped', id: want, error: null }; return autoRole; }
+    autoRole = { phase: 'downloading', id: want, error: null };
+    logger.info?.(`[hub-pet] remembered role ${want} is not installed; downloading it in the background`);
+    let error = null;
+    try {
+      const snap = await roles.download(want);
+      if (!roles.installed(want)) error = (snap && snap.state && snap.state.error) || '下载没成功';
+    } catch (e) { error = (e && e.message) || String(e); }
+    if (disposed) return autoRole;
+    if (!error) {
+      autoRole = { phase: 'installed', id: want, error: null };
+      lastSent = '';
+      evaluate();
+      try { sendToRenderer?.('hub-pet:settings-changed', publicSettings()); } catch (_) {}
+      return autoRole;
+    }
+    autoRole = { phase: 'failed', id: want, error: String(error).slice(0, 200) };
+    logger.warn?.(`[hub-pet] background download of ${want} failed:`, autoRole.error);
+    // 用户这期间自己换了别的形象，就不打扰了。
+    if (settings.get().role !== want) return autoRole;
+    const name = (ROLES.find(r => r.id === want) || {}).name || '你选的形象';
+    onNotice({ id: `pet-role-missing-${want}`, kind: 'pet-role', title: `${name}还没下载下来，先由小猫陪你`,
+      text: `新版里${name}改成在线下载了，刚才自动下载没成功。网络好的时候，在「助理 → 设置 → 桌宠」里点「下载」就能换回${name}。` });
+    return autoRole;
+  }
+  function scheduleRoleRestore() {
+    if (autoRoleTimer || autoRole.phase !== 'idle' || !rememberedMissingRole()) return;
+    autoRoleTimer = setTimeout(() => { autoRoleTimer = null; void restoreRememberedRole(); }, autoRoleDelayMs);
+    autoRoleTimer.unref?.();
+  }
+
   // ---------- 生命周期 ----------
   function start() {
     if (!enabled() || started) return false;
@@ -519,6 +569,7 @@ function createHubPetController({
     noticeBus?.on?.('notice', onNotice);
     pollTimer = setInterval(evaluate, POLL_MS);
     if (watchFullscreen && overrides.fullscreen == null) fsWatch.start();
+    scheduleRoleRestore();
     return true;
   }
   function stop() {
@@ -529,6 +580,8 @@ function createHubPetController({
     pollTimer = null;
     if (deadlineTimer) clearTimeout(deadlineTimer);
     deadlineTimer = null;
+    if (autoRoleTimer) clearTimeout(autoRoleTimer);
+    autoRoleTimer = null;
     stopMove();
     drag = null;
     fsWatch.stop();
@@ -555,7 +608,8 @@ function createHubPetController({
     if (debug) ipcMain.removeHandler?.('hub-pet:debug');
   }
 
-  return { start, stop, dispose, setSignal, setSettings, roleList, getWindow: () => win, getSettings: () => settings.get(), _evaluate: evaluate, _speech: speech, _roles: roles };
+  return { start, stop, dispose, setSignal, setSettings, roleList, getWindow: () => win, getSettings: () => settings.get(), _evaluate: evaluate, _speech: speech, _roles: roles,
+    _restoreRememberedRole: restoreRememberedRole, _autoRole: () => ({ ...autoRole }) };
 }
 
 module.exports = { BODY, INSET, WIN_H, WIN_W, createHubPetController };

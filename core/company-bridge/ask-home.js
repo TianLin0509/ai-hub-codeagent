@@ -95,8 +95,8 @@ class AskHome {
     if (!this.link.paired() || !id) return null;
     const base = String(kind || '').replace(/-resume$/, '');
     if (!require('../ai-kinds').isCodeAgentKind(base)) return null;
-    // 公司助理会话读的是本人 WeLink 数据，只留在这台电脑：不挂「问家里」。
-    if (opts.purpose === 'company-assistant') return null;
+    // 公司助理会话读的是本人 WeLink 数据、论坛摘要会话读的是公司论坛内容，都只留在这台电脑：不挂「问家里」。
+    if (opts.purpose === 'company-assistant' || opts.purpose === 'company-forum') return null;
     const imagesOnly = opts.purpose === 'company-bridge';
     if (imagesOnly && !this.bridge.images?.available()) return null;
     const pass = this.passFor(id, imagesOnly), runner = this.runner();

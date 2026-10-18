@@ -25,6 +25,15 @@ const { GatePasser } = require('./gate-pass');
 const { HubAdmin } = require('./hub-admin');
 
 const PURPOSE = 'company-bridge';
+// 特战会话名（2026-10-18 用户：「在公司侧 session 名字里直接看出对应家里哪个」）：家里编号 Q-1018-01、
+// 由家里的 Codex 会话发问 → 「1018-Q1-codex」。编号不是这个格式（极少见）时退回「特战 · 问题标题」。
+function tezhanSessionTitle(t) {
+  const m = /^Q-(\d{4})-(\d+)$/.exec(String(t.id || ''));
+  if (!m) return '特战 · ' + short(t.title, 26);
+  const kind = String(t.from?.kind || '').toLowerCase();
+  const agent = /codex/.test(kind) ? 'codex' : /deepseek/.test(kind) ? 'deepseek' : /claude/.test(kind) ? 'claude' : kind.replace(/[^a-z0-9]/g, '').slice(0, 12) || 'home';
+  return `${m[1]}-Q${Number(m[2])}-${agent}`;
+}
 // 历代默认说明：没改过的老设置里存的就是它们，读设置时换成当前默认。
 const V1_INSTRUCTIONS = [
   '你是公司电脑上的代码阅读助手，替家里的 Agent 回答关于公司代码的问题。请遵守：',
@@ -485,9 +494,10 @@ class CompanyBridge {
       this.careLog(`${result?.ok ? 'suspend' : 'skip'} ${p.threadId} session=${String(p.sessionId).slice(0, 8)} ${p.reason}${result?.ok ? '' : '；跳过：' + (result?.message || result?.error || '未知')}`);
     }
   }
-  careLog(line) {
+  careLog(line) { this.appendLog('company-session-care.log', line); }
+  appendLog(name, line) {
     try {
-      const fs = require('node:fs'), dir = path.join(this.deps.dataDir, 'logs'), file = path.join(dir, 'company-session-care.log');
+      const fs = require('node:fs'), dir = path.join(this.deps.dataDir, 'logs'), file = path.join(dir, name);
       fs.mkdirSync(dir, { recursive: true });
       try { if (fs.statSync(file).size > 256 * 1024) fs.renameSync(file, file + '.1'); } catch { /* 还没有文件 */ }
       fs.appendFileSync(file, `${new Date(this.now()).toISOString()} ${line}\n`, 'utf8');
@@ -513,7 +523,7 @@ class CompanyBridge {
       if (!known) {
         sessionId = randomUUID();
         const cwd = s.codeRoots.find(p => this.deps.isDirectory ? this.deps.isDirectory(p) : true) || this.deps.fallbackCwd;
-        const opts = { id: sessionId, cwd, title: '特战 · ' + short(t.title, 26), purpose: PURPOSE, autonomous: true, noInheritCursor: true,
+        const opts = { id: sessionId, cwd, title: tezhanSessionTitle(t), purpose: PURPOSE, autonomous: true, noInheritCursor: true,
           effort: s.effort, addDirs: s.codeRoots.filter(p => p !== cwd) };
         // 号池里有可用的号就走号池（自动挑进行中会话最少的号），并行的问题分散到不同账号；挑不出号时退回个人账号，问题不卡住。
         let created = null;
@@ -545,7 +555,10 @@ class CompanyBridge {
       if (!receipt || receipt.notSent || (receipt.ok === false && !receipt.unconfirmed && receipt.sendStatus !== 'stuck')) {
         throw Object.assign(new Error(receipt?.error || '问题没有发进会话'), { notSent: true });
       }
-      if (receipt.ok === false || receipt.sendStatus === 'stuck' || receipt.unconfirmed) this.patchRound(this.thread(t.id), r.round, { sendUncertain: true });
+      if (receipt.ok === false || receipt.sendStatus === 'stuck' || receipt.unconfirmed) {
+        this.bridgeLog(`send-uncertain ${t.id}#${r.round} session=${String(sessionId).slice(0, 8)} status=${receipt.sendStatus || receipt.error || 'unconfirmed'}`);
+        this.patchRound(this.thread(t.id), r.round, { sendUncertain: true });
+      }
       if (!r.rewrite) void this.link.send('status', { thread: t.id, gen: t.gen, round: r.round, state: 'running', note: '公司 CodeAgent 正在处理' }).catch(() => {});
     } catch (error) {
       const fresh = this.thread(t.id) || t;
@@ -565,21 +578,25 @@ class CompanyBridge {
     const since = activeSince(r);
     const final = this.lastFinal(t.sessionId);
     // 发出结果未知、3 分钟后会话停着而原生记录文件都还没有：CodeAgent 确实没收到，重发一次（不会重复）。
+    // 重发前先查一遍记录：只是慢（提问已经落进记录、还没开工）的不重发（2026-10-18 v2.1.9 验收：重发的那一份和卡在输入框里的
+    // 第一份一起提交，回执核对随之卡住，见 receipt-reader.js repeatedCopy）。
     if (!final && r.sendUncertain && !r.resent && this.now() - r.sentAt > 3 * 60000) {
       const meta = this.deps.getSession(t.sessionId) || {};
       const missing = !meta.transcriptPath || !(this.deps.fileExists ? this.deps.fileExists(meta.transcriptPath) : require('node:fs').existsSync(meta.transcriptPath));
-      if (missing) { this.patchRound(t, r.round, { sentAt: null, resent: true, sendUncertain: null }); return; }
+      if (missing) {
+        if (this.requestLanded(t, r) === true) t = this.patchRound(t, r.round, { landed: true, sendUncertain: null });
+        else { this.bridgeLog(`resend ${t.id}#${r.round} 发送结果未知且记录文件不在`); this.patchRound(t, r.round, { sentAt: null, resent: true, sendUncertain: null }); return; }
+      }
     }
     if (!final || final.id === r.baseline) {
       // 发出 3 分钟后会话停着、还没有回答：核实提问真的写进了记录（Q-1016-02 第 5 轮发给了已退出的 CodeAgent，干等 30 分钟）。
       // 没写进去就重发一次（dispatch 会按需恢复会话）；重发后仍没写进去，直接报出来。
       if (!r.landed && this.now() - r.sentAt > VERIFY_MS) {
-        const meta = this.deps.getSession(t.sessionId) || this.deps.getSessionMetadata?.(t.sessionId);
-        let landed = null;
-        try { landed = (this.deps.transcriptHasRequest || transcriptHasRequest)(meta, { ...r, threadId: t.id }); } catch { landed = null; }
+        const landed = this.requestLanded(t, r);
         if (landed === true) t = this.patchRound(t, r.round, { landed: true });
         else if (landed === false) {
           if (!r.resent) {
+            this.bridgeLog(`resend ${t.id}#${r.round} 发出 ${Math.round((this.now() - r.sentAt) / 1000)} 秒后记录里没有这条提问${r.sendUncertain ? '（发送时未确认）' : ''}`);
             this.patchRound(t, r.round, { sentAt: null, resent: true, sendUncertain: null });
             this.notify('提问没送进去，重发一次', `${t.id} 第 ${r.round} 轮：发出 3 分钟后 CodeAgent 的记录里还没有这条提问`, t.sessionId);
             return;
@@ -611,6 +628,7 @@ class CompanyBridge {
         const issue = receipt?.issue || '本次请求的原生回执尚未核对';
         if (this.now() - since > NO_ANSWER_MS * 3) return this.failRound(t, r, issue);
         if (r.receiptIssue !== issue) {
+          this.bridgeLog(`receipt-pending ${t.id}#${r.round} ${issue}`);
           this.patchRound(t, r.round, { receiptIssue: issue });
           this.notify('回执待核对', `${t.id}：${issue}；记录已保留，稍后会继续核对`, t.sessionId);
           void this.link.send('status', { thread: t.id, gen: t.gen, round: r.round, state: 'running', note: '回执待核对：' + issue }).catch(() => {});
@@ -684,6 +702,13 @@ class CompanyBridge {
     this.notify('补收', `${t.id} 第 ${r.round} 轮：已从公司会话取回最新回答`, t.sessionId);
     return this.sendReply(this.thread(t.id) || t, r, note + '\n\n' + String(latest.text || '').trim(), { recollected: true });
   }
+  // 提问是否已落进 CodeAgent 的原生记录：true / false / null（不知道记录在哪，不下结论）。
+  requestLanded(t, r) {
+    const meta = this.deps.getSession(t.sessionId) || this.deps.getSessionMetadata?.(t.sessionId);
+    try { return (this.deps.transcriptHasRequest || transcriptHasRequest)(meta, { ...r, threadId: t.id }); } catch { return null; }
+  }
+  // 通道的重发等决定留一行日志（logs/company-bridge.log）：事后能看出是哪条规则触发的。
+  bridgeLog(line) { this.appendLog('company-bridge.log', line); }
   // ok：收到的消息里有本题编号；hijacked：这一轮之后只收到过带图片、却没有编号的消息；unknown：读不到记录，照旧处理。
   promptCheck(t, r) {
     const meta = this.deps.getSession(t.sessionId) || this.deps.getSessionMetadata?.(t.sessionId) || {};

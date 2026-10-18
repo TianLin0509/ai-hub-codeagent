@@ -121,7 +121,7 @@ function isWirelessSession(item) {
 // 公司版（2026-10-17 用户）：侧栏几乎全是 AI特战队通道替家里开的会话，挤掉了自己的会话。
 // 「今天 / 3 天」旁边的「无线」在公司版换成「特战」：平时隐藏这些会话，点亮后只看它们。
 function isTezhanSession(item) {
-  return item?.purpose === 'company-bridge' || /^(?:AI特战队|特战)\s*[·・]/.test(String(item?.title || '').trim());
+  return item?.purpose === 'company-bridge' || /^(?:AI特战队|特战)\s*[·・]|^\d{4}-Q\d+-[a-z0-9]+$/.test(String(item?.title || '').trim());
 }
 function isCompanyEdition() {
   try { return require('../core/distribution').target === 'company'; } catch { return false; }

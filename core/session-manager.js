@@ -439,7 +439,8 @@ function buildClaudePtyLaunch(id, kind, opts, cwd, env, cv) {
 // 不改动公司电脑只靠说明约束：2026-10-15 公司真机实测 CodeAgent 1.2615 收到 --disallowedTools 照样放行 Write，
 // --strict-mcp-config 也挡不住用户级 MCP，用户拍板「只靠说明约束、公司 MCP 允许使用」，不再传这些不起作用的参数。
 // 公司版助理会话（purpose=company-assistant，2026-10-16）同样处理：不挂 Hub 的 MCP，用默认模型。
-function codeAgentReadOnly(opts) { return !!opts && (opts.purpose === 'company-bridge' || opts.purpose === 'company-assistant'); }
+// 公司版论坛的摘要会话（purpose=company-forum，2026-10-18）同样处理。
+function codeAgentReadOnly(opts) { return !!opts && ['company-bridge', 'company-assistant', 'company-forum'].includes(opts.purpose); }
 function shouldPickCodeAgentModel(opts) {
   // model 也来自分支、历史恢复和场景元数据；只有本次操作的明确意图才能打开菜单。
   return !!(opts && opts.model && opts.codeagentModelPick === true && !codeAgentReadOnly(opts));

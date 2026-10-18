@@ -284,6 +284,7 @@ async function launchIsolatedHub({
   allowExternalState = false,
   windowMode = 'background',
   entryPath = HUB_ROOT,
+  extraArgs = [],
 } = {}) {
   if (!dataDir) throw new Error('dataDir required');
   if (!port) throw new Error('port required');
@@ -300,7 +301,11 @@ async function launchIsolatedHub({
   // 偶发无法写 DevToolsActivePort，表现为 CDP 已监听但 renderer 永远不响应。
   fs.mkdirSync(path.join(env.CLAUDE_HUB_DATA_DIR, 'electron-userdata'), { recursive: true });
 
-  const args = [entryPath, `--remote-debugging-port=${port}`];
+  // extraArgs：诊断用的额外 Electron/Chromium 开关（如 --js-flags=...），不得含 --user-data-dir。
+  if (!Array.isArray(extraArgs) || extraArgs.some(a => typeof a !== 'string' || /^--user-data-dir(?:=|$)/i.test(a))) {
+    throw new Error('extraArgs must be strings and must not override --user-data-dir');
+  }
+  const args = [entryPath, `--remote-debugging-port=${port}`, ...extraArgs];
   // 关键：spawn 立即拿 PID，detached:false 让 child 跟随 parent 退出
   const child = spawn(executablePath, args, {
     env,

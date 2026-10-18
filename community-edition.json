@@ -7,7 +7,8 @@
     "quotaBar": false,
     "accounts": false,
     "homeLink": true,
-    "companyAssistant": true
+    "companyAssistant": true,
+    "companyForum": true
   },
   "rulesChannel": "company",
   "kinds": [
@@ -36,8 +37,8 @@
   "releaseNotes": [
     "AI特战队功能增强"
   ],
-  "version": "2.1.9",
-  "upstreamVersion": "1.6.527",
-  "upstreamCommit": "65db52b337a97f97b28f28b9ed56474d6d92f0f1",
+  "version": "2.1.10",
+  "upstreamVersion": "1.6.530",
+  "upstreamCommit": "9a7b408278d68473d0dc4292613cd2d6c572d957",
   "upstreamDirty": false
 }
