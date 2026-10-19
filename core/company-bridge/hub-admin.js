@@ -21,10 +21,11 @@ const { BARE_CONTINUE, transcriptTurnFinished } = require('./receipt-reader');
 const HISTORY = 20;
 // diag（2026-10-18 直查通道，diag.js）：只读，直接采集电脑与 Hub 状态回报，不经 CodeAgent、不排队；和更新 / 重启互不影响。
 // act（2026-10-18 三期远程维护，remote-act.js）：休眠空闲通道会话、结束残留进程、临时调并行档位、取消排队 / 重试问题。
-const OPS = ['update', 'restart', 'status', 'diag', 'act'];
+// files（2026-10-20 用户：把公司电脑上的文本文件直接拿回家里帮 wireless-sim 的设计，见 file-query.js）。
+const OPS = ['update', 'restart', 'status', 'diag', 'act', 'files'];
 // quota（2026-10-18 额度感知）：认得 ask/followup 的 account、直查 errors 段、远程维护 pause-account / resume-account。
 // personal-model（2026-10-19）：认得模型配置避让、远程维护 set-personal-model（修正个人账号默认模型）。
-const CAPS = ['diag', 'act', 'quota', 'personal-model'];
+const CAPS = ['diag', 'act', 'quota', 'personal-model', 'files'];
 // 执行中的阶段；其余都是结束态。
 const LIVE = ['checking', 'downloading', 'waiting', 'applying', 'restarting'];
 const GRACE_DEFAULT_MINUTES = 3;
@@ -70,8 +71,8 @@ class HubAdmin {
   report(id, phase, note, extra = {}) {
     // caps：这台 Hub 认得的远程指令能力；对端据此判断能不能发直查，版本旧的不白等（2026-10-18 审核）。
     const payload = { id: id || null, gen: this.bridge.link.gen(), phase, note, current: this.current(), latest: this.latest(), at: this.now(), caps: CAPS, ...extra };
-    // 直查的回报内容（压缩包）不进本机历史，只记摘要。
-    const { diag: _diag, ...brief } = payload;
+    // 直查 / 读文件的回报内容（压缩包）不进本机历史，只记摘要。
+    const { diag: _diag, files: _files, ...brief } = payload;
     const history = [brief, ...(this.state().history || [])].slice(0, HISTORY);
     this.save({ history });
     if (!this.bridge.link.paired()) return Promise.resolve();
@@ -111,6 +112,11 @@ class HubAdmin {
     if (message.op === 'diag') {
       // 回报本身也可能在 Hub 退出的瞬间失败（库已关）：一律兜住，不留未处理的 rejection（2026-10-18 审核）。
       this.diagTask = this.diag(id, message).catch(error => { try { this.auditDiag(`failed ${id} ${error.message}`); return Promise.resolve(this.report(id, 'failed', '直查没做完：' + error.message)).catch(() => null); } catch { return null; } });
+      return true;
+    }
+    if (message.op === 'files') {
+      // 读文件（2026-10-20，file-query.js）：和直查一样只读、不等任务、不占并行名额；自己的开关单独管。
+      this.filesTask = this.files(id, message).catch(error => { try { this.auditFiles(`failed ${id} ${error.message}`); return Promise.resolve(this.report(id, 'failed', '读文件没做完：' + error.message)).catch(() => null); } catch { return null; } });
       return true;
     }
     if (this.bridge.settings().allowRemoteAdmin === false) { void this.report(id, 'refused', '公司端没允许远程更新（公司 Hub「AI特战队专用功能」设置里可以打开）'); return true; }
@@ -201,6 +207,69 @@ class HubAdmin {
     return this.report(id, 'refused', '直查：' + why);
   }
   auditDiag(line) { try { this.bridge.appendLog?.('company-diag.log', line); } catch { /* 审计日志写不了不挡回报 */ } }
+
+  // ---- 读文件（2026-10-20 用户，file-query.js）----
+  // 和直查同一套：限频、同一时间只跑一条、正文只脱凭据、gzip 压缩、一条 hub-admin-status（phase:'files'）报回。
+  // 只读：没有写、改、删、执行任何文件的路径；能读的目录是设置里的仿真结果目录 + 代码位置 + 额外可读目录。
+  async files(id, message) {
+    const F = require('./file-query');
+    const action = String(message.action || '');
+    if (!F.ACTIONS.includes(action)) return this.refuseFiles(id, action, `不认识的动作：${short(action, 30)}（只认 ${F.ACTIONS.join(' / ')}）`);
+    if (this.bridge.settings().allowRemoteFiles === false) return this.refuseFiles(id, action, '这台电脑没允许对端读取文件（「AI特战队专用功能」设置的「文件读取」里可以打开）');
+    let params;
+    try { params = F.parseParams(action, message.params); } catch (error) { return this.refuseFiles(id, action, error.message); }
+    // 限频按动作各算各的（读文件 5 秒、列目录 10 秒、找文件 20 秒）：列过目录不影响紧接着读文件
+    const now = this.now();
+    const gap = F.INTERVALS[action] || F.MIN_INTERVAL_MS;
+    const lastBy = this.state().lastFilesByAction || {};
+    const last = Number(lastBy[action]) || 0;
+    if (this.filesRunning) return this.refuseFiles(id, action, '上一条文件读取还在跑，这条没处理；等它回报后再发');
+    if (now - last < gap && now >= last) return this.refuseFiles(id, action, `${gap / 1000} 秒内只做一次：上一次在 ${Math.round((now - last) / 1000)} 秒前，稍后再发`);
+    this.filesRunning = true;
+    this.save({ lastFilesAt: now, lastFilesByAction: { ...lastBy, [action]: now } });
+    const b = this.bridge;
+    // 对端在看：接下来一段时间加快检查通道（同直查）
+    try { if (b.link.gen()) { b.store.set('pollActivity', { gen: b.link.gen(), until: now + 10 * 60000 }); b.tightenPoll?.(); } } catch { /* 只影响快慢 */ }
+    b.notify('对端读了这台电脑上的文件', `编号 ${id} · ${F.LABEL[action]}${action === 'read' ? '：' + short(params.file, 80) : action === 'list' ? '：' + short(params.dir, 60) : ''}`, null, { quiet: true });
+    try {
+      const roots = F.fileRoots(b);
+      // 正文只脱凭据（账号实值 + key=value / 私钥块 / 各类 key 样式）；不动代码、路径、URL（动 URL 会把源码和报告读成废纸）
+      const secrets = b.accountSecrets();
+      b.secretsSnapshot = secrets;
+      const redact = F.makeFileRedactor({ scrub: s => b.scrubText(s, secrets), extra: process.env.HUB_UNLOCK_PHRASE ? [process.env.HUB_UNLOCK_PHRASE] : [] });
+      // 注意：read 的脱敏交给 file-query 在**整篇**上做（跨行的私钥块按行脱等于没脱，2026-10-20 被 e2e 逮到过）
+      const raw = await F.run({ roots, action, params, redact });
+      if (typeof raw.sample === 'string') raw.sample = redact(raw.sample);
+      const base = { id, gen: b.link.gen(), phase: 'files', current: this.current(), latest: this.latest(), at: this.now() };
+      const draftNote = F.summarize(raw);
+      const measure = data => {
+        const item = b.link.prepare('hub-admin-status', { ...base, note: draftNote, files: data, filesBytes: 99999, action, degraded: [...F.STEP_LABELS, '全部省略'] });
+        return Buffer.byteLength(JSON.stringify({ to: item.to, mid: item.mid, blob: item.blob }), 'utf8');
+      };
+      const fitted = b.link.paired() ? F.fit(raw, measure, require('./diag').MESSAGE_LIMIT - 400) : { data: require('./diag').encode(raw), result: raw, degraded: [], bytes: 0 };
+      const note = F.summarize({ ...fitted.result, degraded: fitted.degraded });
+      this.auditFiles(`files ${id} ${action} ${JSON.stringify(params)} roots=${roots.length} bytes=${fitted.bytes}${fitted.degraded.length ? ' degraded=' + fitted.degraded.length : ''} → ${short(note, 300)}`);
+      await this.report(id, 'files', note, { files: fitted.data, filesBytes: fitted.bytes, action, ...(fitted.degraded.length ? { degraded: fitted.degraded } : {}) });
+      this.save({ lastFiles: { id, at: this.now(), action, bytes: fitted.bytes, degraded: fitted.degraded.length } });
+      return fitted;
+    } catch (error) {
+      // 护栏类拒绝（路径越界 / 不是文本 / 二进制 / 太大）算「拒绝」不算「出错」：审计日志记 refused、
+      // 家里看到的是「公司没处理」。保安要的正是这类「有人试图读不该读的东西、被挡了」的证据。
+      if (error && ['outside', 'not-text', 'binary', 'too-big'].includes(error.code)) return this.refuseFiles(id, action, error.message);
+      throw error;
+    } finally {
+      this.filesRunning = false; this.bridge.secretsSnapshot = null;
+      try { this.save({ lastFilesByAction: { ...(this.state().lastFilesByAction || {}), [action]: this.now() } }); } catch { /* 库已关 */ }
+    }
+  }
+  refuseFiles(id, action, why) {
+    this.auditFiles(`refused ${id} ${action || '?'} ${why}`);
+    // 回报里带上具体动作（读文件 / 列目录 / 找文件），家里一看就知道是哪条被挡了
+    const F = require('./file-query');
+    const label = F.LABEL[action];
+    return this.report(id, 'refused', (label && label !== '读文件' ? `读文件·${label}：` : '读文件：') + why);
+  }
+  auditFiles(line) { try { this.bridge.appendLog?.('company-files.log', line); } catch { /* 审计日志写不了不挡回报 */ } }
 
   // ---- 远程维护（2026-10-18 三期，remote-act.js）----
   remoteAct() { if (!this.actor) { const { RemoteAct } = require('./remote-act'); this.actor = new RemoteAct(this); } return this.actor; }
@@ -512,7 +581,8 @@ class HubAdmin {
   status() {
     const s = this.state();
     return { job: s.job || null, history: (s.history || []).slice(0, 5), current: this.current(), installed: !!this.controller(),
-      graceMinutes: this.graceMinutes(), resumeAfterRestart: s.resumeAfterRestart || null, resumeIssues: this.resumeIssues(), lastDiag: s.lastDiag || null, parallelRestore: s.parallelRestore || null };
+      graceMinutes: this.graceMinutes(), resumeAfterRestart: s.resumeAfterRestart || null, resumeIssues: this.resumeIssues(), lastDiag: s.lastDiag || null,
+      lastFiles: s.lastFiles || null, parallelRestore: s.parallelRestore || null };
   }
 }
 

@@ -107,6 +107,11 @@ const DEFAULT_SETTINGS = Object.freeze({ enabled: true, codeRoots: [], instructi
   allowRemoteDiag: true,
   // 直查 airview 段看这些目录下最近更新的结果文件（只看名字、大小、修改时间），连同代码位置一起（diag.js resultFiles）。
   resultDirs: ['C:/AirView'],
+  // 允许对端读取这台电脑上的文本文件（2026-10-20 用户：把 AirView 的文本拿回家里做 wireless-sim 的设计，见 file-query.js）。
+  // 只读、永不写；能读的目录 = resultDirs + codeRoots + readRoots；默认开（用户本人要求、公司端界面可随时关）。
+  allowRemoteFiles: true,
+  // 除仿真结果目录和代码位置之外，另外允许读取的目录（合同、纪要这类文档放这里），最多 10 个。
+  readRoots: [],
   // 允许对端远程维护（2026-10-18 三期，remote-act.js：休眠空闲通道会话、结束残留进程、临时调并行档位、取消排队 / 重试问题），默认开。
   allowRemoteMaintain: true,
   // 额度感知（2026-10-18）：识别额度 / 限流报错并避让（quotaGuard）；Stats 面板 Credit 不高于 creditFloor 也避让；
@@ -299,7 +304,8 @@ class CompanyBridge {
     const instructions = !s.instructions || OLD_DEFAULTS.includes(s.instructions.trim()) ? DEFAULT_INSTRUCTIONS : s.instructions;
     // 旧版设置页只能存「同时 N 个」且默认 2；没调过并行档位的（parallelRev 缺失且仍是旧默认 2）按新默认 3。
     if (!s.parallelRev && Number(s.maxParallel) === 2) delete s.maxParallel;
-    return { ...DEFAULT_SETTINGS, ...s, instructions, codeRoots: Array.isArray(s.codeRoots) ? s.codeRoots : [], resultDirs: Array.isArray(s.resultDirs) ? s.resultDirs : DEFAULT_SETTINGS.resultDirs, parallelRev: DEFAULT_SETTINGS.parallelRev };
+    return { ...DEFAULT_SETTINGS, ...s, instructions, codeRoots: Array.isArray(s.codeRoots) ? s.codeRoots : [], resultDirs: Array.isArray(s.resultDirs) ? s.resultDirs : DEFAULT_SETTINGS.resultDirs,
+      readRoots: Array.isArray(s.readRoots) ? s.readRoots : [], parallelRev: DEFAULT_SETTINGS.parallelRev };
   }
   setSettings(patch = {}) {
     const next = this.settings();
@@ -325,6 +331,13 @@ class CompanyBridge {
     if ('allowRemoteAdmin' in patch) next.allowRemoteAdmin = patch.allowRemoteAdmin === true;
     if ('allowRemoteDiag' in patch) next.allowRemoteDiag = patch.allowRemoteDiag === true;
     if ('allowRemoteMaintain' in patch) next.allowRemoteMaintain = patch.allowRemoteMaintain === true;
+    if ('allowRemoteFiles' in patch) next.allowRemoteFiles = patch.allowRemoteFiles === true;
+    if ('readRoots' in patch) {
+      const list = (Array.isArray(patch.readRoots) ? patch.readRoots : String(patch.readRoots || '').split(/\r?\n/)).map(s => String(s).trim()).filter(Boolean);
+      if (list.length > 10) throw new Error('额外可读目录最多 10 个');
+      if (list.some(s => s.length > 260)) throw new Error('目录路径太长');
+      next.readRoots = list;
+    }
     if ('quotaGuard' in patch) next.quotaGuard = patch.quotaGuard === true;
     if ('choiceDetect' in patch) next.choiceDetect = patch.choiceDetect === true;
     if ('creditFloor' in patch) { const n = Number(patch.creditFloor); if (!Number.isFinite(n) || n < 0 || n > 100000) throw new Error('额度阈值只能是 0–100000'); next.creditFloor = n; }

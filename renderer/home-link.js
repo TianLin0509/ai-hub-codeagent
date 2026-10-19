@@ -107,7 +107,10 @@
         ${'restartGraceMinutes' in s ? `· 重启前最多等<select data-hl-f="restartGraceMinutes">${opt([...new Set([0, 1, 3, 5, 10, 15, 30, Number(s.restartGraceMinutes)])].sort((a, b) => a - b).map(x => ({ id: String(x), label: x ? x + ' 分钟' : '不等' })), String(s.restartGraceMinutes))}</select>` : ''}
         <div class="hl-muted">只更新到发行源上的正式版本；重启前先等手上的任务答完，到时还没答完的先记下、中断，重启后自动恢复会话发「继续」接着做，回执照常发回（家里带 force 时不等）。${data.hubAdmin?.history?.[0] ? '最近一次：' + esc(data.hubAdmin.history[0].note) + '（' + clock(data.hubAdmin.history[0].at) + '）' : ''}</div></div>` : ''}
       ${'allowRemoteDiag' in s ? `<label>状态查看</label><div><select data-hl-f="allowRemoteDiag"><option value="1"${s.allowRemoteDiag ? ' selected' : ''}>允许对端查看这台电脑的状态</option><option value="0"${s.allowRemoteDiag ? '' : ' selected'}>不允许</option></select>
-        <div class="hl-muted">只读：内存、进程、任务队列、号池状态（不含账号）、日志尾部（已脱敏）；不读代码和文件内容。每次查看都会在这里轻提示并记入日志。${data.hubAdmin?.lastDiag ? '最近一次：' + clock(data.hubAdmin.lastDiag.at) : ''}</div></div>` : ''}
+        <div class="hl-muted">只读：内存、进程、任务队列、号池状态（不含账号）、日志尾部（已脱敏）；这一段本身不读文件内容（要读文件用下面的「文件读取」）。每次查看都会在这里轻提示并记入日志。${data.hubAdmin?.lastDiag ? '最近一次：' + clock(data.hubAdmin.lastDiag.at) : ''}</div></div>` : ''}
+      ${'allowRemoteFiles' in s ? `<label>文件读取</label><div><select data-hl-f="allowRemoteFiles"><option value="1"${s.allowRemoteFiles ? ' selected' : ''}>允许对端读取这台电脑上的文本文件</option><option value="0"${s.allowRemoteFiles ? '' : ' selected'}>不允许</option></select>
+        <div class="hl-muted">只读、永不写：对端可以列目录、按文件名或内容找文件、分段读文本正文，把内容压缩后经加密通道带回。能读的范围 = 上面的「仿真结果目录」+「代码位置」+ 下面这一栏。只读文本（txt / md / log / csv / json 和常见代码、配置），密钥类后缀和二进制直接拒绝，凭据（口令、令牌、私钥）自动隐去。每次读取都会在这里轻提示并记入日志。${data.hubAdmin?.lastFiles ? '最近一次：' + clock(data.hubAdmin.lastFiles.at) + '（' + esc(data.hubAdmin.lastFiles.action || '') + '）' : ''}</div></div>` : ''}
+      ${Array.isArray(s.readRoots) ? `<label>额外可读目录</label><div><textarea rows="2" data-hl-f="readRoots" placeholder="每行一个目录，例如 C:/AirView/docs">${esc(s.readRoots.join('\n'))}</textarea><div class="hl-muted">除仿真结果目录和代码位置之外，另外允许对端读取的目录（合同、纪要这类文档放这里），最多 10 个。</div></div>` : ''}
       ${'allowRemoteMaintain' in s ? `<label>远程维护</label><div><select data-hl-f="allowRemoteMaintain"><option value="1"${s.allowRemoteMaintain ? ' selected' : ''}>允许对端远程维护这台 Hub</option><option value="0"${s.allowRemoteMaintain ? '' : ' selected'}>不允许</option></select>
         <div class="hl-muted">能做的只有：让答完空着的通道会话休眠（你自己开的会话不动）、结束查看状态时认定为「可结束」的重启残留进程、临时调整同时处理的档位（可到点恢复）、取消排队中的问题、重试失败的问题、暂停 / 恢复派活给某个号。每次都会在这里轻提示并记入日志。${data.hubAdmin?.parallelRestore ? '临时档位将于 ' + clock(data.hubAdmin.parallelRestore.at) + ' 恢复' : ''}</div></div>` : ''}
       ${'quotaGuard' in s ? `<label>额度避让</label><div><select data-hl-f="quotaGuard"><option value="1"${s.quotaGuard ? ' selected' : ''}>识别额度用完 / 限流的报错并自动避让</option><option value="0"${s.quotaGuard ? '' : ' selected'}>不识别（只认手动暂停）</option></select>
@@ -317,6 +320,8 @@
           ...(field('autoGate') ? { autoGate: field('autoGate').value === '1' } : {}),
           ...(field('allowRemoteAdmin') ? { allowRemoteAdmin: field('allowRemoteAdmin').value === '1' } : {}),
           ...(field('allowRemoteDiag') ? { allowRemoteDiag: field('allowRemoteDiag').value === '1' } : {}),
+          ...(field('allowRemoteFiles') ? { allowRemoteFiles: field('allowRemoteFiles').value === '1' } : {}),
+          ...(field('readRoots') ? { readRoots: field('readRoots').value } : {}),
           ...(field('allowRemoteMaintain') ? { allowRemoteMaintain: field('allowRemoteMaintain').value === '1' } : {}),
           ...(field('quotaGuard') ? { quotaGuard: field('quotaGuard').value === '1', creditFloor: Number(field('creditFloor').value) || 0, quotaRetryMinutes: Number(field('quotaRetryMinutes').value) } : {}),
           ...(field('restartGraceMinutes') ? { restartGraceMinutes: Number(field('restartGraceMinutes').value) } : {}) });
