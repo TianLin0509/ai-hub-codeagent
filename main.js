@@ -427,6 +427,7 @@ const HOOK_TOKEN = crypto.randomBytes(16).toString('hex');
 
 let hookPort = null;  // set after listen() succeeds
 let claudeHookWatchdog = null;
+let codeagentSettingsWatch = null; // 个人账号 settings.json 默认模型的留痕（core/codeagent-default-model-guard.js）
 let windowsShellWatchdog = null;
 
 let mainWindow;
@@ -1155,6 +1156,29 @@ ipcMain.handle('hub:toggle-maximize', () => {
   return action;
 });
 
+// 由 Hub 拉起自己的所有路径（远程重启、重启并继续、增量更新脚本、完整安装包、任务栏「新 Hub」）都先经
+// core/clean-launch-env.js：去掉会话标记和确认不该用的 CodeAgent 配置目录，工作目录明显异常时换成安装目录（2026-10-19）。
+function hubLaunchTarget() {
+  return {
+    execPath: process.execPath, appRoot: __dirname, isPackaged: HUB_IS_PACKAGED,
+    // 继承目录判定还没出来时现算（不读注册表：落在号池里照样去掉，其余不动）
+    decide: env => require('./core/codeagent-config').decideInherited({ env, dataDir: getHubDataDir(), persisted: { user: null, system: null, error: '还没读' } }),
+  };
+}
+function relaunchHubClean(options = {}) {
+  // 清环境出任何错都不能影响 Hub 被拉起：退回原来的 app.relaunch（relaunchApp 内部对准备阶段也有同样的兜底）。
+  try {
+    return require('./core/clean-launch-env').relaunchApp(app, options, hubLaunchTarget(), { dataDir: getHubDataDir() });
+  } catch (error) {
+    console.warn('[launch-env] 干净再启动失败，按原环境再启动：' + (error && error.message));
+    app.relaunch(options && Object.keys(options).length ? options : undefined);
+    return { removed: [], cwd: null, fallback: true, error: String(error && error.message || error) };
+  }
+}
+function prepareHubLaunchClean() {
+  return require('./core/clean-launch-env').prepareHubLaunch(hubLaunchTarget());
+}
+
 ipcMain.handle('hub:new-instance', () => launchHubInstance({
   appRoot: __dirname,
   execPath: isIsolatedHub() || HUB_IS_PACKAGED ? process.execPath : resolveHubLaunchExePath({
@@ -1163,7 +1187,20 @@ ipcMain.handle('hub:new-instance', () => launchHubInstance({
     productVersion: require('./package.json').version,
   }),
   isPackaged: HUB_IS_PACKAGED,
+  env: prepareHubLaunchClean().env,
 }));
+
+// 端到端测试读主进程的启动环境（只在隔离实例里有）：启动自检清掉了什么、当前工作目录、指定变量的值。
+if (isIsolatedHub()) {
+  ipcMain.handle('debug:launch-env', async (_event, names = []) => {
+    const launchEnv = require('./core/clean-launch-env');
+    const report = launchEnv.startupReport();
+    const pickEnv = {};
+    for (const n of Array.isArray(names) ? names : []) pickEnv[n] = process.env[n] === undefined ? null : process.env[n];
+    const strip = r => (r ? { removed: r.removed.map(x => x.name), initialCwd: r.initialCwd, cwdChanged: r.cwdChanged, configDir: r.configDir } : null);
+    return { pid: process.pid, cwd: process.cwd(), startup: strip(report), env: pickEnv };
+  });
+}
 
 let hangStackOptIn = null;
 function createWindow() {
@@ -1222,6 +1259,23 @@ function createWindow() {
       enabled: keepRendering.shouldKeepRendering({ community: require('./core/distribution').community }),
     })?.log || null;
   } catch (error) { console.warn('[window] keep-rendering setup failed:', error && error.message); }
+  // 窗口缩放兜底（core/window-scale-guard.js，2026-10-19 公司真机「自动拉起后按 100% 排版」）：
+  // 只在检测到窗口缩放和所在显示器不一致时做一次 setBounds / 重新最大化，正常启动只读不改。
+  // 测试窗口（屏幕外的后台窗口、隐藏窗口）不装；隔离实例设 CLAUDE_HUB_E2E_SCALE_GUARD=1 才装，
+  // CLAUDE_HUB_E2E_SCALE_PROBE 可覆盖读数来模拟不一致。
+  try {
+    const e2eScaleGuard = isIsolatedHub() && process.env.CLAUDE_HUB_E2E_SCALE_GUARD === '1';
+    if (e2eScaleGuard || (!mainWindow.__hubBackgroundE2E && !keepIsolatedE2EWindowHidden())) {
+      let probeOverride = null;
+      if (e2eScaleGuard && process.env.CLAUDE_HUB_E2E_SCALE_PROBE) {
+        try { probeOverride = JSON.parse(process.env.CLAUDE_HUB_E2E_SCALE_PROBE); } catch { probeOverride = null; }
+      }
+      require('./core/window-scale-guard.js').installWindowScaleGuard(mainWindow, {
+        screen, powerMonitor, probeOverride,
+        log: windowEventLog || ((event, detail) => console.warn('[window]', event, JSON.stringify(detail))),
+      });
+    }
+  } catch (error) { console.warn('[window] scale guard setup failed:', error && error.message); }
   // 界面进程崩溃（公司真机 crashed -36861，原因待崩溃转储区分）后自动重新载入界面，会话都在主进程里不受影响；
   // 卡住时记下界面正在跑的代码和内存（见该模块注释）。
   try {
@@ -2242,7 +2296,7 @@ try {
       // 家里远程更新 / 重启（hub-admin.js）：不是安装版时没有控制器，如实回报不能远程更新。
       appUpdate: () => appUpdateControllerRef,
       currentVersion: require('./core/distribution').editionVersion || app.getVersion(),
-      relaunch: () => { app.relaunch(); app.quit(); },
+      relaunch: () => { relaunchHubClean(); app.quit(); },
       listSessionIds: () => [...(sessionManager.sessions?.keys?.() || [])],
       // 直查（core/company-bridge/diag.js）：Hub 主进程、各会话终端的 PID（算进程树与内存）、号池各号状态（发回前换成「号 1 / 个人」代称）。
       hubPid: process.pid,
@@ -2301,15 +2355,16 @@ try {
         let settingsMtime = null;
         try { settingsMtime = Math.round(fs.statSync(path.join(personalDir, 'settings.json')).mtimeMs); } catch { settingsMtime = null; }
         return {
-          personal: { state: pool.accountState(creds), expiresAt: creds.expiresAt || null, models: known.models || [], defaultModel: known.defaultModel || '', activeSessions: personalActive,
+          personal: { state: pool.accountState(creds), expiresAt: creds.expiresAt || null, ...(creds.detail ? { credentialsNote: creds.detail } : {}), models: known.models || [], defaultModel: known.defaultModel || '', activeSessions: personalActive,
             configModel: known.written || '', ...(known.configMismatch ? { configMismatch: known.configMismatch } : {}), settingsMtime,
             // 权限清单是否来自探测文件（set-personal-model 的权限依据之一）、最近一次修改前的备份（家里卡片据此给「撤销」）
             modelsAuthoritative: !!known.authoritative, modelsProbedAt: known.probedAt || null,
             lastBackup: (() => { try { const b = require('./core/codeagent-personal-model').latestBackup(personalDir); return b ? { model: b.model, name: b.name } : null; } catch { return null; } })(),
-            configSource: require('./core/codeagent-config').configDirSource(process.env),
+            configSource: require('./core/codeagent-config').configDirSource(require('./core/clean-launch-env').inheritedEnv()),
+            settingsLastChange: (() => { try { return require('./core/codeagent-default-model-guard').lastChange(getHubDataDir()); } catch { return null; } })(),
             // 个人目录是否和某个号池号的目录相同 / 互相包含（号的编号，diag.js 换成代称）；继承来的配置目录已忽略的说明（不带路径）
             ...(() => { try { const m = pool.poolDirMatch(getHubDataDir(), personalDir); return m ? { poolDirMatch: { account: m.id || null } } : {}; } catch { return {}; } })(),
-            ...(() => { try { const i = require('./core/codeagent-config').inheritedConfigDirInfo(process.env, undefined, { dataDir: getHubDataDir() }); return i ? { inheritedConfigDir: i } : {}; } catch { return {}; } })() },
+            ...(() => { try { const i = require('./core/codeagent-config').inheritedConfigDirInfo(require('./core/clean-launch-env').inheritedEnv(), undefined, { dataDir: getHubDataDir() }); return i ? { inheritedConfigDir: i } : {}; } catch { return {}; } })() },
           accounts: pool.listAccounts(getHubDataDir(), { activeCounts: sessionManager.codeagentPoolActiveCounts?.() || {}, personalAccountId: creds.accountId || '' }),
         };
       },
@@ -2714,6 +2769,7 @@ registerResumeSessionIpc(ipcMain, { resumeSession });
 const hubRestart = require('./main/ipc/hub-restart-handlers').registerHubRestartIpc(ipcMain, {
   app, sessionManager, meetingManager, sessionStore, stateStore, getHubDataDir,
   resumeSession, groupChatDispatcher, sendToRenderer, shutdown:beginGracefulHubShutdown, transcriptTap,
+  relaunchHub: relaunchHubClean,
   flushState:clean => stateStore.saveForRestart({version:1,cleanShutdown:clean,
     sessions:lastPersistedSessions,meetings:meetingManager.getAllMeetings(),immersiveByMeeting:_immersiveByMeeting}),
 });
@@ -3514,7 +3570,7 @@ require('./main/ipc/appearance-handlers').registerAppearanceIpc(ipcMain, { dataD
     try {
       const { createAppUpdateController, registerAppUpdateIpc } = require('./main/app-update-controller');
       const appUpdate = createAppUpdateController({ app, config: distribution.updateConfig, dataDir: getHubDataDir(),
-        currentVersion: distribution.editionVersion || app.getVersion(), sendToRenderer });
+        currentVersion: distribution.editionVersion || app.getVersion(), sendToRenderer, prepareLaunch: prepareHubLaunchClean });
       registerAppUpdateIpc(ipcMain, appUpdate);
       appUpdateControllerRef = appUpdate;
       app.whenReady().then(() => appUpdate.startBackgroundChecks());
@@ -3853,7 +3909,14 @@ app.whenReady().then(async () => {
   // 继承来的 CODEAGENT3_CONFIG_DIR 采用还是忽略（core/codeagent-config.js loadInheritedDecision）：只在有继承值、且不是默认 ~/.cac 时
   // 读一次注册表（PowerShell，8 秒超时），和下面的启动工作并行；部署 CodeAgent hook 前等它出结果，之后的会话、hook、直查用同一个判定。
   const codeagentInheritedReady = (async () => {
-    try { return await require('./core/codeagent-config').loadInheritedDecision({ env: process.env, dataDir: getHubDataDir() }); }
+    // 判定看的是继承来的原始环境（core/clean-launch-env.js inheritedEnv，启动自检前的那份）。
+    // 判定出来后，确认不该用（落在号池里 / 注册表里没有）就从 Hub 进程环境里去掉（core/clean-launch-env.js），Hub 的终端和之后的再启动都不再带。
+    try {
+      const launchEnv = require('./core/clean-launch-env');
+      const decision = await require('./core/codeagent-config').loadInheritedDecision({ env: launchEnv.inheritedEnv(), dataDir: getHubDataDir() });
+      try { launchEnv.applyConfigDirDecision(decision, { dataDir: getHubDataDir() }); } catch (error) { console.warn('[launch-env] 去掉继承的配置目录失败：' + error.message); }
+      return decision;
+    }
     catch (error) { console.warn('[codeagent-config] 判定继承的配置目录失败（按忽略处理）：' + error.message); return null; }
   })();
   // Source-mode Electron has no installed exe identity of its own. Keep a
@@ -3991,24 +4054,31 @@ app.whenReady().then(async () => {
     // 继承来的配置目录采用 / 忽略都在日志里记一笔（不写路径）；放到下一轮事件循环，不占启动时间
     setImmediate(() => {
       try {
-        const inherited = require('./core/codeagent-config').inheritedConfigDirInfo(process.env, undefined, { dataDir: getHubDataDir() });
-        if (inherited) console.warn(`[codeagent-config] ${inherited.note}（变量 ${inherited.variable}，来源 ${inherited.origin}，${inherited.inPool ? '它落在号池目录里' : '它不在号池目录里'}）；个人账号目录来源：${require('./core/codeagent-config').configDirSource(process.env)}`);
+        const startEnv = require('./core/clean-launch-env').inheritedEnv();
+        const inherited = require('./core/codeagent-config').inheritedConfigDirInfo(startEnv, undefined, { dataDir: getHubDataDir() });
+        if (inherited) console.warn(`[codeagent-config] ${inherited.note}（变量 ${inherited.variable}，来源 ${inherited.origin}，${inherited.inPool ? '它落在号池目录里' : '它不在号池目录里'}）；个人账号目录来源：${require('./core/codeagent-config').configDirSource(startEnv)}`);
       } catch (error) { console.warn('[codeagent-config] 核对继承的配置目录失败：' + error.message); }
     });
     const allowed = isIsolatedHub() ? !!process.env.AI_HUB_CODEAGENT_CONFIG_DIR : true;
     if (allowed && fs.existsSync(codeagentConfig.configDir)) {
+      // choiceGateMatcher：自动派活会话拒绝提问工具的 hook（core/auto-dispatch-rules.js，可关）。
       const settingsOptions = { events: require('./core/codeagent-config').HOOK_EVENTS,
-        manageStatusLine: false, managePermissionMode: false };
+        manageStatusLine: false, managePermissionMode: false, choiceGateMatcher: require('./core/auto-dispatch-rules').gateMatcher() };
       const result = ensureClaudeHookIntegration({ claudeDir: codeagentConfig.configDir,
         sourceScriptsDir: hookSourceScriptsDir, logger: console, settingsOptions });
       if (result.errors.length) console.warn(`[codeagent-hooks] ${codeagentConfig.configDir}: ${result.errors.join('；')}`);
       codeagentHookTargets.push({ dir: codeagentConfig.configDir, settingsOptions });
+      // 个人账号默认模型的留痕（2026-10-19）：settings.json 的 model 每变一次记一行来源，只看不改。
+      // 只读文件、只写 Hub 自己的日志，不碰账号配置；AI_HUB_CODEAGENT_SETTINGS_WATCH=0 可关。
+      if (process.env.AI_HUB_CODEAGENT_SETTINGS_WATCH !== '0') try { codeagentSettingsWatch = require('./core/codeagent-default-model-guard').watchPersonal({ dataDir: getHubDataDir(), dir: codeagentConfig.configDir }); }
+      catch (error) { console.warn('[codeagent-default-model] 看护没启动：' + error.message); }
     }
   } catch (error) { console.warn('[codeagent-hooks] skipped:', error.message); }
   // CodeAgent 号池（core/codeagent-pool.js）：每个号的配置目录在启动会话前按同样方式部署 Hub 的 hook。
   sessionManager.deployCodeAgentHooks = dir => {
     const result = ensureClaudeHookIntegration({ claudeDir: dir, sourceScriptsDir: hookSourceScriptsDir, logger: console,
-      settingsOptions: { events: require('./core/codeagent-config').HOOK_EVENTS, manageStatusLine: false, managePermissionMode: false } });
+      settingsOptions: { events: require('./core/codeagent-config').HOOK_EVENTS, manageStatusLine: false, managePermissionMode: false,
+        choiceGateMatcher: require('./core/auto-dispatch-rules').gateMatcher() } });
     if (result.errors.length) throw new Error(result.errors.join('；'));
   };
   // settings.json can be rewritten by Claude settings/plugin changes while the
@@ -4129,13 +4199,13 @@ async function runFinalShutdownCleanup() {
   capture('completion-notifier', () => completionNotifier.dispose());
   capture('session-auto-suspend', () => sessionAutoSuspendScheduler?.stop());
   capture('claude-hook-watchdog', () => claudeHookWatchdog?.stop());
+  capture('codeagent-settings-watch', () => codeagentSettingsWatch?.stop());
   claudeHookWatchdog = null;
   capture('windows-shell-watchdog', () => windowsShellWatchdog?.stop());
   windowsShellWatchdog = null;
   capture('terminal-output-batcher', () => terminalOutputBatcher.dispose({ flush: true }));
   capture('dev-workbench', () => devWorkbench?.dispose());
   capture('hub-assistant', () => assistantService?.close());
-  capture('wireless-assistant', () => wirelessService?.close());
   capture('company-bridge', () => companyBridgeService?.close());
   capture('company-assistant', () => companyAssistantService?.close());
   capture('company-forum', () => { companyForumService?.close(); companyForumBrowser?.close(); });

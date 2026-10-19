@@ -231,11 +231,19 @@ function readModelKey(file) {
 function snapshotDefaults(configDir) {
   return ['settings.json', 'settings.local.json'].map(name => ({ file: path.join(configDir, name), ...readModelKey(path.join(configDir, name)) }));
 }
+// 配置目录的规范写法（2026-10-19 公司个人账号默认模型被改回 DS 的排查）：快照和写回必须是 CodeAgent 实际写的那个目录，
+// 不能因为大小写、分隔符、目录链接不同而比错。先 realpath，拿不到时退回绝对路径。
+function normalizeConfigDir(dir) {
+  if (!dir) return '';
+  const resolved = path.resolve(String(dir));
+  try { return fs.realpathSync.native(resolved); } catch { return resolved; }
+}
 // 只把这次被菜单改掉的 model 键改回去，其余内容原样保留。
+// 原来没有这份文件、CodeAgent 新建了它并写了 model：只去掉 model 键。
 function restoreDefaults(snapshot) {
   const restored = [];
   for (const before of snapshot) {
-    if (!before.exists || before.unreadable) continue;
+    if (before.unreadable) continue;
     let raw;
     try { raw = fs.readFileSync(before.file, 'utf8'); } catch { continue; }
     let value;
@@ -249,6 +257,42 @@ function restoreDefaults(snapshot) {
     finally { try { fs.unlinkSync(temp); } catch {} }
   }
   return restored;
+}
+
+// 回车之后看住默认模型：CodeAgent 可能在回显之后、甚至几秒后才写配置（以前只在 0.6 秒和 2.1 秒各改回一次，
+// 它后写就把改回的值盖掉）。在 durationMs 内每 intervalMs 读一次，被改了就改回；最后再读一次核对。
+// 返回 { restored: [文件名], changes: [{ file, written, restoredTo, ok }], verified, before, after }（before/after 是 settings.json 的 model）。
+async function guardDefaults(snapshot, { durationMs = 3500, intervalMs = 150, onChange = null } = {}) {
+  const restored = new Set();
+  const changes = [];
+  const deadline = Date.now() + durationMs;
+  for (;;) {
+    for (const before of snapshot) {
+      if (before.unreadable) continue;
+      const now = readModelKey(before.file);
+      if (!now.exists || now.unreadable || now.model === before.model) continue;
+      // 改回失败（文件被占用、权限等）不能停在被改后的值：记下原因，下一拍接着重试，看守结束时仍没改回就由 verified:false 报出。
+      let done = [], error = '';
+      try { done = restoreDefaults([before]); } catch (e) { error = e && e.message ? e.message : String(e); }
+      const after = readModelKey(before.file).model;
+      const change = { file: path.basename(before.file), written: now.model, restoredTo: before.model, ok: after === before.model, ...(error ? { error } : {}) };
+      changes.push(change);
+      if (done.length) restored.add(change.file);
+      try { onChange && onChange(change); } catch { /* 只是记日志 */ }
+    }
+    if (Date.now() >= deadline) break;
+    await sleep(intervalMs);
+  }
+  const verified = snapshot.every(before => before.unreadable || !readModelKey(before.file).exists || readModelKey(before.file).model === before.model);
+  const main = snapshot.find(before => path.basename(before.file) === 'settings.json');
+  return { restored: [...restored], changes, verified, before: main ? main.model : undefined, after: main ? readModelKey(main.file).model : undefined };
+}
+
+// 账号的模型权限清单里有没有这个模型（清单未知时不拦，菜单本身再核一次）。
+function modelAllowed(modelId, allowedModels) {
+  if (!Array.isArray(allowedModels) || !allowedModels.length) return true;
+  const want = String(modelId || '').toLowerCase();
+  return allowedModels.some(m => String(m || '').toLowerCase() === want);
 }
 
 // ---------------------------------------------------------------- 选择
@@ -305,8 +349,17 @@ async function waitForEcho(manager, sid, mark, timeoutMs, screen) {
 }
 
 // 在已经打开的会话里选模型。返回 { ok, mode: 'session'|'default', confirmed, restored, message }。
-async function pickModel({ manager, sid, kind, modelId, configDir, sendToPty, screenTimeoutMs = 8000, env = process.env }) {
+// allowedModels：这个账号的模型权限清单（调用方只在清单权威时传）；目标不在清单里就不打开菜单，直接拒绝。
+// configDir：CodeAgent 这个会话实际用的配置目录（回车会写它的 settings.json）；先规范化，快照、写回、核对都用同一个。
+// guardMs：回车后看住默认模型多久；onDefaultChange(change)：每次发现被改、改回时回调（调用方记日志）。
+async function pickModel({ manager, sid, kind, modelId, configDir, allowedModels = null, sendToPty, screenTimeoutMs = 8000, guardMs = 3500, onDefaultChange = null, env = process.env }) {
+  if (!modelAllowed(modelId, allowedModels)) {
+    return { ok: false, notAllowed: true, inputReady: true,
+      message: `${modelId} 不在这个账号的模型权限清单里（可选：${allowedModels.join('、')}），没有打开模型菜单` };
+  }
   const label = pickerLabelFor(modelId, env);
+  const dir = normalizeConfigDir(configDir);
+  let defaults = null;
   const screen = await openSessionScreen(manager, sid);
   let attempted = false, result, menu = null;
   // 失败时把当时的画面带回去，写进数据目录方便排查（公司电脑上的菜单长相我们看不到）。
@@ -337,27 +390,29 @@ async function pickModel({ manager, sid, kind, modelId, configDir, sendToPty, sc
       await sleep(150);
     }
     await sleep(300);
-    const restoreSnapshot = configDir ? snapshotDefaults(configDir) : [];
+    const restoreSnapshot = dir ? snapshotDefaults(dir) : [];
     const mode = picker.sessionKey ? 'session' : 'default';
     const mark = typeof manager.getSessionOutputMark === 'function' ? manager.getSessionOutputMark(sid) : null;
     manager.writeToSession(sid, picker.sessionKey || '\r');
     const echo = mark == null ? null : await waitForEcho(manager, sid, mark, screenTimeoutMs, screen);
-    // CLI 可能在回显之后才把默认模型写进配置：稍等再改回，过一会儿再核一次。
+    // CLI 可能在回显之后才把默认模型写进配置：看住一段时间，被改就改回，最后核对（按 s 只改本会话时也看，防菜单行为变化）。
     let restored = [];
-    if (mode === 'default') {
-      await sleep(600);
-      restored = restoreDefaults(restoreSnapshot);
-      await sleep(1500);
-      restored = [...new Set([...restored, ...restoreDefaults(restoreSnapshot)])];
+    if (restoreSnapshot.length) {
+      defaults = await guardDefaults(restoreSnapshot, { durationMs: mode === 'default' ? guardMs : Math.min(guardMs, 1200), onChange: onDefaultChange });
+      defaults.dir = dir;
+      restored = defaults.restored;
+      if (!defaults.verified) {
+        return { ...(await fail(`CodeAgent 把默认模型改成了 ${defaults.after || '（空）'}，Hub 没能改回 ${defaults.before || '（空）'}`)), restored, defaults };
+      }
     }
     // 回显可能用菜单上的显示名（例如「Sonnet 5.5」），也可能用模型名：两种都算对。
     const echoMatches = echo && [label, picker.rows[target].label].some(name => squash(name) && echo.startsWith(squash(name)));
     if (echo && !echoMatches) {
-      return { ...(await fail(`CodeAgent 回显选中的不是 ${modelId}（回显：${echo.slice(0, 30)}）`)), restored };
+      return { ...(await fail(`CodeAgent 回显选中的不是 ${modelId}（回显：${echo.slice(0, 30)}）`)), restored, defaults };
     }
     const ready = await waitForInput(screen);
-    if (!ready.value) return { ...(await fail('选中后未确认恢复普通输入框')), restored };
-    return { ok: true, mode, confirmed: !!echo, restored };
+    if (!ready.value) return { ...(await fail('选中后未确认恢复普通输入框')), restored, defaults };
+    return { ok: true, mode, confirmed: !!echo, restored, defaults };
   }
   try {
     result = await choose();
@@ -496,6 +551,9 @@ module.exports = {
   pickerLabelFor,
   snapshotDefaults,
   restoreDefaults,
+  guardDefaults,
+  normalizeConfigDir,
+  modelAllowed,
   openSessionScreen,
   pickModel,
   schedulePick,

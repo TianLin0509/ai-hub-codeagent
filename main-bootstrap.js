@@ -13,6 +13,19 @@ if (configuredDataDir) {
   app.setPath('userData', path.join(configuredDataDir, 'electron-userdata'));
 }
 
+// 启动环境自检（core/clean-launch-env.js，2026-10-19）：Hub 若是从某个会话的进程树里、或由更新脚本拉起的，
+// 先把继承来的会话标记从 process.env 删掉，配置目录类变量后台读完注册表再按「桌面打开」还原；Hub 之后拉起的终端、CLI 都不再带。
+try {
+  const { isPackagedHubRuntime } = require('./core/electron-runtime-mode.js');
+  process.__hubLaunchEnv = require('./core/clean-launch-env.js').cleanOwnEnvAtStartup({
+    appRoot: __dirname,
+    isPackaged: isPackagedHubRuntime({ appIsPackaged: app.isPackaged, defaultApp: process.defaultApp }),
+    dataDir: require('./core/data-dir.js').getHubDataDir(),
+  });
+} catch (error) {
+  process.__hubLaunchEnvError = error && error.message ? error.message : String(error);
+}
+
 try {
   const { installProcessLifecycleJournal } = require('./core/process-lifecycle-journal.js');
   process.__hubLifecycleJournal = installProcessLifecycleJournal({ app, BrowserWindow });

@@ -13,6 +13,10 @@ const fs = require('fs');
 const pool = require('./codeagent-pool');
 
 const eq = (a, b) => String(a || '').toLowerCase() === String(b || '').toLowerCase();
+// 账号即模型（2026-10-19 用户：「每个账号现在都只有一个模型……起一个会话，直接用默认的模型就可以了，根本不用选模型」
+// 「唯一需要的就是一开始选账号」）：通道按模型派活只挑默认模型就是它的号，不再为凑模型切号池号的默认模型。
+// 2.1.11 起的「切号默认模型 + hub-route-model.json 写回」保留在开关后面，默认关：AI_HUB_CODEAGENT_ROUTE_SWITCH=1 才打开。
+function routeSwitchEnabled(env = process.env) { return String(env.AI_HUB_CODEAGENT_ROUTE_SWITCH || '') === '1'; }
 const hasModel = (account, model) => (account.models || []).some(m => eq(m, model));
 // 日常主力（2026-10-18 用户：大家平时优先用 GLM）：GLM 一族标主力，其余是分流用的模型。
 const isPrimary = model => /^glm/i.test(String(model || ''));
@@ -67,6 +71,15 @@ function routeAccounts({ dataDir, personalDir = '', activeCounts = {}, personalA
     const personalAccountId = personalDir ? pool.readCredentials(personalDir, fsModule).accountId : '';
     for (const a of pool.listAccounts(dataDir, { activeCounts, personalAccountId, now, fsModule })) {
       if (a.state !== 'ready' || a.sameAsPersonal || a.duplicateOf) continue;
+      // 切号开关关着（账号即模型）：默认模型和个人号一样严格，写了且在清单里才算已知；configModel 取号目录里写的值。
+      if (!routeSwitchEnabled()) {
+        const written = pool.readSettingsModel(a.dir, fsModule);
+        const strict = pool.strictDefaultModel(written, a.models || []);
+        out.push({ key: a.id, pool: true, models: a.models || [], defaultModel: strict.model, configModel: written || strict.model,
+          activeSessions: a.activeSessions || 0, lastAssignedAt: a.lastAssignedAt || 0, routeSwitched: !!a.routeSwitched,
+          ...(strict.note ? { defaultNote: pool.describeDefaultNote(strict.note, written) } : {}) });
+        continue;
+      }
       const own = pool.effectiveModel(a.dir, fsModule);
       out.push({ key: a.id, pool: true, models: a.models || [], defaultModel: own, configModel: own,
         activeSessions: a.activeSessions || 0, lastAssignedAt: a.lastAssignedAt || 0, routeSwitched: !!a.routeSwitched });
@@ -78,13 +91,13 @@ function routeAccounts({ dataDir, personalDir = '', activeCounts = {}, personalA
 // 这个号能不能用来跑该模型（审核 2026-10-18：个人账号不切默认模型，只算它此刻的默认；号池的号清单里有就算）。
 // 不能的号不进模型表、不参与挑号，免得家里看到「能用」却永远派不出去。
 function canEverServe(account, model) {
-  if (!hasModel(account, model)) return false;
-  return account.pool ? true : eq(account.defaultModel, model);
+  if (!hasModel(account, model) && !eq(account.defaultModel, model)) return false;
+  return account.pool && routeSwitchEnabled() ? hasModel(account, model) : eq(account.defaultModel, model);
 }
 // 这个号现在能不能开一个用该模型的会话：默认模型就是它；或是号池的号、手上没有进行中的会话（可以切默认模型）。
 function canServe(account, model) {
   if (!canEverServe(account, model)) return false;
-  return eq(account.defaultModel, model) || (account.pool && account.activeSessions === 0);
+  return eq(account.defaultModel, model) || (account.pool && routeSwitchEnabled() && account.activeSessions === 0);
 }
 
 // 能派的模型合集（第一次见到的写法为准）：个人账号只算它的默认模型。
@@ -156,7 +169,8 @@ function pickAnyRoute(accounts, { working = {}, cap = Infinity, only = '' } = {}
   const free = all.filter(a => (Number(working[a.key]) || 0) < cap);
   const candidates = free.length ? free : all;
   // 个人账号默认模型不确定（personalDefaultModel 留空）时同样排到后面，仍可兜底（2026-10-18 独立审核）。
-  const avoid = a => (a.pool ? ((a.routeSwitched && a.activeSessions > 0) || !(a.models || []).length) : !a.defaultModel) ? 1 : 0;
+  // 账号即模型（2026-10-19）：号池号默认模型未知时也排到后面兜底，和个人号同一套规则。
+  const avoid = a => (a.pool ? ((a.routeSwitched && a.activeSessions > 0) || !(a.models || []).length || !a.defaultModel) : !a.defaultModel) ? 1 : 0;
   const account = candidates.slice().sort((x, y) => avoid(x) - avoid(y)
     || (Number(x.activeSessions) || 0) - (Number(y.activeSessions) || 0)
     || (Number(x.lastAssignedAt) || 0) - (Number(y.lastAssignedAt) || 0)
@@ -192,6 +206,7 @@ function modelTable(accounts, { working = {}, cap = Infinity, peak = false, para
         avoid: av ? { kind: av.kind || 'quota', source: av.source || 'error', since: av.since || null, until: untilOf(av) == null ? null : Number(untilOf(av)),
           reason: describe ? describe(av) : String(av.reason || '') } : null,
         ...(a.configMismatch ? { configNote: describeMismatch(a.configMismatch) } : {}),
+        ...(a.defaultNote ? { defaultNote: a.defaultNote } : {}),
         credit: c && Number.isFinite(Number(c.remaining)) ? { remaining: Number(c.remaining), pct: Number(c.pct), bucket: c.bucket || '', at: c.at || null } : null };
     }).sort((x, y) => Number(x.pool) - Number(y.pool) || x.alias.localeCompare(y.alias, 'zh'));
   }
@@ -206,7 +221,7 @@ function tableSignature(table) {
 // 避让状态的签名（哪些号在避让、到什么时候）：变了就尽快推给家里，不等 10 分钟节流（额度感知，2026-10-18）。
 function avoidSignature(table) {
   if (!table || !Array.isArray(table.accountRows)) return '';
-  return JSON.stringify(table.accountRows.filter(r => r.avoid || r.configNote).map(r => [r.alias, r.avoid && r.avoid.source, r.avoid && r.avoid.kind, r.avoid && r.avoid.until, r.configNote || '']));
+  return JSON.stringify(table.accountRows.filter(r => r.avoid || r.configNote || r.defaultNote).map(r => [r.alias, r.avoid && r.avoid.source, r.avoid && r.avoid.kind, r.avoid && r.avoid.until, r.configNote || '', r.defaultNote || '']));
 }
 
-module.exports = { routeAccounts, personalAccount, personalModels, describeMismatch, canServe, canEverServe, servableNow, pickRoute, pickAnyRoute, modelTable, tableSignature, avoidSignature, listModels, canonicalModel, isPrimary, hasModel, earliestUntil, avoidFor, requestModel };
+module.exports = { routeSwitchEnabled, routeAccounts, personalAccount, personalModels, describeMismatch, canServe, canEverServe, servableNow, pickRoute, pickAnyRoute, modelTable, tableSignature, avoidSignature, listModels, canonicalModel, isPrimary, hasModel, earliestUntil, avoidFor, requestModel };

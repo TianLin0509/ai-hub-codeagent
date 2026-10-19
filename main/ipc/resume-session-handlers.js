@@ -5,6 +5,9 @@ const { isKimiCliKind } = require('../../core/ai-kinds.js');
 const { lookupKimiSession: defaultLookupKimiSession } = require('../../core/kimi-session-migrator.js');
 const { sessionModelId } = require('../../core/session-capabilities.js');
 
+// Hub 自动开的 CodeAgent 会话（2026-10-19 账号即模型）：启动、恢复都用账号自己的默认模型，不传模型、不驱动 /model 菜单。
+const AUTOMATIC_CODEAGENT_PURPOSES = new Set(['company-bridge', 'company-assistant', 'company-forum']);
+
 function createResumeSessionHandler(deps) {
   const {
     defaultCodexSessionsRoot,
@@ -60,7 +63,7 @@ function createResumeSessionHandler(deps) {
     if (launchOverrides) {
       const { model, ...rest } = launchOverrides;
       meta = { ...meta, ...rest, ...(model ? { model, currentModel: { id: model, displayName: model } } : {}) };
-      if (model && /^codeagent(?:-resume)?$/.test(meta.kind)) codeagentModelPick = rest.codeagentModelPick !== false;
+      if (model && /^codeagent(?:-resume)?$/.test(meta.kind) && !AUTOMATIC_CODEAGENT_PURPOSES.has(meta.purpose)) codeagentModelPick = rest.codeagentModelPick !== false;
     }
     delete meta.launchOverrides;
 
@@ -265,7 +268,9 @@ function createResumeSessionHandler(deps) {
       }
     }
 
-    const safeResumeModel = sessionModelId(meta);
+    // 自动会话（通道、公司助理、论坛）恢复时不带模型：用账号自己的默认模型，绝不「选回」旧模型（2026-10-19 账号即模型）。
+    const automaticCodeAgent = /^codeagent(?:-resume)?$/.test(meta.kind) && AUTOMATIC_CODEAGENT_PURPOSES.has(meta.purpose);
+    const safeResumeModel = automaticCodeAgent ? '' : sessionModelId(meta);
     const createdSession = sessionManager.createSession(meta.kind || 'claude', {
       ...(reservation ? {_openLeaseNonce:reservation} : {}),
       id: meta.hubId,

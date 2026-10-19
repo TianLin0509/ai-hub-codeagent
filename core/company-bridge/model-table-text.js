@@ -54,8 +54,8 @@ function describeAccounts(table) {
   return ['各号（account 参数用这里的代称）：', ...rows.map(a => {
     const state = a.avoid ? `避让中：${a.avoid.reason || '额度用完或限流'}` : `可用，还能并行 ${a.free} 个`;
     const credit = a.credit ? `，Credit 剩 ${a.credit.remaining}（${a.credit.pct}%${a.credit.bucket ? '，' + a.credit.bucket : ''}）` : '';
-    const note = a.configNote ? `；${a.configNote}（可用 company_act set-personal-model 修正）` : '';
-    return `- ${a.alias}：${a.defaultModel || (a.models[0] || '模型未知')}${a.models.length > 1 ? `（可切：${a.models.join('、')}）` : ''}，进行中 ${a.activeSessions} 个，${state}${credit}${note}`;
+    const note = (a.configNote ? `；${a.configNote}（可用 company_act set-personal-model 修正）` : '') + (a.defaultNote ? `；${a.defaultNote}，不参与按模型派活` : '');
+    return `- ${a.alias}：${a.defaultModel || (a.defaultNote ? '默认模型未知' : a.models[0] || '模型未知')}${a.models.length > 1 ? `（可切：${a.models.join('、')}）` : ''}，进行中 ${a.activeSessions} 个，${state}${credit}${note}`;
   })];
 }
 

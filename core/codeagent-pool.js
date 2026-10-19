@@ -61,16 +61,29 @@ function maskAccountId(value) {
 
 // 只读凭证文件里的明文字段（工号、到期时间、登录方式），token 本身是 DPAPI 密文，不碰。
 function readCredentials(configDir, fsModule = fs) {
+  // 读不懂时带一句原因（detail，不含凭证内容；2026-10-19 公司 2.1.15 直查个人账号「凭证读不到」，要分清是读文件出错、
+  // 不是 JSON，还是 JSON 里没有登录项）。文件开头的 BOM 去掉再解析；登录项的键名大小写不敏感（xxxOAuth / xxxOauth）。
+  let text;
+  try { text = String(fsModule.readFileSync(path.join(configDir, '.credentials.json'), 'utf8')); }
+  catch (error) {
+    if (error && error.code === 'ENOENT') return { present: false, reason: 'missing' };
+    return { present: false, reason: 'unreadable', detail: `读文件出错（${error && error.code || 'unknown'}）` };
+  }
   let raw;
-  try { raw = JSON.parse(fsModule.readFileSync(path.join(configDir, '.credentials.json'), 'utf8')); }
-  catch (error) { return { present: false, reason: error && error.code === 'ENOENT' ? 'missing' : 'unreadable' }; }
-  const key = raw && typeof raw === 'object' ? Object.keys(raw).find(k => /OAuth$/.test(k) && raw[k] && typeof raw[k] === 'object') : null;
-  if (!key) return { present: false, reason: 'unreadable' };
+  try { raw = JSON.parse(text.replace(/^\uFEFF/, '')); }
+  catch { return { present: false, reason: 'unreadable', detail: text.trim() ? `不是 JSON（${text.length} 字节）` : '文件是空的' }; }
+  const keys = raw && typeof raw === 'object' ? Object.keys(raw).filter(k => raw[k] && typeof raw[k] === 'object') : [];
+  // CodeAgent 自己的登录项（idaasOAuth / devUCOAuth）优先；只有没有这种写法时才认大小写不同的（Claude 自己的 claudeAiOauth 排在最后）
+  const key = keys.find(k => /OAuth$/.test(k)) || keys.find(k => /oauth$/i.test(k) && k !== 'claudeAiOauth') || null;
+  if (!key) {
+    const keys = raw && typeof raw === 'object' ? Object.keys(raw).filter(k => /^[A-Za-z][\w-]{0,40}$/.test(k)).slice(0, 6) : [];
+    return { present: false, reason: 'unreadable', detail: keys.length ? `没有登录项（顶层键：${keys.join('、')}）` : '没有登录项' };
+  }
   const entry = raw[key];
   const expiresAt = Number(entry.xAuthExpires || entry.expiresAt) || null;
   return {
     present: true,
-    method: key === 'idaasOAuth' ? 'idaas' : key === 'devUCOAuth' ? 'devuc' : key.replace(/OAuth$/, ''),
+    method: key === 'idaasOAuth' ? 'idaas' : key === 'devUCOAuth' ? 'devuc' : key.replace(/oauth$/i, ''),
     accountId: typeof entry.accountId === 'string' ? entry.accountId : '',
     expiresAt,
   };
@@ -96,7 +109,10 @@ function listAccounts(dataDir, { activeCounts = {}, personalAccountId = '', now 
     return {
       id: a.id, note: a.note, createdAt: a.createdAt, lastAssignedAt: a.lastAssignedAt, dir,
       state, method: creds.method || null, accountLabel: maskAccountId(creds.accountId), expiresAt: creds.expiresAt || null,
+      ...(creds.detail ? { credentialsNote: creds.detail } : {}),
       models: configured.models, modelsAuthoritative: configured.authoritative, defaultModel: configured.defaultModel || '',
+      // 号自己 settings.json 写的模型与严格判定的说明（账号即模型，号表和直查标「默认模型未知 / 写的不在清单里」）
+      ...(() => { const written = readSettingsModel(dir, fsModule); const d = strictDefaultModel(written, configured.models); return { configModel: written, ...(d.note ? { defaultNote: describeDefaultNote(d.note, written) } : {}) }; })(),
       modelsProbedAt: configured.probedAt || null,
       // 为通道指定模型切过默认模型、还没换回（hub-route-model.json，见 syncSharedConfig）。
       routeSwitched: fileExists(path.join(dir, ROUTE_MARKER), fsModule),
@@ -244,6 +260,21 @@ function personalDefaultModel(own, known) {
   if (written) return pick(written) || pick(written + '-Auto');
   return (known && known.probedAt ? pick(known.defaultModel) : '') || pick(require('./codeagent-models').DEFAULT_MODEL);
 }
+// 号池号的默认模型（账号即模型、切号开关关着时，2026-10-19 审核）：和个人号一样严格——settings.json 写了 model、且在清单里
+// （分档名 GLM-5.2-WX 算清单里的 GLM-5.2-WX-Auto）才算已知；没写、清单未知或写的不在清单里都算未知，不参与按模型派活，
+// 免得「判断是 DS、实际启动退回 CodeAgent 自己的默认 GLM」（2.1.8 修过的问题）。note：missing / not-in-list。
+function strictDefaultModel(written, models) {
+  const w = typeof written === 'string' ? written.trim() : '';
+  if (!w) return { model: '', note: 'missing' };
+  const list = models || [];
+  const hit = list.find(m => String(m).toLowerCase() === w.toLowerCase()) || list.find(m => String(m).toLowerCase() === (w + '-Auto').toLowerCase());
+  return hit ? { model: hit, note: '' } : { model: '', note: 'not-in-list', written: w };
+}
+function describeDefaultNote(note, written = '') {
+  if (note === 'missing') return '默认模型未知（settings.json 没写 model）';
+  if (note === 'not-in-list') return `默认模型未知（settings.json 写的 ${written || '模型'} 不在权限清单里）`;
+  return '';
+}
 function readSettingsModel(dir, fsModule = fs) {
   try { const v = JSON.parse(fsModule.readFileSync(path.join(dir, 'settings.json'), 'utf8')); return v && typeof v.model === 'string' ? v.model.trim() : ''; }
   catch { return ''; }
@@ -255,11 +286,44 @@ function effectiveModel(dir, fsModule = fs) { return chooseAccountModel(readSett
 // 之后不指定模型、且这个号上没有进行中的会话时换回去（不指定时的行为与以前相同）。
 const ROUTE_MARKER = 'hub-route-model.json';
 
+// 不指定模型开会话时这个号会用的模型（syncSharedConfig 与启动中心「默认模型」共用一套口径，审核 2026-10-19）：
+// 号自己存的模型（不在清单里换成清单里的）；为通道切过模型（有 ROUTE_MARKER）且号上没有进行中的会话时，换回切之前的模型。
+// 遗留 hub-route-model.json 能不能按原值写回（syncSharedConfig 与 plannedModel 共用，2026-10-19 审核）。
+function markerRestoreDecision(ownModel, known, marker) {
+  const original = marker && typeof marker.original === 'string' ? marker.original.trim() : '';
+  const switchedTo = marker && typeof marker.model === 'string' ? marker.model : '';
+  const listKnown = !!(known && known.authoritative && (known.models || []).length);
+  const reason = !original ? 'original-empty'
+    : String(ownModel || '').toLowerCase() !== switchedTo.toLowerCase() ? 'model-changed-since-switch'
+      : listKnown && !known.models.some(m => m.toLowerCase() === original.toLowerCase()) ? 'original-not-in-list' : '';
+  return { original, restored: !reason, reason };
+}
+// 号这次启动会用的模型。切号开关关着（账号即模型，默认）：号自己写的默认值（严格判定，写了且在清单里才算；
+// 遗留标记满足写回条件且号空闲时是写回后的原值），不推断；开关打开时沿用 2.1.11 起的推断。
+function plannedModelFrom(own, known, marker, { idle = false, routeSwitch = require('./codeagent-model-route').routeSwitchEnabled() } = {}) {
+  if (!routeSwitch) {
+    const ownModel = typeof own === 'string' ? own : '';
+    const decision = marker && idle ? markerRestoreDecision(ownModel, known, marker) : null;
+    return strictDefaultModel(decision && decision.restored ? decision.original : ownModel, (known && known.models) || []).model;
+  }
+  if (marker && idle) return chooseAccountModel(typeof marker.original === 'string' ? marker.original : '', known);
+  return chooseAccountModel(own, known);
+}
+// 只读不写：idle = 这个号上没有进行中的会话。
+function plannedModel(dir, { idle = false, fsModule = fs } = {}) {
+  let marker = null;
+  try { marker = JSON.parse(fsModule.readFileSync(path.join(dir, ROUTE_MARKER), 'utf8')); } catch { marker = null; }
+  return plannedModelFrom(readSettingsModel(dir, fsModule), accountModels(dir, fsModule), marker, { idle });
+}
+
 // 启动前把与账号无关的配置同步进号的目录：settings.json 以个人账号为准，但去掉 hooks（由 Hub 按本目录部署，
 // 避免指向个人目录的 hook 与本目录的重复触发）和 model（每个号能用的模型不同，保留号自己的）；
 // 号自己没有默认模型、而账号清单里有模型时，用清单第一个，避免回落到这个号没有权限的模型。
 // routeModel：家里指定的模型（调用方已核对这个号有它的权限）；idle：这个号上没有进行中的会话（可以换回切之前的模型）。
-function syncSharedConfig(personalDir, targetDir, fsModule = fs, { routeModel = '', idle = false } = {}) {
+// routeSwitch：是否允许为通道指定的模型切号的默认模型（默认跟 core/codeagent-model-route.js routeSwitchEnabled，2026-10-19 起默认关）。
+// 关着时（账号即模型）不改号自己 settings.json 的 model（原样保留，没写就不写）；只有以前切过、留着 hub-route-model.json 的号，
+// 空闲时按记下的原值写回一次再删掉记录（onRouteRestore 回调记日志）。
+function syncSharedConfig(personalDir, targetDir, fsModule = fs, { routeModel = '', idle = false, routeSwitch = require('./codeagent-model-route').routeSwitchEnabled(), onRouteRestore = null } = {}) {
   const errors = [];
   let model = '';
   // 来源和目标是同一个目录（或互相包含）时一个字都不写（2026-10-19 公司真机：个人目录被继承的环境变量指到了号 1 的目录，
@@ -279,10 +343,22 @@ function syncSharedConfig(personalDir, targetDir, fsModule = fs, { routeModel = 
     // 以前只看配置文件里的账号清单，没读「一键获取模型权限」探测到的清单（hub-models.json），没定下模型时
     // CodeAgent 退回它自己的默认 GLM。现在探测清单优先；号自己存的模型不在清单里也换掉。
     const known = accountModels(targetDir, fsModule);
-    model = chooseAccountModel(own.model, known);
+    const ownModel = typeof own.model === 'string' ? own.model : '';
     const markerFile = path.join(targetDir, ROUTE_MARKER);
     const marker = readJson(markerFile);
-    if (routeModel) {
+    // 这次启动定下的模型：和 plannedModel（启动中心显示的预计模型）同一口径（plannedModelFrom）。
+    // 开关关着时不推断，只认号自己写的值；开关打开时沿用以前的推断。
+    model = routeSwitch ? plannedModelFrom(own.model, known, marker, { idle: !routeModel && idle, routeSwitch }) : ownModel;
+    if (!routeSwitch) {
+      if (marker && idle) {
+        // 只在两条都满足时写回原值（2026-10-19 审核，最保守）：号此刻的 model 仍是当初切过去的值（之后没人改过），
+        // 且权限清单未知或原值在清单里。原值为空、号的 model 已被别处改过、原值不在清单里：只删记录，不写，回调里给原因。
+        const decision = markerRestoreDecision(ownModel, known, marker);
+        if (decision.restored) model = decision.original;
+        try { fsModule.rmSync(markerFile, { force: true }); } catch { /* 删不掉下次再删 */ }
+        try { onRouteRestore && onRouteRestore({ before: ownModel, after: model, original: decision.original, restored: decision.restored, ...(decision.reason ? { reason: decision.reason } : {}) }); } catch { /* 只是记日志 */ }
+      }
+    } else if (routeModel) {
       const want = known.models.find(m => m.toLowerCase() === String(routeModel).toLowerCase()) || String(routeModel);
       if (model.toLowerCase() !== want.toLowerCase()) {
         const original = marker && typeof marker.original === 'string' ? marker.original : model;
@@ -290,10 +366,10 @@ function syncSharedConfig(personalDir, targetDir, fsModule = fs, { routeModel = 
         model = want;
       }
     } else if (marker && idle) {
-      model = chooseAccountModel(typeof marker.original === 'string' ? marker.original : '', known);
       try { fsModule.rmSync(markerFile, { force: true }); } catch { /* 删不掉下次再删 */ }
     }
     if (model) next.model = model;
+    else delete next.model;
     const text = JSON.stringify(next, null, 2) + '\n';
     const file = path.join(targetDir, 'settings.json');
     let current = null; try { current = fsModule.readFileSync(file, 'utf8'); } catch { /* 新目录 */ }
@@ -312,6 +388,9 @@ function syncSharedConfig(personalDir, targetDir, fsModule = fs, { routeModel = 
     try { if (fsModule.existsSync(src)) fsModule.cpSync(src, path.join(targetDir, name), { recursive: true, force: true }); }
     catch (error) { errors.push(`${name}：${error.message}`); }
   }
+  // model：这次启动会用的模型（显示用）；号没写默认模型时按清单推一个，只作显示，不写进配置。
+  // 开关关着时只认号自己写的、在清单里的默认模型（strictDefaultModel），不猜；开关打开时沿用以前的推断。
+  if (!routeSwitch) { try { model = strictDefaultModel(model, accountModels(targetDir, fsModule).models).model; } catch { model = ''; } }
   return { errors, model };
 }
 
@@ -329,8 +408,10 @@ function poolModelOptions(dataDir, accounts) {
 // 公司实测提示「W3 用户名:」）。密码只交给 CodeAgent，Hub 不经手；Hub 只看配置目录里出现凭证文件。
 // 工作目录用这个号自己的目录，避开「当前目录 .cac 凭证优先」的坑。
 // 隔离测试（有独立数据目录且设了夹具开关）不开窗口，直接写一份假凭证，便于端到端走通界面。
-function openLoginWindow(dataDir, id, config, { env = process.env, spawnFn = require('child_process').spawn, now = Date.now() } = {}) {
-  const dir = accountDir(dataDir, id);
+// personal：个人账号的登录过期 / 读不懂时（2026-10-19），同样开这个窗口重新登录，目录是个人账号自己的配置目录（不能和号池重叠）。
+function openLoginWindow(dataDir, id, config, { env = process.env, spawnFn = require('child_process').spawn, now = Date.now(), personal = false } = {}) {
+  if (personal && poolDirMatch(dataDir, config.configDir)) throw new Error('个人账号的配置目录和号池重叠，不能在这里登录');
+  const dir = personal ? config.configDir : accountDir(dataDir, id);
   fs.mkdirSync(dir, { recursive: true });
   if (env.CLAUDE_HUB_DATA_DIR && env.AI_HUB_CODEAGENT_POOL_LOGIN_FIXTURE) {
     const accountId = String(env.AI_HUB_CODEAGENT_POOL_LOGIN_FIXTURE).replace(/[^a-z0-9]/gi, '').slice(0, 12) + id.slice(0, 3);
@@ -342,8 +423,9 @@ function openLoginWindow(dataDir, id, config, { env = process.env, spawnFn = req
   const childEnv = { ...env, [config.configDirEnv]: dir };
   for (const key of Object.keys(childEnv)) if (/^CODEAGENT_HUB_/.test(key) || key === 'CODEAGENT3_LAUNCHER_PID') delete childEnv[key];
   const command = /^[A-Za-z0-9_.-]+$/.test(config.command) ? config.command : `"${String(config.command).replace(/"/g, '')}"`;
-  const hint = 'echo 请号主本人在下面输入 W3 用户名和密码。登录成功后关闭本窗口，回到 AI Hub 即可。& echo.';
-  const line = `start "CodeAgent 号池登录" cmd.exe /k "chcp 65001>nul & ${hint} & call ${command} auth login --method idaas"`;
+  const hint = personal ? 'echo 个人账号重新登录：请在下面输入你自己的 W3 用户名和密码。登录成功后关闭本窗口，回到 AI Hub 即可。& echo.'
+    : 'echo 请号主本人在下面输入 W3 用户名和密码。登录成功后关闭本窗口，回到 AI Hub 即可。& echo.';
+  const line = `start "${personal ? 'CodeAgent 个人账号登录' : 'CodeAgent 号池登录'}" cmd.exe /k "chcp 65001>nul & ${hint} & call ${command} auth login --method idaas"`;
   const child = spawnFn('cmd.exe', ['/d', '/s', '/c', line], { cwd: dir, env: childEnv, detached: true, stdio: 'ignore', windowsHide: true, windowsVerbatimArguments: true });
   child.on?.('error', () => {});
   child.unref?.();
@@ -406,5 +488,5 @@ module.exports = {
   listAccounts, label, pickAccount, markAssigned, addAccount, setNote, removeAccount,
   personalLastAssignedAt, markPersonalAssigned,
   projectCredentialsOverride, syncSharedConfig, poolModelOptions, poolDirMatch,
-  chooseAccountModel, personalDefaultModel, readSettingsModel, effectiveModel, ROUTE_MARKER,
+  chooseAccountModel, personalDefaultModel, readSettingsModel, effectiveModel, plannedModel, strictDefaultModel, describeDefaultNote, markerRestoreDecision, ROUTE_MARKER,
 };

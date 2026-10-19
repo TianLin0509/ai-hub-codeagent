@@ -10,6 +10,35 @@
 # Keep this file ASCII: Windows PowerShell 5.1 reads BOM-less files as ANSI.
 param([string]$HookEvent = 'stop')
 
+# ask-gate: synchronous PreToolUse hook registered only for the question tools
+# (core/auto-dispatch-rules.js). Sessions the Hub dispatches automatically carry
+# AI_HUB_NO_CHOICE=1; for them the call is refused with exit code 2 and the reason
+# (AI_HUB_NO_CHOICE_REASON, written to stderr as UTF-8) goes back to the model.
+# Every other session, and any failure here, lets the call through (exit 0).
+if ($HookEvent -eq 'ask-gate') {
+  if ($env:AI_HUB_NO_CHOICE -ne '1') { exit 0 }
+  $deny = $false
+  try {
+    $stdin = [Console]::OpenStandardInput()
+    $buffer = New-Object System.IO.MemoryStream
+    $stdin.CopyTo($buffer)
+    $payload = [System.Text.Encoding]::UTF8.GetString($buffer.ToArray()) | ConvertFrom-Json
+    $tools = @(([string]$env:AI_HUB_NO_CHOICE_TOOLS).Split(',') | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+    if ($tools.Count -eq 0) { $tools = @('AskUserQuestion') }
+    $deny = $tools -contains [string]$payload.tool_name
+  } catch { $deny = $false }
+  if (-not $deny) { exit 0 }
+  try {
+    $reason = [string]$env:AI_HUB_NO_CHOICE_REASON
+    if (-not $reason) { $reason = 'This session is dispatched automatically and nobody can answer questions: continue with the most reasonable assumptions and state them in the answer.' }
+    $bytes = [System.Text.Encoding]::UTF8.GetBytes($reason)
+    $err = [Console]::OpenStandardError()
+    $err.Write($bytes, 0, $bytes.Length)
+    $err.Flush()
+  } catch { }
+  exit 2
+}
+
 $sessionId = $env:CLAUDE_HUB_SESSION_ID
 if (-not $sessionId -or $HookEvent -eq 'tool-use') { exit 0 }
 

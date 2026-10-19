@@ -11,7 +11,7 @@
 // 用号配置目录 settings.json 的 model 定模型（core/codeagent-model-route.js）。
 // 发回前查源码：围栏代码块、无围栏的代码行、压成一行的代码都算；超过限度先请它改写，改完仍超就删掉那几段再发。
 const path = require('node:path');
-const { randomUUID } = require('node:crypto');
+const { randomUUID, createHash } = require('node:crypto');
 const { AssistantStore } = require('../hub-assistant/store');
 const { claimTimers, ownsTimers } = require('../hub-assistant/timer-owner');
 const { BridgeLink } = require('./link');
@@ -30,6 +30,14 @@ const route = require('../codeagent-model-route');
 // 2026-10-18 额度感知：识别 CodeAgent 后台的额度 / 限流报错，把号标「避让中」，挑号时跳过；撞额度的轮次换号新开会话重做一次。
 const Q = require('../codeagent-quota');
 const { QuotaWatch } = require('./quota-watch');
+// 2026-10-19 兜底：在途轮次的会话停在选择菜单上（CodeAgent 弹了选择题等人选）→ 这一轮报「卡在选择题」，带回题目和选项；
+// 只读屏幕、不发按键、不替它选。对端追问给出选择或重试时，新开会话接着做（旧会话停在菜单上，不再往里发）。
+const choiceMenu = require('../choice-menu-screen');
+// 菜单要连续出现这么久才判定（一闪而过的不算）；同一会话两次读屏至少隔这么久。
+const CHOICE_STABLE_MS = 20000;
+const CHOICE_CHECK_MS = 8000;
+// 工具权限确认（不是提问）先只报「等待权限确认」，停满这么久才按卡住处理（审核 2026-10-19）。通道会话按 bypass 权限启动，正常不该出现。
+const PERMISSION_STABLE_MS = 5 * 60000;
 // 一轮因额度中断后最多换号重做几次（只重做一次，不循环）。
 const MAX_REHOME = 1;
 // 撞额度后旧会话还在忙（多半在自己重试）时，最多等多久再换号（审核 2026-10-18）。
@@ -103,7 +111,9 @@ const DEFAULT_SETTINGS = Object.freeze({ enabled: true, codeRoots: [], instructi
   allowRemoteMaintain: true,
   // 额度感知（2026-10-18）：识别额度 / 限流报错并避让（quotaGuard）；Stats 面板 Credit 不高于 creditFloor 也避让；
   // 报错里读不出重置时间时，quotaRetryMinutes 分钟后再试（Credit 恢复为正时提前解除）。
-  quotaGuard: true, creditFloor: 0, quotaRetryMinutes: 60 });
+  quotaGuard: true, creditFloor: 0, quotaRetryMinutes: 60,
+  // 在途轮次按屏幕识别「卡在选择题」（2026-10-19，core/choice-menu-screen.js；识别规则可在数据目录的 choice-menu-rules.json 里改）
+  choiceDetect: true });
 const ACTIVE_POLL_MS = 10000;
 const FOLLOWUP_WINDOW_MS = 10 * 60000;
 const EFFORTS = ['low', 'medium', 'high', 'max'];
@@ -316,6 +326,7 @@ class CompanyBridge {
     if ('allowRemoteDiag' in patch) next.allowRemoteDiag = patch.allowRemoteDiag === true;
     if ('allowRemoteMaintain' in patch) next.allowRemoteMaintain = patch.allowRemoteMaintain === true;
     if ('quotaGuard' in patch) next.quotaGuard = patch.quotaGuard === true;
+    if ('choiceDetect' in patch) next.choiceDetect = patch.choiceDetect === true;
     if ('creditFloor' in patch) { const n = Number(patch.creditFloor); if (!Number.isFinite(n) || n < 0 || n > 100000) throw new Error('额度阈值只能是 0–100000'); next.creditFloor = n; }
     int('quotaRetryMinutes', 5, 720, '撞到额度后多久再试（分钟）');
     if ('resultDirs' in patch) {
@@ -519,6 +530,13 @@ class CompanyBridge {
       // 重读：前一个 dispatch 等待（开会话、发送）期间，这一个可能已被对端取消（remote-act.js cancel-queued）或解除配对
       let t = this.thread(listed.id);
       if (!t || t.state !== 'queued' || t.gen !== gen) continue;
+      // 原会话停在选择菜单上（collect 判过「卡在选择题」）：追问 / 重试都新开会话接着做，带上原问题和那道题；旧会话不再往里发
+      if (t.choiceStuckSession && t.sessionId === t.choiceStuckSession) {
+        const qr = t.rounds.find(x => roundPhase(x) === 'queued');
+        if (qr) this.rehome(t, qr, { why: '原会话停在选择菜单上', fromKey: this.sessionAccountKey(t.sessionId), kind: 'choice' });
+        t = this.thread(t.id);
+        if (!t || t.state !== 'queued') continue;
+      }
       if (t.sessionId && this.sessionBusy(t.sessionId)) continue; // 追问时原会话还在忙（例如改写上一轮），等它停下
       if (t.rounds.some(x => roundPhase(x) === 'queued' && x.retryAt > this.now())) continue; // CLI 还没就绪，到点再发
       // 额度感知（2026-10-18）：指定的号核对一遍；追问落在避让中的号（或指定了别的号）上就换号新开会话，不再撞墙。
@@ -796,24 +814,27 @@ class CompanyBridge {
   }
   // 换号新开会话：hit（撞到额度，这一轮在途）时把这一轮退回排队、记一次重做；否则（排队的追问）只换会话。
   // 旧会话不动（不发按键、不关），保温规则照常让它休眠；新会话的提问带原问题、前几轮问答和上一会话的进展（promptFor）。
-  rehome(t, r, { why, fromKey, hit = null }) {
+  // kind='choice'：原会话停在选择菜单上（不是换号），新会话的提问另带原问题和那道选择题（rehomeContext）。
+  rehome(t, r, { why, fromKey, hit = null, kind = '' }) {
     const fromAlias = this.aliasOf(fromKey);
+    const choice = !hit && kind === 'choice';
     const progress = hit ? this.progressSince(t.sessionId, r) : '';
     const prevSessions = [...(t.prevSessions || []), { sessionId: t.sessionId, account: fromKey, at: this.now(), why: short(why, 80) }].slice(-5);
     const rounds = t.rounds.map(x => x.round !== r.round ? x : {
       ...x, sentAt: null, baseline: null, landed: null, resent: null, sendUncertain: null, receiptIssue: null, promptFingerprint: null, hijacked: 0,
       notReadySince: null, retryAt: null, queueNote: null, rewrite: false, rewriteAsked: false, resumePending: null, resumedAt: null,
       ...(hit ? { rehomed: (Number(x.rehomed) || 0) + 1, account: undefined, requestedAccount: x.account || x.requestedAccount || undefined } : {}),
-      rehome: { from: fromAlias, why: short(why, 120), progress, at: this.now(), kind: hit ? (hit.kind === 'model-config' ? 'model-config' : 'quota') : 'switch' },
+      rehome: { from: fromAlias, why: short(why, 120), progress, at: this.now(), kind: hit ? (hit.kind === 'model-config' ? 'model-config' : 'quota') : choice ? 'choice' : 'switch' },
     });
     const next = this.saveThread({ ...t, sessionId: null, everAnswered: false, prevSessions, rounds });
     // 模型配置有误只对这个号的这个模型避让（2026-10-19）
     const note = this.scrubText(hit && hit.kind === 'model-config' ? `${fromAlias}报模型配置有误（${hit.text || why}），请求这个模型时不再派给它；这一轮自动换号新开会话重做`
       : hit ? `${fromAlias}撞到${Q.KINDS[hit.kind] || '额度上限'}（${hit.text || why}），已暂停派给它；这一轮自动换号新开会话重做`
+      : choice ? '原会话停在一道选择题上，这一轮新开会话接着做，带上原问题、那道选择题和前几轮问答'
       : `原会话在${fromAlias}上（${why}），这一轮换号新开会话，带上前几轮问答作上下文`);
-    this.bridgeLog(`rehome ${t.id}#${r.round} from=${fromKey === 'personal' ? 'personal' : 'pool'} ${hit ? 'quota rule=' + hit.ruleId : 'switch'} session=${String(t.sessionId || '').slice(0, 8)}`);
+    this.bridgeLog(`rehome ${t.id}#${r.round} from=${fromKey === 'personal' ? 'personal' : 'pool'} ${hit ? 'quota rule=' + hit.ruleId : choice ? 'choice' : 'switch'} session=${String(t.sessionId || '').slice(0, 8)}`);
     void this.link.send('status', { thread: t.id, gen: t.gen, round: r.round, state: 'received', note }).catch(() => {});
-    this.notify(hit ? (hit.kind === 'model-config' ? '模型配置有误，换号重做' : '撞到额度，换号重做') : '换号新开会话', `${t.id}：${short(note, 80)}`, null, { quiet: !hit });
+    this.notify(hit ? (hit.kind === 'model-config' ? '模型配置有误，换号重做' : '撞到额度，换号重做') : choice ? '新开会话接着做' : '换号新开会话', `${t.id}：${short(note, 80)}`, null, { quiet: !hit });
     this.changed();
     return next;
   }
@@ -834,9 +855,24 @@ class CompanyBridge {
     const h = r.rehome || {};
     const lines = [h.kind === 'quota' || h.kind === 'model-config'
       ? `（说明：这个请求原先在另一个会话里处理，那个会话所用的号${h.from ? `（${h.from}）` : ''}因${h.why || '额度'}中断，现换到新会话重做。${h.progress ? '上一会话已读到的进展如下，仅供参考，请自行核实：' : ''}）`
-      : `（说明：同一编号此前的几轮在另一个会话里${h.from ? `（${h.from}）` : ''}，因${h.why || '换号'}换到这个新会话；下面附上此前各轮问答作上下文。）`];
+      : h.kind === 'choice'
+        ? '（说明：同一编号此前在另一个会话里处理时，停在了一道选择题上、没有人能选，那一轮没有作答；现换到这个新会话接着做。下面附上那道题和此前各轮问答作上下文。）'
+        : `（说明：同一编号此前的几轮在另一个会话里${h.from ? `（${h.from}）` : ''}，因${h.why || '换号'}换到这个新会话；下面附上此前各轮问答作上下文。）`];
     if (h.progress) lines.push('', '> ' + h.progress.split('\n').join('\n> '));
+    // 停在选择题上的那一轮（没有回答）：它的提问和那道题都带上；本轮就是它自己（重试）时只带那道题
+    const stuck = h.kind === 'choice' ? [...t.rounds].reverse().find(x => x.choiceStuck && !x.reply && x.round <= r.round) : null;
+    let stuckBlock = '';
+    if (stuck) {
+      const what = stuck.choiceStuck.kind === 'permission' ? '权限确认' : '选择题';
+      const menu = `那道${what}：${stuck.choiceStuck.question || '（没认出题目）'}\n选项：${(stuck.choiceStuck.options || []).join(' / ')}`;
+      if (stuck.round === r.round) lines.push('', `上一次做这一轮时停在了这道${what}上：\n${menu}`);
+      else {
+        const q = String(stuck.question || '');
+        stuckBlock = `### 第 ${stuck.round} 轮提问（停在${what}上，没有作答）\n${q.length > 4000 ? q.slice(0, 4000) + '…' : q}\n\n${menu}\n\n本轮请求是对方对那道题的选择或补充。`;
+      }
+    }
     const earlier = t.rounds.filter(x => x.round < r.round && x.reply);
+    if (stuckBlock && !earlier.length) lines.push('', stuckBlock, '', `## 本轮（第 ${r.round} 轮）请求`);
     if (earlier.length) {
       let budget = REHOME_CONTEXT_CHARS;
       const blocks = [];
@@ -847,7 +883,7 @@ class CompanyBridge {
         if (budget <= 0) break;
         blocks.unshift(piece); budget -= piece.length;
       }
-      lines.push('', '此前各轮问答（同一编号，供参考）：', '', blocks.join('\n\n'), '', `## 本轮（第 ${r.round} 轮）请求`);
+      lines.push('', '此前各轮问答（同一编号，供参考）：', '', blocks.join('\n\n'), ...(stuckBlock ? ['', stuckBlock] : []), '', `## 本轮（第 ${r.round} 轮）请求`);
     }
     return lines.join('\n');
   }
@@ -1042,7 +1078,10 @@ class CompanyBridge {
           // 号池开失败时退回个人账号：个人账号在避让中、或指定的是号池里的号时不退
           const personal = (accounts || []).find(a => a.key === 'personal');
           if (personal && route.avoidFor(personal, '')) fallbackPersonal = false;
+          // 挑不出号（读不到账号清单的老环境）时：指定了个人就只开个人；指定了号池里的号就只开那个号，不改成号池自动挑号（2026-10-19）。
           const poolOpts = pick && pick.ok ? (pick.account.pool ? { codeagentAccount: 'pool', codeagentPoolPick: pick.account.key } : null)
+            : only === 'personal' ? null
+            : only ? { codeagentAccount: 'pool', codeagentPoolPick: only }
             : poolLanes > 0 ? { codeagentAccount: 'pool' } : null;
           if (pick && pick.ok) this.bridgeLog(`route ${t.id} model=(default) account=${pick.account.pool ? 'pool' : 'personal'} active=${pick.account.activeSessions || 0}`);
           if (pick && pick.ok) this.noteProbe(pick.account, '');
@@ -1136,6 +1175,8 @@ class CompanyBridge {
         return;
       }
     }
+    // 会话停在选择菜单上等人选：这一轮报「卡在选择题」，不再干等（只读屏幕，不发按键）
+    if (await this.watchChoice(t, r)) return;
     if (this.sessionBusy(t.sessionId)) return;
     const since = activeSince(r);
     const final = this.lastFinal(t.sessionId);
@@ -1320,6 +1361,66 @@ class CompanyBridge {
     const turns = (this.deps.readUserTurns || userTurnsFromTranscript)(meta.transcriptPath).filter(u => u.at >= (r.sentAt || 0) - 5000);
     if (turns.some(u => u.text.includes('编号 ' + t.id))) return 'ok';
     return turns.some(u => u.images > 0) ? 'hijacked' : 'unknown';
+  }
+  // 在途轮次的会话是不是停在选择菜单上（core/choice-menu-screen.js）。同一道题连续出现 CHOICE_STABLE_MS 才判定；
+  // 判定后这一轮落 error（对端据此可以追问给出选择，或用 retry 重做，都新开会话接着做，见 advance）。返回 true 表示已处理。
+  async watchChoice(t, r) {
+    if (this.settings().choiceDetect === false || !this.deps.readTerminalScreen || !t.sessionId || !this.deps.getSession(t.sessionId)) return false;
+    const memo = this.choiceMemo || (this.choiceMemo = new Map());
+    const prev = memo.get(t.sessionId);
+    const now = this.now();
+    if (prev && prev.round === r.round && now - prev.checkedAt < CHOICE_CHECK_MS) return false;
+    let menu = null, sig = '';
+    try {
+      const raw = await this.deps.readTerminalScreen(t.sessionId);
+      if (raw && raw.text) {
+        sig = raw.text.length + ':' + createHash('sha1').update(raw.text.slice(-6000)).digest('hex');
+        if (prev && prev.sig === sig) menu = prev.menu;
+        else {
+          if (!this.choiceRules || now - this.choiceRules.at > 60000) this.choiceRules = { at: now, ...choiceMenu.loadRules(this.deps.dataDir) };
+          const rows = await (this.deps.renderRows || require('../hub-phone/session-chat').renderRows)(raw);
+          menu = choiceMenu.detectChoiceMenu(rows, this.choiceRules.rules);
+        }
+      }
+    } catch { menu = null; }
+    const key = menu ? JSON.stringify([menu.question, menu.options.map(o => o.label)]) : '';
+    const since = menu && prev && prev.round === r.round && prev.key === key && prev.since ? prev.since : menu ? now : null;
+    const noted = prev && prev.round === r.round && prev.key === key ? prev.noted : false;
+    memo.set(t.sessionId, { round: r.round, sig, menu, key, since, checkedAt: now, noted });
+    if (!menu || now - since < CHOICE_STABLE_MS) return false;
+    // 工具权限确认不是选择题：先只在进度说明里写「等待权限确认」，停满 PERMISSION_STABLE_MS 才按卡住处理
+    if (menu.kind === 'permission' && now - since < PERMISSION_STABLE_MS) {
+      if (!noted) {
+        memo.get(t.sessionId).noted = true;
+        const q = Q.redactSnippet(menu.question, { scrub: x => this.scrubText(x) }).slice(0, 200);
+        this.bridgeLog(`permission-wait ${t.id}#${r.round} session=${String(t.sessionId).slice(0, 8)}`);
+        void this.link.send('status', { thread: t.id, gen: t.gen, round: r.round, state: 'running',
+          note: `等待权限确认：公司 CodeAgent 停在一个工具权限确认上（${q || '没认出题目'}），没有替它选；停满 ${PERMISSION_STABLE_MS / 60000} 分钟仍没人处理会报回这一轮` }).catch(() => {});
+      }
+      return false;
+    }
+    memo.delete(t.sessionId);
+    this.markChoiceStuck(t, r, menu);
+    return true;
+  }
+  markChoiceStuck(t, r, menu) {
+    const secrets = this.accountSecrets();
+    const clean = s => Q.redactSnippet(s, { scrub: x => this.scrubText(x, secrets) });
+    const question = clean(menu.question).slice(0, 300);
+    const options = menu.options.slice(0, 9).map(o => `${o.key}. ${clean(o.label).slice(0, 120)}`);
+    const permission = menu.kind === 'permission';
+    const why = permission
+      ? `卡在权限确认：公司 CodeAgent 停在一个工具权限确认上超过 ${PERMISSION_STABLE_MS / 60000} 分钟，这一轮没有作答（没有替它选）。题目：${question || '（没认出题目）'}；选项：${options.join(' / ')}。`
+        + '可以追问说明怎么处理（公司新开会话、带上原问题接着做），或用远程维护的 retry 重做这一轮'
+      : `卡在选择题：公司 CodeAgent 停在一个选择菜单上等人选，这一轮没有作答（没有替它选）。题目：${question || '（没认出题目）'}；选项：${options.join(' / ')}。`
+        + '可以追问给出你的选择（公司新开会话、带上原问题和这道题接着做），或用远程维护的 retry 重做这一轮';
+    const fresh = this.thread(t.id) || t;
+    this.saveThread({ ...fresh, choiceStuckSession: t.sessionId,
+      rounds: fresh.rounds.map(x => x.round === r.round ? { ...x, error: why, failedAt: this.now(), choiceStuck: { at: this.now(), kind: permission ? 'permission' : 'question', question, options } } : x) });
+    this.bridgeLog(`${permission ? 'permission-stuck' : 'choice-stuck'} ${t.id}#${r.round} session=${String(t.sessionId).slice(0, 8)} options=${options.length}`);
+    void this.link.send('status', { thread: t.id, gen: t.gen, round: r.round, state: 'error', note: why }).catch(() => {});
+    this.notify(permission ? '卡在权限确认' : '卡在选择题', `${t.id}：${short(question, 60)}`, t.sessionId);
+    this.changed();
   }
   failRound(t, r, why) {
     this.patchRound(t, r.round, { error: why, failedAt: this.now() });

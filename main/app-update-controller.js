@@ -33,7 +33,9 @@ function resolveSources(config, env) {
 }
 
 function createAppUpdateController({ app, config, dataDir, currentVersion, sendToRenderer = () => {}, logger = console,
-  env = process.env, fetchImpl, resourcesPath = process.resourcesPath, isPackaged = !!(app && app.isPackaged), spawnImpl = spawn }) {
+  env = process.env, fetchImpl, resourcesPath = process.resourcesPath, isPackaged = !!(app && app.isPackaged), spawnImpl = spawn,
+  // 拉起新程序用的干净环境与工作目录（core/clean-launch-env.js，2026-10-19）：main.js 传入；没传时按当前环境现算。
+  prepareLaunch = () => require('../core/clean-launch-env').prepareHubLaunch({ env, isPackaged, appRoot: app && typeof app.getAppPath === 'function' ? app.getAppPath() : undefined }) }) {
   const sources = resolveSources(config, env);
   const releasePage = (config && config.releasePage) || '';
   let state = { phase: 'idle', current: currentVersion, sources: sources.map(s => ({ id: s.id, name: s.name })), releasePage, canApply: isPackaged || env.AI_HUB_UPDATE_FORCE_APPLY === '1' };
@@ -108,11 +110,15 @@ function createAppUpdateController({ app, config, dataDir, currentVersion, sendT
   // 用户点「立即重启」：增量 → 启动替换脚本后退出；完整安装包 → 打开安装程序后退出。
   function apply() {
     if (state.phase !== 'ready' || !staged) throw new Error('更新还没有下载好');
+    // 安装程序装完会拉起新程序、替换脚本换完文件也会拉起新程序：都给干净环境（工作目录明显异常时才换成安装目录）。
+    let launch = null;
+    try { launch = prepareLaunch(); } catch (error) { logger.warn?.('[app-update] 准备干净启动环境失败，按当前环境启动：', error.message); }
     if (staged.installer) {
-      const child = spawnImpl(staged.installer, [], { detached: true, stdio: 'ignore', windowsHide: false });
+      const child = spawnImpl(staged.installer, [], { detached: true, stdio: 'ignore', windowsHide: false,
+        ...(launch ? { env: launch.env, ...(launch.cwd ? { cwd: launch.cwd } : {}) } : {}) });
       child.unref?.();
     } else {
-      launchHelper(staged.paths, { env, spawnImpl });
+      launchHelper(staged.paths, { env: launch ? launch.env : env, spawnImpl });
     }
     emit({ phase: 'applying' });
     setTimeout(() => { try { app.quit(); } catch (error) { logger.warn?.('[app-update] 退出失败：', error.message); } }, 300);

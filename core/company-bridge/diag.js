@@ -43,6 +43,8 @@ const LOGS = [
   { key: 'bridge', label: '通道日志', file: 'company-bridge.log' },
   { key: 'care', label: '会话收放日志', file: 'company-session-care.log' },
   { key: 'window', label: 'Hub 主日志（窗口事件）', file: 'window-events.log' },
+  // 谁、什么时候改了 CodeAgent 默认模型（2026-10-19）：启动、选模型、默认模型变化（写前、写后、来源）各一行
+  { key: 'model', label: 'CodeAgent 模型日志', file: 'codeagent-model.log' },
 ];
 const POOL_STATE = { ready: '可用', 'login-required': '需登录', expired: '登录过期', unreadable: '凭证读不到' };
 
@@ -138,6 +140,8 @@ function defaultSys() {
     clock: () => Date.now(),
     // 二期
     codeagentVersion: command => codeagentVersion(command),
+    // Hub 主进程启动时继承的原始环境（启动自检会把会话标记从 process.env 删掉，旁证要看自检前的，core/clean-launch-env.js）
+    hubEnv: (() => { try { return require('../clean-launch-env').inheritedEnv(); } catch { return process.env; } })(),
     renderRows: raw => require('../hub-phone/session-chat').renderRows(raw),
     readdir: dir => fs.promises.readdir(dir, { withFileTypes: true }),
     stat: file => fs.promises.stat(file),
@@ -411,8 +415,13 @@ function pool(raw, { avoid = {}, credit = {}, aliases: given = null, ...extra } 
     ...(a.duplicateOf ? { duplicate: true } : {}), ...(a.sameAsPersonal ? { sameAsPersonal: true } : {}),
     ...(key === 'personal' && Array.isArray(a.answeredModels) ? { answeredModels: a.answeredModels } : {}),
     ...(key === 'personal' && a.configModel != null ? { configModel: String(a.configModel) } : {}),
+    ...(key === 'personal' && a.settingsLastChange ? { settingsLastChange: settingsChangeView(a.settingsLastChange) } : {}),
+    // 凭证读不懂时的原因（2026-10-19：读文件出错 / 不是 JSON / 没有登录项，不含凭证内容）
+    ...(a.state === 'unreadable' && a.credentialsNote ? { credentialsNote: String(a.credentialsNote).slice(0, 120) } : {}),
     ...(key === 'personal' && a.lastBackup ? { lastBackup: { model: a.lastBackup.model == null ? null : String(a.lastBackup.model), at: String(a.lastBackup.name || '').replace(/^settings\.json\.hub-backup-/, '') } } : {}),
     ...(a.routeSwitched ? { routeSwitched: true } : {}), avoid: avoidView(avoid[key]), credit: creditView(credit[key]),
+    // 号池号默认模型未知 / 写的不在清单里（账号即模型，2026-10-19 审核）：这样的号不参与按模型派活
+    ...(key !== 'personal' && a.defaultNote ? { defaultNote: String(a.defaultNote) } : {}),
     // 默认模型和权限不符（个人账号，2026-10-19）：settings.json 里写的值和权限清单，号表据此提示、可远程修正（set-personal-model）
     ...(a.configMismatch ? { configMismatch: { written: String(a.configMismatch.written || ''), models: (a.configMismatch.models || []).map(String).slice(0, 12), suggest: String(a.configMismatch.suggest || ''),
       note: require('../codeagent-model-route').describeMismatch(a.configMismatch) } } : {}) });
@@ -430,6 +439,12 @@ function errorsSection(bridge, aliases, limit = DEFAULT_ERRORS) {
   const status = bridge.quotaStatus ? bridge.quotaStatus() : null;
   return { limit, total: (bridge.store.get('quotaErrors') || []).length, list,
     rules: status && status.rules ? status.rules.map(r => ({ id: r.id, kind: r.kind, builtin: r.builtin })) : null, ruleErrors: status?.ruleErrors || [], guard: status ? status.on : null };
+}
+
+function settingsChangeView(c) {
+  const str = v => (v == null ? '' : String(v).slice(0, 80));
+  return { at: str(c.at), ...(c.mtime ? { mtime: str(c.mtime) } : {}), before: str(c.before), after: str(c.after), source: str(c.source),
+    ...(c.session ? { session: str(c.session) } : {}), ...(Array.isArray(c.launches) && c.launches.length ? { launches: c.launches.slice(0, 6).map(str) } : {}) };
 }
 
 // ---- logs ----
@@ -461,6 +476,7 @@ function hub(bridge, deps, sys, ctx) {
       receivedAt: r.receivedAt || null, sentAt: r.sentAt || null, waitedSec: phase === 'queued' && r.receivedAt ? Math.round((now - r.receivedAt) / 1000) : null,
       runningSec: phase === 'running' && r.sentAt ? Math.round((now - r.sentAt) / 1000) : null,
       queueNote: r.queueNote || null, retryAt: r.retryAt || null, resumePending: !!r.resumePending, receiptIssue: r.receiptIssue || null,
+      ...(r.choiceStuck ? { choiceStuck: true } : {}),
       session: t.sessionId ? String(t.sessionId).slice(0, 8) : null, sessionAlive: !!(t.sessionId && deps.getSession?.(t.sessionId)),
       sessionBusy: !!(t.sessionId && bridge.sessionBusy(t.sessionId)), working: (() => { try { return !!bridge.roundWorking(t); } catch { return null; } })(),
       transcriptAt: transcriptAt(meta) };
@@ -510,8 +526,11 @@ async function codeagent(bridge, deps, sys, ctx, poolRaw, poolError) {
   if (poolError) out.loginError = errText(poolError);
   const p = poolRaw?.personal;
   out.personal = p ? { state: POOL_STATE[p.state] || String(p.state || '未知'), ready: p.state === 'ready', expiresAt: Number(p.expiresAt) || null, defaultModel: p.defaultModel || '',
+    ...(p.state === 'unreadable' && p.credentialsNote ? { credentialsNote: String(p.credentialsNote).slice(0, 120) } : {}),
     ...(p.configModel != null ? { configModel: String(p.configModel || '') } : {}), ...(p.configMismatch ? { configNote: require('../codeagent-model-route').describeMismatch(p.configMismatch) } : {}),
     ...(p.configSource ? { configSource: p.configSource } : {}), ...(p.settingsMtime ? { settingsMtime: p.settingsMtime } : {}),
+    // settings.json 最近一次被改写：时间、写前写后、来源（Hub 自己的写入按登记认，认不出记 external 并附前后启动的会话）
+    ...(p.settingsLastChange ? { settingsLastChange: settingsChangeView(p.settingsLastChange) } : {}),
     // 个人目录是否等于（或包含于）某个号池号的目录：只回是否和号的代称（2026-10-19）
     inPool: !!p.poolDirMatch, ...(p.poolDirMatch ? { inPoolAlias: p.poolDirMatch.account ? (ctx.aliases?.get(p.poolDirMatch.account) || '号池里的一个号') : '号池目录' } : {}) } : null;
   // Hub 进程继承的配置目录：采用还是忽略、原因、来自哪一层环境变量、是否落在号池（代称），都不带路径。

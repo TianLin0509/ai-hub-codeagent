@@ -500,8 +500,15 @@ function buildCodeAgentPtyLaunch(id, kind, opts, cwd, env, config) {
   // 其余情况（含「有 id 但没有落盘记录」）都是全新会话：不能用 --continue，它会接上这个目录里最近的别人的对话。
   const quote = value => /^[A-Za-z0-9_.:=\/\\-]+$/.test(String(value)) ? String(value) : quotePowerShellLiteral(value);
   const cmd = ' ' + commandHead(config.command) + ' ' + [...identity, ...args].map(quote).join(' ') + '\r\n';
+  // 账号代称（个人 / 号N）：默认模型看护按启动记录找「改写前后启动了哪些会话」（core/codeagent-default-model-guard.js）。
+  let account = '个人';
+  try {
+    const match = require('./codeagent-pool').poolDirMatch(hubDataDir, config.configDir);
+    if (match) account = match.id ? require('./codeagent-default-model-guard').accountOf({ codeagentPoolAccount: match.id }, hubDataDir).alias : '号池';
+  } catch { /* 只影响日志 */ }
   require('./codeagent-models').appendModelLog(hubDataDir, {
-    event: 'launch', session: String(id || '').slice(0, 8), kind,
+    event: 'launch', session: String(id || '').slice(0, 8), account: account.replace(/\s+/g, ''), kind,
+    ...(opts.purpose ? { purpose: opts.purpose } : {}),
     requested: inheritModel ? '(inherit)' : opts.model || '(default)', model: requestedModel || '(inherit)', resume: identity.length ? identity[0] : '',
     ...(codeAgentRouteModel(opts) ? { route: codeAgentRouteModel(opts) } : {}),
   });
@@ -1435,14 +1442,29 @@ class SessionManager extends EventEmitter {
     // 家里指定了模型：这个号得有它的权限；默认模型不是它时，只在号上没有进行中的会话时切（不影响正在跑的会话）。
     // 没指定时，之前为通道切过模型、且号上已没有进行中的会话，换回切之前的模型（syncSharedConfig）。
     const routeModel = codeAgentRouteModel(opts);
-    if (routeModel) {
+    // 账号即模型（2026-10-19，开关见 core/codeagent-model-route.js routeSwitchEnabled，默认关）：不切号的默认模型；
+    // 新开的通道会话只开在默认模型就是指定模型的号上，恢复的会话按号此刻的默认模型照常起（不「选回」旧模型）。
+    const routeSwitch = require('./codeagent-model-route').routeSwitchEnabled();
+    if (routeModel && !routeSwitch && !opts.codeagentPoolAccount) {
+      // 和号表同一口径：号自己写了、且在清单里的才算默认模型（pool.strictDefaultModel），不按清单猜。
+      const current = pool.strictDefaultModel(pool.readSettingsModel(account.dir), account.models).model;
+      if (current.toLowerCase() !== routeModel.toLowerCase()) throw new Error(`${who(account)} 的默认模型是 ${current || '未知'}，不是 ${routeModel}；不改号的默认模型，未启动会话`);
+    } else if (routeModel && routeSwitch) {
       if (!account.models.some(m => m.toLowerCase() === routeModel.toLowerCase())) throw new Error(`${who(account)} 没有 ${routeModel} 的权限，未启动会话`);
       const current = pool.effectiveModel(account.dir);
       if (current.toLowerCase() !== routeModel.toLowerCase() && account.activeSessions > 0) {
         throw new Error(`${who(account)} 正在用 ${current || '别的模型'} 跑会话，不能切到 ${routeModel}；等它们结束后再试`);
       }
     }
-    const sync = pool.syncSharedConfig(personalConfig.configDir, account.dir, undefined, { routeModel, idle: !routeModel && account.activeSessions === 0 });
+    const sync = pool.syncSharedConfig(personalConfig.configDir, account.dir, undefined, { routeModel: routeSwitch ? routeModel : '', routeSwitch,
+      idle: !(routeSwitch && routeModel) && account.activeSessions === 0,
+      onRouteRestore: ({ before, after, original, restored, reason }) => {
+        const alias = require('./codeagent-default-model-guard').accountOf({ codeagentPoolAccount: account.id }, dataDir).alias;
+        if (restored) require('./codeagent-default-model-guard').recordChange(dataDir, { account: alias, before, after,
+          source: 'route-marker-restore', extra: { note: '账号即模型：按 hub-route-model.json 记下的原值写回一次并删除记录' } }, { persist: false });
+        // 不满足写回条件：只删了记录，记一行原因（原值为空 / 号的 model 切过之后又被改过 / 原值不在权限清单里）
+        else require('./codeagent-models').appendModelLog(dataDir, { event: 'route-marker-drop', account: alias.replace(/\s+/g, ''), model: before || '(空)', original: original || '(空)', reason });
+      } });
     if (sync.errors.length) console.warn(`[codeagent-pool] ${account.id} 同步配置：${sync.errors.join('；')}`);
     if (typeof this.deployCodeAgentHooks === 'function') {
       try { this.deployCodeAgentHooks(account.dir); } catch (error) { console.warn(`[codeagent-pool] ${account.id} hook：${error.message}`); }
@@ -1545,6 +1567,8 @@ class SessionManager extends EventEmitter {
 
     const sessionEnv = { ...process.env };
     applyInteractiveTerminalEnv(sessionEnv, { truecolor: isPtyAgent && (isClaude || isDeepSeekClaude || isCodexRuntime || isCodeAgent) });
+    // 自动派活的 CodeAgent 会话：给 ask-gate hook 的标记（拒绝提问工具，core/auto-dispatch-rules.js）；其余会话去掉继承来的标记。
+    require('./auto-dispatch-rules').applySessionEnv(sessionEnv, isCodeAgent ? opts.purpose : null);
     let codexProfile = null;
     let codeagentConfig = isCodeAgent ? require('./codeagent-config').resolveCodeAgentConfig(process.env) : null;
     // 号池（core/codeagent-pool.js）：新建时挑一个号，恢复/分支时回到原来那个号；换的只是配置目录。
@@ -1552,8 +1576,9 @@ class SessionManager extends EventEmitter {
     if (isCodeAgent && (opts.codeagentAccount === 'pool' || opts.codeagentPoolAccount)) {
       codeagentPool = this._resolveCodeAgentPool(opts, codeagentConfig);
       codeagentConfig = { ...codeagentConfig, configDir: codeagentPool.account.dir };
-    } else if (isCodeAgent && codeAgentRouteModel(opts)) {
+    } else if (isCodeAgent && codeAgentRouteModel(opts) && freshLaunch) {
       // 个人账号不切默认模型（号主自己日常用的配置）：此刻的默认就是指定模型才开，否则明确报错，不静默换模型。
+      // 恢复的会话不核对：按个人账号此刻的默认模型照常起，不「选回」当初的模型（2026-10-19 账号即模型）。
       const routeModel = codeAgentRouteModel(opts);
       const personal = require('./codeagent-model-route').personalAccount({ dataDir: getHubDataDir(), personalDir: codeagentConfig.configDir });
       if (!personal) throw new Error('个人账号没有有效的登录，未启动会话');
@@ -2095,7 +2120,7 @@ class SessionManager extends EventEmitter {
       completionNotificationEnabled: opts.completionNotificationEnabled === true,
       ...(opts.purpose ? { purpose: String(opts.purpose) } : {}),
       ...(writingContextWarning ? { writingContextWarning } : {}),
-      ...(hubRulesSystem ? { hubRulesSystem: { version: hubRulesSystem.version, label: hubRulesSystem.label } } : {}),
+      ...(hubRulesSystem ? { hubRulesSystem: SessionManager.hubRulesRecord(hubRulesSystem) } : {}),
       ...(opts.researchSessionId ? { researchSessionId: String(opts.researchSessionId) } : {}),
       ...(opts.hiddenFromSidebar ? { hiddenFromSidebar: true } : {}),
       currentModel,
@@ -3408,18 +3433,31 @@ class SessionManager extends EventEmitter {
   //   命令前导空格抑制 shell 历史记录，避免污染。
   // 返回 true 已写命令，false 找不到 session 或 kind 不支持。
   // 返回要写进 Claude 系统提示的规则文件；不适用时返回 null（见 _createSession 的说明）。
+  // 自动派活会话（AI特战队通道、公司助理、论坛摘要）另带「不出选择题」一段（core/auto-dispatch-rules.js），规则页全关时也带。
+  // version 仍是通用规则那一版（随消息补送靠它判断「系统提示里已有同一版」），文件本身的版本另记 fileVersion。
   hubRulesSystemPrompt(opts = {}, purpose = opts.purpose) {
     const store = this.memoryService?.hubRules;
     if (!store) return null;
     if (require('./hub-rules').skipsHubRules(purpose)) return null;
     if (opts.appendSystemPromptFile && !store.isSystemPromptFile(opts.appendSystemPromptFile)) return null;
+    const extra = require('./auto-dispatch-rules').autoRuleFor(purpose);
+    let rules = null;
+    try { rules = store.injection(); }
+    catch (error) { console.warn('[hub-rules] 读取规则失败：', error && error.message); }
+    if (!rules && !extra) return null;
     try {
-      const rules = store.injection();
-      return rules ? { file: store.systemPromptFile(rules), version: rules.version, label: rules.label } : null;
+      const file = store.systemPromptFile(rules, { extra });
+      const label = [rules && rules.label, extra && extra.label].filter(Boolean).join(' + ');
+      const fileVersion = (/rules-([0-9a-f]{16})\.md$/.exec(file) || [])[1];
+      return { file, version: rules ? rules.version : undefined, label, ...(extra && fileVersion ? { fileVersion, autoRule: extra.version } : {}) };
     } catch (error) {
       console.warn('[hub-rules] 规则写入系统提示失败，改为随第一条消息送达：', error && error.message);
       return null;
     }
+  }
+  // 会话记录里的「启动时写进系统提示的规则」
+  static hubRulesRecord(r) {
+    return r ? { version: r.version, label: r.label, ...(r.fileVersion ? { fileVersion: r.fileVersion, autoRule: r.autoRule } : {}) } : undefined;
   }
 
   // CLI 自己退出后原地重拉：场景会话照样换上场景的系统提示（环境变量在 PTY 建立时已写进 shell，沿用）。
@@ -3469,7 +3507,7 @@ class SessionManager extends EventEmitter {
         ...(s.info && s.info.codeagentConfigDir ? { configDir: s.info.codeagentConfigDir } : {}) };
       // 原地重拉是一个全新的 CodeAgent 进程，按当前规则重新写进系统提示（同 Claude）。
       const relaunchRules = this.hubRulesSystemPrompt({}, s.info && s.info.purpose);
-      if (s.info) s.info.hubRulesSystem = relaunchRules ? { version: relaunchRules.version, label: relaunchRules.label } : undefined;
+      if (s.info) s.info.hubRulesSystem = SessionManager.hubRulesRecord(relaunchRules);
       const launch = buildCodeAgentPtyLaunch(sessionId, 'codeagent', {
         model: modelId, effort: s.info && s.info.effort, mcpConfigFile: s.claudeMcpConfigFile,
         mcpProfile: s.info && s.info.mcpProfile, appendSystemPromptFile: relaunchRules ? relaunchRules.file : undefined,
@@ -3548,7 +3586,7 @@ class SessionManager extends EventEmitter {
       const relaunchPermissionFlag = claudePermissionModeArg({ autonomous });
       // 原地重拉是一个全新的 Claude 进程，按当前规则重新写进系统提示。
       const relaunchRules = this.hubRulesSystemPrompt({}, s.info && s.info.purpose);
-      if (s.info) s.info.hubRulesSystem = relaunchRules ? { version: relaunchRules.version, label: relaunchRules.label } : undefined;
+      if (s.info) s.info.hubRulesSystem = SessionManager.hubRulesRecord(relaunchRules);
       const rulesFlag = relaunchRules ? ` --append-system-prompt-file "${relaunchRules.file}"` : '';
       const addDirFlag = claudeNativeAddDirs([]).map(dir => ` --add-dir "${dir}"`).join('');
       cmd = ` claude --model ${modelId || DEFAULT_MODEL_BY_KIND.claude}${effortFlag}${relaunchPermissionFlag}${fastFlag}${mcpFlag}${addDirFlag}${rulesFlag}${this._sceneRelaunchFlags(s, 'claude')}${isolation}\r\n`;
@@ -3556,7 +3594,7 @@ class SessionManager extends EventEmitter {
       // PTY 的环境变量（接入端点、Key、模型名、配置目录）在会话创建时已经写好，原地重拉只需同一套参数。
       const route = s.info && (s.info.deepseekActiveRoute || s.info.deepseekRoute);
       const relaunchRules = this.hubRulesSystemPrompt({}, s.info && s.info.purpose);
-      if (s.info) s.info.hubRulesSystem = relaunchRules ? { version: relaunchRules.version, label: relaunchRules.label } : undefined;
+      if (s.info) s.info.hubRulesSystem = SessionManager.hubRulesRecord(relaunchRules);
       const rulesFlag = relaunchRules ? ` --append-system-prompt-file "${relaunchRules.file}"` : '';
       const wire = deepseekClaude.wireModel(modelId, route);
       const effort = CLAUDE_EFFORT_LEVELS.has(s.info && s.info.effort) ? s.info.effort : DEEPSEEK_CLAUDE_DEFAULT_EFFORT;

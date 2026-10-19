@@ -173,9 +173,13 @@
     if (pool.ok === false) return `<div class="hl-banner bad"><span>号池状态读取失败：${esc(pool.error)}</span></div>`;
     const personal = pool.personal || {};
     const method = m => m === 'idaas' ? '账号密码登录' : m === 'devuc' ? '浏览器登录' : '';
+    // 个人账号的登录状态按 state 显示（2026-10-19：账号密码登录到期后凭证还在，以前照样显示「可用」）；老版本主进程没有 state 时按有没有凭证
+    const personalState = personal.state || (personal.present ? 'ready' : 'login-required');
+    const personalReady = personalState === 'ready';
+    const personalStateLabel = { ready: '可用', expired: '登录过期', 'login-required': '未登录', unreadable: '凭证读不懂' }[personalState] || personalState;
     const personalRow = `<tr data-hl-account="personal"><td><b>${esc(personal.accountLabel || (personal.present ? '已登录' : '未登录'))}</b><div class="hl-muted">个人账号</div></td><td></td>
-      <td><span class="hl-pill ${personal.present ? 'ok' : 'bad'}">${personal.present ? '可用' : '未登录'}</span><div class="hl-muted">${esc(method(personal.method))}</div></td>
-      <td>${modelCell('personal', personal.models, personal.modelsProbedAt)}${personal.configNote ? `<div class="hl-muted"><span class="hl-pill bad">默认模型和权限不符</span>${esc(String(personal.configNote).replace(/^默认模型和权限不符：/, ''))}</div>` : ''}</td><td class="hl-num">${Number(personal.activeSessions) || 0}</td><td data-hl-quota="personal">${quotaCell('personal', personal, !!personal.present)}</td><td></td></tr>`;
+      <td><span class="hl-pill ${personalReady ? 'ok' : 'bad'}">${esc(personalStateLabel)}</span><div class="hl-muted">${esc(personal.credentialsNote || method(personal.method))}</div></td>
+      <td>${modelCell('personal', personal.models, personal.modelsProbedAt)}${personal.configNote ? `<div class="hl-muted"><span class="hl-pill bad">默认模型和权限不符</span>${esc(String(personal.configNote).replace(/^默认模型和权限不符：/, ''))}</div>` : ''}</td><td class="hl-num">${Number(personal.activeSessions) || 0}</td><td data-hl-quota="personal">${quotaCell('personal', personal, !!personal.present)}</td><td>${personalReady ? '' : '<button class="hl-link" data-hl="personal-login">重新登录</button>'}</td></tr>`;
     const rows = (pool.accounts || []).map(a => {
       let [label, tone] = POOL_STATE[a.state] || [a.state, ''];
       if (a.state === 'ready' && a.sameAsPersonal) [label, tone] = ['和个人账号同号，不参与挑号', 'bad'];
@@ -291,6 +295,7 @@
         pool = await call('codeagent-pool:resume', { id: arg }); toast('已恢复派活'); void loadPool();
       }
       else if (verb === 'pool-import') { pool = await call('codeagent-pool:import', { dir: arg }); toast('已导入号池'); void loadPool(); }
+      else if (verb === 'personal-login') { pool = await call('codeagent-pool:personal-login'); toast('已打开个人账号的登录窗口：在窗口里输入你的 W3 用户名和密码'); void loadPool(); }
       else if (verb === 'pool-login') { pool = await call('codeagent-pool:login', { id: arg }); toast('已打开登录窗口：请号主在窗口里输入 W3 用户名和密码'); void loadPool(); }
       else if (verb === 'pool-remove') {
         if (!window.confirm('把这个号移出号池？会删掉本机这份登录凭证（不会退出登录，号主那边不受影响）。')) return;

@@ -279,11 +279,19 @@ function createHubRulesStore(options = {}) {
 
   // Claude 启动时用 --append-system-prompt-file 读的文件。按内容命名、写后不改，
   // 多个会话同时启动也互不干扰；目录只留最近 20 份。
-  function systemPromptFile(rules) {
+  // extra：某类会话额外带的一段（自动派活会话的规则，core/auto-dispatch-rules.js）。带了就按整份内容的校验值命名；
+  // rules 可以为空（规则页全关时，这类会话仍带那一段）。
+  function systemPromptFile(rules, { extra = null } = {}) {
     const dir = path.join(root, 'system');
-    const file = path.join(dir, `rules-${rules.version.slice(0, 16)}.md`);
+    const parts = [];
+    if (rules) parts.push(`${PREAMBLE(rules.label)}\n\n${rules.content}`);
+    if (extra && extra.text) parts.push(String(extra.text).trim());
+    if (!parts.length) throw new Error('没有要写进系统提示的内容');
+    const body = parts.join('\n\n') + '\n';
+    const key = extra && extra.text ? sha256(body) : rules.version;
+    const file = path.join(dir, `rules-${key.slice(0, 16)}.md`);
     if (!fs.existsSync(file)) {
-      writeAtomic(file, `${PREAMBLE(rules.label)}\n\n${rules.content}\n`);
+      writeAtomic(file, body);
       const files = fs.readdirSync(dir).filter(f => /^rules-[0-9a-f]{16}\.md$/.test(f))
         .map(f => ({ f, t: fs.statSync(path.join(dir, f)).mtimeMs })).sort((a, b) => b.t - a.t);
       files.slice(20).forEach(({ f }) => { try { fs.unlinkSync(path.join(dir, f)); } catch (_) {} });

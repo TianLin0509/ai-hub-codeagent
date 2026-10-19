@@ -139,6 +139,8 @@ function setPersonalModel({ dataDir, personalDir, model = '', restore = false, f
   // 2. 只改 model 这一个键
   const next = { ...current };
   if (target === undefined) delete next.model; else next.model = target;
+  const source = restore ? 'remote:set-personal-model-undo' : 'remote:set-personal-model';
+  try { require('./codeagent-default-model-guard').noteHubWrite(personalDir, target ?? '', source, { logged: true }); } catch { /* 只影响留痕 */ }
   try { atomicWrite(file, JSON.stringify(next, null, 2) + '\n', fsModule); }
   catch (error) { throw fail('write-failed', '写入个人账号的 settings.json 失败，原文件没变', error.message); }
   // 3. 回读核对：model 是目标值，其余键和原来一致
@@ -157,7 +159,10 @@ function setPersonalModel({ dataDir, personalDir, model = '', restore = false, f
     } catch (error) { why += `；从备份还原也失败了（${error.message}），备份在 ${backup}`; }
     return { ok: false, changed: false, before: before ?? '', after: before ?? '', backup, verified: false, verifiedBy, rolledBack, code: 'verify-failed',
       error: `写入后回读核对不一致${rolledBack ? '，已从备份还原' : '，从备份还原也失败了，请在公司电脑上检查'}`, detail: why, allowed, restoredFrom };
-  }  // 4. 备份只留最近 10 份（修改的和撤销的分开算，撤销用的那份不会被撤销备份挤掉）
+  }
+  // 留痕：codeagent-model.log 记一行写前、写后、来源，直查个人号行据此报「最近一次被改写的来源」
+  if (dataDir) { try { require('./codeagent-default-model-guard').recordChange(dataDir, { account: '个人', before: before ?? '', after: target ?? '', source, at: Number(now) || Date.now() }); } catch { /* 只影响留痕 */ } }
+  // 4. 备份只留最近 10 份（修改的和撤销的分开算，撤销用的那份不会被撤销备份挤掉）
   const all = listBackups(personalDir, fsModule);
   for (const group of [all.filter(n => !n.endsWith('-undo')), all.filter(n => n.endsWith('-undo'))]) {
     for (const old of group.slice(0, Math.max(0, group.length - KEEP_BACKUPS))) { try { fsModule.rmSync(path.join(personalDir, old), { force: true }); } catch { /* 删不掉下次再删 */ } }

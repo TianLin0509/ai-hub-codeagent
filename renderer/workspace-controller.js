@@ -89,6 +89,13 @@
   const CODEAGENT_POOL_PICK_KEY = 'hub.codeagent.poolPick';
   let codeagentAccount = (() => { try { const v = localStorage.getItem(CODEAGENT_ACCOUNT_KEY); return v === 'pool' || v === 'pool-manual' ? v : 'personal'; } catch { return 'personal'; } })();
   let codeagentPoolPick = (() => { try { return localStorage.getItem(CODEAGENT_POOL_PICK_KEY) || ''; } catch { return ''; } })();
+  // 所选账号不选具体模型时启动会用的模型（主进程 codeagent:models 的 defaultModel）：「沿用」那一项就写成它（2026-10-19 用户：
+  // 选了号，模型下拉只列这个号能用的模型、默认选中这个号的默认模型）。为空表示说不定（比如号池自动挑号、各号默认不同）。
+  let codeagentDefaultModel = '';
+  const codeagentModelLabel = id => { try { return require('../core/codeagent-models').modelLabel(id); } catch { return id; } };
+  // 个人账号的登录状态（号池列表里的 personal.state）：不是 ready 时在账号下拉和说明里写出来。
+  const PERSONAL_STATE_TEXT = { expired: '登录已过期', 'login-required': '还没登录', unreadable: '登录凭证读不懂' };
+  const personalStateText = () => PERSONAL_STATE_TEXT[(codeagentPool.personal || {}).state] || '';
   const usablePoolAccounts = () => (codeagentPool.accounts || []).filter(a => a.state === 'ready' && !a.sameAsPersonal && !a.duplicateOf);
   const codeagentUsesPool = () => (codeagentAccount === 'pool' || codeagentAccount === 'pool-manual') && codeagentPool.usable > 0;
   const codeagentManualPick = () => {
@@ -1001,7 +1008,8 @@
     if (!show || !select) return;
     const personal = codeagentPool.personal || {};
     const modelsText = list => (list && list.length ? list.join('、') : '模型未获取');
-    const html = `<option value="personal">${escapeHtml('个人账号' + (personal.accountLabel ? ' · ' + personal.accountLabel : ''))}</option>`
+    const personalIssue = personalStateText();
+    const html = `<option value="personal">${escapeHtml('个人账号' + (personal.accountLabel ? ' · ' + personal.accountLabel : '') + (personalIssue ? `（${personalIssue}）` : ''))}</option>`
       + `<option value="pool">${escapeHtml(`号池 · 自动路由（${codeagentPool.usable} 个号，优先没有会话的号）`)}</option>`
       + `<option value="pool-manual">${escapeHtml('号池 · 手动选择')}</option>`;
     if (select.dataset.built !== html) { select.innerHTML = html; select.dataset.built = html; }
@@ -1014,7 +1022,7 @@
       pickSelect.disabled = submitting;
     }
     if (note) note.textContent = !codeagentUsesPool()
-      ? '个人账号：用你自己登录的 CodeAgent，和以前一样。'
+      ? (personalIssue ? `个人账号${personalIssue}：新会话可能停在 CodeAgent 的登录提示上。可在「账号与号池」里点「重新登录」，或在会话「后台」按提示登录；也可以先改用号池里的号。` : '个人账号：用你自己登录的 CodeAgent，和以前一样。')
       : manual ? '号池 · 手动选择：用你在右边选的号，整段会话固定用它；模型菜单是这个号能用的模型。'
       : '号池 · 自动路由：创建时挑一个没有进行中会话的号，整段会话固定用它；模型菜单是号池里各号能用的模型。';
   }
@@ -1080,15 +1088,23 @@
     if (!options.some(option => option.id === selectedModel)) {
       selectedModel = resolveDefaultModel(selectedKind, defaultModelConfig(), options.map(option => option.id));
     }
+    // CodeAgent：「沿用」一项（值为空，不切换模型）知道所选账号的默认模型时就写成它，清单里不再重复列它。
+    const codeagentDefault = selectedKind === 'codeagent' && codeagentDefaultModel
+      && options.some(option => option.id.toLowerCase() === codeagentDefaultModel.toLowerCase()) ? codeagentDefaultModel : '';
     const nativeCodeagentOption = selectedKind === 'codeagent'
-      ? '<option value="">沿用 CodeAgent 当前模型</option>' : '';
-    const wanted = nativeCodeagentOption + options.map(option => `${option.id}\u0000${option.label}`).join('|');
+      ? (codeagentDefault
+        ? `<option value="" title="${escapeHtml(codeagentDefault + ' · 这个号的默认模型，启动后不切换')}">${escapeHtml(codeagentModelLabel(codeagentDefault) + '（默认）')}</option>`
+        : '<option value="">沿用 CodeAgent 当前模型</option>') : '';
+    const listed = codeagentDefault ? options.filter(option => option.id.toLowerCase() !== codeagentDefault.toLowerCase()) : options;
+    const wanted = nativeCodeagentOption + listed.map(option => `${option.id}\u0000${option.label}`).join('|');
     if (modelSelect.dataset.builtFor !== wanted) {
-      modelSelect.innerHTML = nativeCodeagentOption + options
+      modelSelect.innerHTML = nativeCodeagentOption + listed
         .map(option => `<option value="${escapeHtml(option.id)}">${escapeHtml(option.label)}</option>`)
         .join('');
       modelSelect.dataset.builtFor = wanted;
     }
+    // 之前点选过的模型正好是这个号的默认模型：按「沿用」处理（不切换，免得启动后再走一遍 /model 菜单）。
+    if (codeagentDefault && modelTouchedByUser && String(selectedModel || '').toLowerCase() === codeagentDefault.toLowerCase()) modelTouchedByUser = false;
     modelSelect.value = selectedKind === 'codeagent' && !modelTouchedByUser ? '' : selectedModel;
 
     const effortLabel = document.getElementById('new-session-effort-label');
@@ -1144,6 +1160,7 @@
       const lines = [];
       if (selectedKind === 'codeagent') lines.push(modelTouchedByUser
         ? '本次将请求切换到所选模型，启动后以实际回报为准。'
+        : codeagentDefaultModel ? `用这个号的默认模型 ${codeagentModelLabel(codeagentDefaultModel)}，启动后不切换；选其他模型会在启动后切换。`
         : '沿用 CodeAgent 当前模型；选择具体模型后才会请求切换。');
       // fast 有真实代价，别只写"更快"就完事：2026-06-11 实测 fastMode 交互式会话
       // 不落盘 transcript jsonl，卡片视图因此收不到回复。用户有权在勾之前知道。
@@ -1300,7 +1317,7 @@
   function tuningTag() {
     const options = modelOptionsFor(selectedKind);
     if (options.length === 0) return '';
-    if (selectedKind === 'codeagent' && !modelTouchedByUser) return `沿用 CodeAgent 当前模型 · ${selectedEffort}`;
+    if (selectedKind === 'codeagent' && !modelTouchedByUser) return `${codeagentDefaultModel ? codeagentModelLabel(codeagentDefaultModel) : '沿用 CodeAgent 当前模型'} · ${selectedEffort}`;
     const model = options.find(option => option.id === selectedModel);
     const modelLabel = model ? model.label : selectedModel;
     if (selectedKind === 'codex') {
@@ -1535,6 +1552,7 @@
       if (status && status.ok !== false) codeagentPool = status;
     }).catch(() => {}).then(() => ipcRenderer.invoke('codeagent:models', { account: codeagentUsesPool() ? 'pool' : 'personal', poolAccount: codeagentManualPick() || undefined })).then(result => {
       if (result && Array.isArray(result.options) && result.options.length) setRuntimeModelOptions('codeagent', result.options);
+      codeagentDefaultModel = result && typeof result.defaultModel === 'string' ? result.defaultModel : '';
       return result;
     }).catch(error => { console.warn('[codeagent-models]', error.message); return null; });
     return Promise.resolve(null);
@@ -1649,6 +1667,11 @@
       // Never discard that newer account notification.
       void loadHubDefaultModels({refreshAccount:true}).then(()=>loadCodexTuningCatalog()).then(paint).catch(error=>setError(error.message));
     });
+    // 号池或个人账号登录完成、模型权限获取完：启动中心开着且选的是 CodeAgent 时重新取账号状态和模型（2026-10-19 审核）
+    ipcRenderer.on('codeagent-pool:changed', (_event, change) => {
+      if (!menuEl || menuEl.style.display === 'none' || selectedKind !== 'codeagent' || (change && change.probing)) return;
+      void loadModelCatalog('codeagent').then(paint).catch(() => {});
+    });
 
     menuEl.querySelectorAll('.new-session-option').forEach(button => {
       button.addEventListener('click', () => {
@@ -1684,6 +1707,8 @@
     document.getElementById('new-session-codeagent-pool')?.addEventListener('change', event => {
       codeagentPoolPick = event.target.value;
       try { localStorage.setItem(CODEAGENT_POOL_PICK_KEY, codeagentPoolPick); } catch { /* 隐私模式 */ }
+      // 换了号：模型回到这个号的默认（上一个号点选的模型这个号未必有权限）
+      modelTouchedByUser = false; codeagentDefaultModel = '';
       setError('');
       paint();
       void loadModelCatalog('codeagent').then(paint);
@@ -1691,6 +1716,7 @@
     document.getElementById('new-session-codeagent-account')?.addEventListener('change', event => {
       codeagentAccount = ['pool', 'pool-manual'].includes(event.target.value) ? event.target.value : 'personal';
       try { localStorage.setItem(CODEAGENT_ACCOUNT_KEY, codeagentAccount); } catch { /* 隐私模式 */ }
+      modelTouchedByUser = false; codeagentDefaultModel = '';
       setError('');
       paint();
       // 每个号能用的模型不同：换账号后按新账号重新取模型菜单。

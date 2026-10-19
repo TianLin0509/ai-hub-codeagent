@@ -157,6 +157,17 @@ function onNetworkPathResolved(listener) {
   return () => networkListeners.delete(listener);
 }
 
+// 调用方可传 opts.statBudget = { remaining: N }：这一次解析最多做 N 次同步本地磁盘查询，用完后其余候选
+// 直接跳过（当作查不到，且不写缓存）。终端链接识别每次悬停都会调用，在杀软较重的电脑上每次查询可能很慢
+// （2026-10-19）；卡片等其他调用方不传，行为不变。
+function _spendStat(opts) {
+  const budget = opts && opts.statBudget;
+  if (!budget) return true;
+  if (!(budget.remaining > 0)) { budget.skipped = (budget.skipped || 0) + 1; return false; }
+  budget.remaining -= 1;
+  return true;
+}
+
 function _statPathQuiet(filePath, opts = {}) {
   if (_isNetworkPath(filePath)) {
     const cached = networkStats.get(String(filePath).toLowerCase());
@@ -165,11 +176,13 @@ function _statPathQuiet(filePath, opts = {}) {
     if (typeof opts.onNetworkPending === 'function') opts.onNetworkPending(filePath);
     return null;
   }
+  if (!_spendStat(opts)) return null;
   try { return fs.statSync(filePath); } catch { return null; }
 }
 
 function _existsQuiet(filePath, opts = {}) {
   if (_isNetworkPath(filePath)) return !!_statPathQuiet(filePath, opts);
+  if (!_spendStat(opts)) return false;
   return fs.existsSync(filePath);
 }
 
@@ -243,6 +256,7 @@ function _resolveRelPathIfExists(cwd, relPath, opts = {}) {
     REL_PATH_CACHE.set(key, hit);
     return hit.absPath;
   }
+  if (!_spendStat(opts)) return null;
   let absPath = null;
   try {
     const candidate = path.resolve(cwd, relPath);

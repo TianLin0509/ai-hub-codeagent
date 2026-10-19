@@ -16,9 +16,13 @@ const input = process.argv.slice(2);
 // CODEAGENT_STANDIN_IGNORE_MODEL=1 reproduces the real CLI's interactive-mode bug (company probe, 2026-10-13):
 // `--model` only works with -p; an interactive session always starts on the configured default model.
 const ignoreModel = process.env.CODEAGENT_STANDIN_IGNORE_MODEL === '1' && !input.some(a => a === '-p' || a === '--print');
+// CODEAGENT_STANDIN_DROP_SYSTEM_PROMPT=1 simulates a CLI that ignores --append-system-prompt-file
+// (used to exercise the stuck-on-a-choice-menu fallback, 2026-10-19).
+const dropSystemPrompt = process.env.CODEAGENT_STANDIN_DROP_SYSTEM_PROMPT === '1';
 for (let i = 0; i < input.length; i += 1) {
   if (DROP_FLAGS.has(input[i])) continue;
   if (DROP_WITH_VALUE.has(input[i])) { i += 1; continue; }
+  if (dropSystemPrompt && input[i] === '--append-system-prompt-file') { i += 1; continue; }
   if (ignoreModel && input[i] === '--model') { i += 1; continue; }
   // The company models do not exist for Claude; run the cheapest Claude model instead.
   if (input[i] === '--model' && /^(?:GLM|MiniMax)/i.test(input[i + 1] || '')) {
@@ -26,6 +30,9 @@ for (let i = 0; i < input.length; i += 1) {
   }
   args.push(input[i]);
 }
+// CODEAGENT_STANDIN_NO_CHROME=1: skip Claude Code's "use Chrome extension?" startup dialog on machines with the extension
+// (the company CLI has no such dialog).
+if (process.env.CODEAGENT_STANDIN_NO_CHROME === '1' && !args.includes('--no-chrome')) args.push('--no-chrome');
 const env = { ...process.env };
 if (env.CODEAGENT3_CONFIG_DIR) env.CLAUDE_CONFIG_DIR = env.CODEAGENT3_CONFIG_DIR;
 // 按模型派活的端到端（2026-10-18）：真 CLI 交互模式按配置目录 settings.json 的 model 定模型。
@@ -59,6 +66,23 @@ try {
     env.ANTHROPIC_BASE_URL = `${perm.base}/m/${encodeURIComponent(written)}`;
   }
 } catch { /* 没有这个文件：正常调用 */ }
+// 登录失效 / 刷屏的号（2026-10-19 启动中心按账号建会话的排查）：配置目录里有 standin-mode.txt 时不启动真 CLI：
+//   login：像登录失效的 CodeAgent 一样停在登录提示上，等输入；flood：持续大量输出（模拟报错循环刷屏）。
+try {
+  const mode = require('fs').readFileSync(require('path').join(env.CODEAGENT3_CONFIG_DIR || '', 'standin-mode.txt'), 'utf8').trim();
+  if (mode === 'login') {
+    process.stdout.write('\x1b[1mCodeAgent\x1b[0m v1.2615.02.01\r\n\r\n登录已失效，请重新登录。\r\n  1. 账号密码登录\r\n  2. 浏览器登录\r\n\r\n请选择登录方式 (1/2): ');
+    process.stdin.resume();
+    process.stdin.on('data', () => process.stdout.write('\r\n请选择登录方式 (1/2): '));
+    return;
+  }
+  if (mode === 'flood') {
+    let n = 0;
+    const tick = () => { let s = ''; for (let i = 0; i < 200; i++) s += `[${++n}] 刷新登录凭证失败，重试中…… ${'x'.repeat(80)}\r\n`; process.stdout.write(s, () => setImmediate(tick)); };
+    tick();
+    return;
+  }
+} catch { /* 没有这个文件：正常启动 */ }
 const command = env.CODEAGENT_STANDIN_CLAUDE || 'claude';
 // Let the child own Ctrl+C, like the real CLI does.
 process.on('SIGINT', () => {});

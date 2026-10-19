@@ -88,6 +88,27 @@ try:
 except Exception:
     pass
 
+# ask-gate：只登记给提问工具的同步 PreToolUse（core/auto-dispatch-rules.js）。Hub 自动派活的会话带
+# AI_HUB_NO_CHOICE=1，这里以退出码 2 拒绝这次调用，原因（AI_HUB_NO_CHOICE_REASON）经 stderr 交给模型；
+# 其余会话、以及这里出任何错，都放行（退出码 0）。
+if event == 'ask-gate':
+    deny = False
+    try:
+        if os.environ.get('AI_HUB_NO_CHOICE') == '1':
+            tools = [t.strip() for t in os.environ.get('AI_HUB_NO_CHOICE_TOOLS', '').split(',') if t.strip()] or ['AskUserQuestion']
+            deny = str(tool_name or '') in tools
+    except Exception:
+        deny = False
+    if not deny:
+        sys.exit(0)
+    try:
+        reason = os.environ.get('AI_HUB_NO_CHOICE_REASON') or 'This session is dispatched automatically and nobody can answer questions: continue with the most reasonable assumptions and state them in the answer.'
+        sys.stderr.buffer.write(reason.encode('utf-8'))
+        sys.stderr.flush()
+    except Exception:
+        pass
+    sys.exit(2)
+
 try:
     if event == 'tool-use':
         raise SystemExit(0)

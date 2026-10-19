@@ -285,6 +285,8 @@ async function launchIsolatedHub({
   windowMode = 'background',
   entryPath = HUB_ROOT,
   extraArgs = [],
+  // 启动时的工作目录（默认程序目录）；测试「从异常工作目录拉起」时改（tests/e2e-relaunch-clean-env-cdp.js）。
+  cwd = HUB_ROOT,
 } = {}) {
   if (!dataDir) throw new Error('dataDir required');
   if (!port) throw new Error('port required');
@@ -309,7 +311,7 @@ async function launchIsolatedHub({
   // 关键：spawn 立即拿 PID，detached:false 让 child 跟随 parent 退出
   const child = spawn(executablePath, args, {
     env,
-    cwd: HUB_ROOT,
+    cwd,
     stdio: ['ignore', 'pipe', 'pipe'],
     windowsHide: true,
   });

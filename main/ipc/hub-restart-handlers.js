@@ -24,6 +24,8 @@ function restartGroupTargets(group, meeting) {
 function registerHubRestartIpc(ipcMain, deps) {
   const { app, sessionManager: sm, meetingManager: mm, sessionStore, stateStore, getHubDataDir,
     resumeSession, groupChatDispatcher: dispatcher, sendToRenderer, shutdown, flushState, transcriptTap } = deps;
+  // 再启动走干净环境（core/clean-launch-env.js）：main.js 传入 relaunchHub；单测没传时退回 app.relaunch。
+  const relaunchHub = deps.relaunchHub || (options => app.relaunch(options));
   const bootToken = restartToken();
   const native = id => sm.getNativeSession?.(id) || sm.getNativeClaude?.(id);
   let requested = false;
@@ -194,7 +196,7 @@ function registerHubRestartIpc(ipcMain, deps) {
       await flushState(true);
       service.ready();
       const args=process.argv.slice(1).filter(a=>!a.startsWith(ARG));
-      app.relaunch({args:[...args,ARG+plan.token]});
+      relaunchHub({args:[...args,ARG+plan.token]});
     }}), publish:plan => sendToRenderer('hub-restart:progress',plan),
   });
   ipcMain.handle('hub-restart:request',async (_e,view={}) => {

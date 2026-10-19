@@ -4132,8 +4132,33 @@ document.addEventListener('click', (e) => {
   }
   if (btn && !btn.hidden && activeSessionId && !currentAppToolbarView()) {
     applyViewMode(currentView === 'pty' ? 'card' : 'pty');
+    if (currentView === 'pty') noteBackstageOpen(activeSessionId);
+  } else if (btn) {
+    noteBackstageOpen(activeSessionId, { ignored: btn.hidden ? 'button-hidden' : !activeSessionId ? 'no-session' : `page:${currentAppToolbarView()}` });
   }
 });
+// 点「后台」的回执（2026-10-19 用户公司真机 v2.1.15：后台打不开，隔离实例复现不出）：写进窗口事件日志
+// （<数据目录>/logs/window-events.log，远程直查能读到），1.5 秒后记终端层是不是真的在屏幕上、有没有内容。
+// 只在用户点「后台」时记，不含终端里的文字。
+function noteBackstageOpen(sessionId, { ignored = '' } = {}) {
+  const send = detail => { try { ipcRenderer.send('hub:page-window-event', { event: 'backstage', view: currentView, sessions: sessions.size, ...detail }); } catch {} };
+  const s = sessionId ? sessions.get(sessionId) : null;
+  const base = { session: String(sessionId || '').slice(0, 8), kind: s ? s.kind : null, pool: s && s.codeagentPoolAccount ? 'pool' : s ? 'personal' : null, dpr: window.devicePixelRatio };
+  if (ignored) { send({ ...base, ignored }); return; }
+  setTimeout(() => {
+    try {
+      const t = terminalCache.get(sessionId);
+      const el = t && t.container;
+      const r = el ? el.getBoundingClientRect() : null;
+      const hit = r && r.width ? document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2) : null;
+      let lines = 0;
+      try { const b = t.terminal.buffer.active; for (let i = 0; i < b.length; i += 1) if (b.getLine(i)?.translateToString(true).trim()) lines += 1; } catch {}
+      send({ ...base, active: activeSessionId === sessionId, nowView: currentView, cached: !!t, display: el ? getComputedStyle(el).display : null,
+        size: r ? `${Math.round(r.width)}x${Math.round(r.height)}` : null, hitTerminal: !!(hit && el && el.contains(hit)), hitWhat: hit && !(el && el.contains(hit)) ? String(hit.id || hit.className || hit.tagName).slice(0, 60) : null,
+        grid: t && t.terminal ? `${t.terminal.cols}x${t.terminal.rows}` : null, lines, renderer: t ? (t._rendererMode || null) : null, hydrated: t ? !!t._hydrated : null });
+    } catch (error) { send({ ...base, error: String(error && error.message || error).slice(0, 120) }); }
+  }, 1500);
+}
 
 // T10 placeholder: "切到 PTY 视图" link
 document.addEventListener('click', (e) => {
@@ -5867,6 +5892,9 @@ const launchCenter = createLaunchCenterController({
     ? openResumeModal({ provider: 'codeagent' })
     : ipcRenderer.invoke('create-session', kind),
 });
+// 启动中心里的下拉：选项列表画在控件正下方，不用系统弹层（公司电脑窗口缩放比例错位时系统弹层会跑到窗口中间，见该模块注释）。
+try { require('./launch-select-popover.js').installSelectPopover({ document, window, root: document.getElementById('new-session-menu') }); }
+catch (error) { console.warn('[launch-center] 页面内下拉未启用：', error && error.message); }
 window.LaunchCenter = launchCenter;
 
 // --- Unified launch center ---
@@ -6227,6 +6255,10 @@ const registerLocalPathLinks = createTerminalLinkRegistrar({
   getCwd: getSessionCwd,
   openPathInHub: (target, opts) => openPathInHub(target, { ...opts, throwOnError: true }),
   onError: message => showPreviewNotice(message, 'error'),
+  // 终端链接识别超时记进 window-events.log：只记会话、读了几行、耗时，不记终端内容。
+  onScanBudgetExceeded: detail => {
+    try { ipcRenderer.send('hub:page-window-event', { event: 'terminal-link-budget', ...detail }); } catch {}
+  },
   onContextMenu: (rawPath, x, y) => {
     // pathLinkContextMenu is initialized later in this file; callback body
     // runs only when user right-clicks, by then it's been assigned.

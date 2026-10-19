@@ -1,6 +1,6 @@
 # 公司内网：用内部 Code Agent 跑 AI Hub
 
-适用：公司内网不能使用 Claude Code、Codex 等外部 CLI，只有公司自研的编码 CLI（下文称 **Code Agent**，命令 `codeagent`，后端可选 GLM、MiniMax 等模型）。固定基线：**v2.1.15**（上游 1.6.547）。
+适用：公司内网不能使用 Claude Code、Codex 等外部 CLI，只有公司自研的编码 CLI（下文称 **Code Agent**，命令 `codeagent`，后端可选 GLM、MiniMax 等模型）。固定基线：**v2.1.16**（上游 1.6.550）。
 
 ## 结论
 
@@ -33,9 +33,17 @@ Hub 已经内置「CodeAgent」会话种类，装好 Hub、电脑上能运行 `c
 - Hub 不在这份文件里写状态栏，也不改全局权限模式；
 - 两个工具的本地端口都从 3456 起，占用时会自动换端口。
 
+## 自动派活的会话不出选择题
+
+AI特战队通道、助理、论坛摘要这三类会话由 Hub 自动派活，终端前没人值守。Hub 分三层处理 CodeAgent 弹出的选择题：
+
+- 系统提示：这三类会话启动时带一段「自动派活会话的工作方式」，要求按最合理的假设做完，并在回答末尾列出「假设与备选」；
+- 拒绝提问工具：`settings.json` 里多一条只匹配 `AskUserQuestion` 的 PreToolUse 条目（命令以 `ask-gate` 结尾）。只有这三类会话的调用会被拒绝，并把「请按最合理的假设继续」交给模型；你自己开的会话照常弹出。可用环境变量 `AI_HUB_CODEAGENT_CHOICE_GATE=0` 关掉；提问工具改过名字时用 `AI_HUB_CODEAGENT_CHOICE_TOOLS=名字1,名字2` 指定；
+- 兜底识别：通道里的一轮如果仍停在选择菜单上超过 20 秒，Hub 只读屏幕，把题目和选项报给对端，这一轮记为「卡在选择题」，不替它选、不发按键。对端追问给出选择，或重试这一轮时，Hub 新开会话接着做。菜单样式和 Claude Code 不同时，可以在 Hub 数据目录的 `company-bridge\choice-menu-rules.json` 里改识别规则。
+
 ## 可以直接交给 Code Agent 的验收任务
 
-> 请按 docs/COMPANY-CODE-AGENT.md 的「现场验收」逐项验证 AI Hub v2.1.15 的 CodeAgent 会话。只发清单里写明的极短测试消息，不修改项目文件。每一项写「通过 / 不通过 / 未测」并附原始证据（报错原文、截图里的文字、文件名）。不出现 token、内部地址、姓名工号。
+> 请按 docs/COMPANY-CODE-AGENT.md 的「现场验收」逐项验证 AI Hub v2.1.16 的 CodeAgent 会话。只发清单里写明的极短测试消息，不修改项目文件。每一项写「通过 / 不通过 / 未测」并附原始证据（报错原文、截图里的文字、文件名）。不出现 token、内部地址、姓名工号。
 
 ## 现场验收
 
@@ -57,6 +65,7 @@ Hub 已经内置「CodeAgent」会话种类，装好 Hub、电脑上能运行 `c
 - `--resume <ID>` 是否沿用同一个会话 ID。两种情况 Hub 都能处理，但需要实测结论。
 - 在 Code Agent 界面里执行 `/clear` 或 `/new` 后，Hub 不会跟随新会话；这时请从 Hub 新建会话。
 - 发送很长的多行消息时，界面是否把内容折叠成「[Pasted …]」，以及 CLI 收到的内容是否完整。
+- 提问工具是否仍叫 `AskUserQuestion`，PreToolUse 条目以退出码 2 拒绝时 CLI 是否把拒绝理由交给模型、继续做完；选择菜单的样式（光标符号、底部按键提示）是否和 Claude Code 一样。
 
 ## 做不下去时的失败报告
 

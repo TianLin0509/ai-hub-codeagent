@@ -409,3 +409,10 @@
   .launch-center-intent,
   .launch-center-resume-option { transition: none !important; }
 }
+
+/* 启动中心下拉的页面内选项列表（renderer/launch-select-popover.js，2026-10-19）：紧贴控件下方，不用系统弹层。 */
+.launch-select-popover { z-index: 10060; box-sizing: border-box; max-width: min(560px, calc(100vw - 16px)); overflow-y: auto; overscroll-behavior: contain; padding: 4px; border: 1px solid var(--border-mid); border-radius: 8px; background: var(--surface-card); box-shadow: var(--shadow-lg, 0 12px 32px rgba(0, 0, 0, .18)); color: var(--fg-default); font: 12px/1.5 var(--font-sans, inherit); }
+.launch-select-option { min-height: 30px; box-sizing: border-box; padding: 6px 10px; border-radius: 5px; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.launch-select-option.active { background: var(--surface-hover); }
+.launch-select-option.selected { color: var(--brand-text); font-weight: 600; }
+.launch-select-option.disabled { opacity: .5; cursor: default; }
