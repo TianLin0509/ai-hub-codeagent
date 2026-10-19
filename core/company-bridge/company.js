@@ -534,6 +534,7 @@ class CompanyBridge {
         const accounts = this.routeAccounts();
         const pick = accounts && accounts.length ? route.pickAnyRoute(accounts, { only }) : null;
         if (pick && !pick.ok && pick.reason === 'avoid') {
+          if (this.failIfModelConfigDeadEnd(t, accounts, '', only)) continue; // 全是模型配置有误：不排队，直接报回修法
           waiting += 1;
           this.reportQueue(t, waiting, limit, working, this.avoidQueueNote(accounts, pick.until, only));
           continue;
@@ -551,6 +552,7 @@ class CompanyBridge {
           if (!qr.switchWaitSince || qr.switchWaitSince !== since) t = this.patchRound(t, qr.round, { switchWaitSince: since });
           if (this.now() - since >= MODEL_SWITCH_WAIT_MS) { this.rejectModel(t, qr, this.routeAccounts(), 'switch'); continue; }
         } else if (qr && qr.switchWaitSince) t = this.patchRound(t, qr.round, { switchWaitSince: null });
+        if (pick && !pick.ok && pick.reason === 'avoid' && this.failIfModelConfigDeadEnd(t, this.routeAccounts(), pick.model || t.model, only)) continue;
         if (pick && !pick.ok && pick.reason !== 'none') {
           waiting += 1;
           this.reportQueue(t, waiting, limit, working, pick.reason === 'avoid' ? this.avoidQueueNote(this.routeAccounts(), pick.until, only, pick.model)
@@ -602,11 +604,101 @@ class CompanyBridge {
   // ---- 按模型派活（2026-10-18，core/codeagent-model-route.js）----
   // 能接通道会话的号（个人账号 + 号池可用的号，各自的模型和此刻的默认模型）；读不到返回 null（老环境、测试夹具没接）。
   // 每个号带上避让状态（avoid：额度用完 / 限流 / 手动暂停，见 avoidMap），挑号时跳过避让中的号。
+  // 模型配置避让（2026-10-19）另带 modelAvoid（{ 模型小写: 记录 }，只放此刻还在避让的）：只在这个号请求那个模型时避开（route.avoidFor）。
   routeAccounts() {
     const list = this.routeAccountsRaw();
     if (!list) return list;
-    const avoid = this.avoidMap();
-    return list.map(a => (avoid[a.key] ? { ...a, avoid: avoid[a.key] } : a));
+    const avoid = this.avoidMap(), models = this.modelAvoidMap();
+    return list.map(a => (avoid[a.key] || models[a.key] ? { ...a, ...(avoid[a.key] ? { avoid: avoid[a.key] } : {}), ...(models[a.key] ? { modelAvoid: models[a.key] } : {}) } : a));
+  }
+  modelAvoidMap() {
+    if (this.settings().quotaGuard === false) return {};
+    try { return Q.activeModelAvoid(this.deps.dataDir, this.now()); } catch { return {}; }
+  }
+  // 个人账号上实际作答过的模型（set-personal-model 的权限证据之一，审核 2026-10-19）：
+  //   1. 通道回执：回执元数据里的实际模型（actualModel，否则 model——2.1.12 起是发回执前从原生记录读的回答模型），
+  //      账号按回执里的代称（2.1.13 起有 accountAlias），没有代称的老回执按会话元数据（没有号池标记 = 个人账号）；
+  //   2. 会话记录：个人账号 CodeAgent 会话落盘的 codeagentActualModel（main.js observeCodeAgentModel 从原生记录读到的回答模型）。
+  // 返回 [{ model, source, count }]（模型名不涉及隐私，直查也显示）。
+  personalAnsweredModels() {
+    const seen = new Map();
+    const add = (model, source) => {
+      const m = String(model || '').trim();
+      if (!m || !/^[A-Za-z0-9][A-Za-z0-9._:/-]{0,79}$/.test(m)) return;
+      const k = m.toLowerCase() + '|' + source;
+      seen.set(k, { model: m, source, count: (seen.get(k)?.count || 0) + 1 });
+    };
+    try {
+      for (const t of this.threads(500)) {
+        for (const r of t.rounds || []) {
+          if (!r.reply || !r.meta) continue;
+          let personal;
+          if (r.meta.accountAlias) personal = r.meta.accountAlias === '个人';
+          else {
+            const s = t.sessionId && (this.deps.getSession?.(t.sessionId) || this.deps.getSessionMetadata?.(t.sessionId));
+            personal = !!s && /^codeagent/.test(String(s.kind || 'codeagent')) && !s.codeagentPoolAccount;
+          }
+          if (personal) add(r.meta.actualModel || r.meta.model, 'receipt');
+        }
+      }
+    } catch { /* 读不到回执就只看会话记录 */ }
+    try { for (const m of this.deps.personalAnsweredModels?.() || []) add(m, 'session'); } catch { /* 读不到会话记录 */ }
+    return [...seen.values()];
+  }
+  // 除了 key 这个号，还有没有能接这一题的号（不在避让中、指定了模型时有它的权限；指定了号时只看那个号）。
+  otherAccountUsable(t, key) {
+    const accounts = (this.routeAccounts() || []).filter(a => a.key !== key);
+    return accounts.some(a => (t.model ? route.canEverServe(a, t.model) : true) && !route.avoidFor(a, t.model || ''));
+  }
+  // 「模型配置有误：个人请求了 X，该号只有 Y；可用 set-personal-model 改成 Y」（回执用，模型名原样）
+  modelConfigFailText(key, model = '') {
+    let entry = null;
+    try { entry = Q.modelAvoidEntry(Q.modelAvoidAll(this.deps.dataDir), key, model || ''); } catch { entry = null; }
+    const asked = (entry && entry.model !== '*' ? entry.model : model) || '（报错里没写模型）';
+    const have = entry && Array.isArray(entry.have) && entry.have.length ? entry.have.join('、') : '（权限清单未知）';
+    const hint = entry ? Q.modelConfigHint(entry) : '';
+    return `模型配置有误：${this.aliasOf(key)}请求了 ${asked}，该号只有 ${have}${hint}；现在没有别的号能接这一题，没有换号重做、也没有排队（配置不改会一直报）`;
+  }
+  // 排队前：能接这一题的号全在避让中、且都是模型配置有误（不会自己恢复）→ 不排队，直接报回修法。返回 true 表示已处理。
+  failIfModelConfigDeadEnd(t, accounts, model = '', only = '') {
+    const list = (accounts || []).filter(a => (!only || a.key === only) && (!model || route.canEverServe(a, model)));
+    if (!list.length || !list.every(a => { const e = route.avoidFor(a, model); return e && e.kind === 'model-config'; })) return false;
+    const r = t.rounds.find(x => roundPhase(x) === 'queued');
+    if (!r) return false;
+    const a = list[0];
+    this.rejectRound(t, r, this.scrubText(this.modelConfigFailText(a.key, route.requestModel(a, model))));
+    return true;
+  }
+  // 派给一个有模型配置避让记录、已到试探时间的号：记一次试探（下一次再过 6 小时），这次照派；试探又报错就重新避让、按换号重做处理。
+  noteProbe(account, model = '') {
+    if (!account || !account.key) return;
+    try {
+      const want = route.requestModel(account, model);
+      if (Q.noteModelProbe(this.deps.dataDir, account.key, want, this.now())) this.bridgeLog(`model-config probe ${account.pool ? 'pool' : 'personal'} model=${want}`);
+    } catch { /* 记不下就下次再记 */ }
+  }
+  // 这个号（按它此刻会请求的模型，或指定的模型）是不是在避让：整号避让或模型配置避让。
+  accountAvoid(key, model = '', accounts = this.routeAccounts()) {
+    const a = (accounts || []).find(x => x.key === key);
+    if (a) return route.avoidFor(a, model);
+    return this.avoidMap()[key] || null;
+  }
+  // 给人看的避让状态（直查、界面）：整号避让优先；否则这个号的模型配置避让（含已到试探时间、等着试一次的）。
+  avoidViewMap() {
+    const out = { ...this.avoidMap() };
+    if (this.settings().quotaGuard === false) return out;
+    let all = {};
+    try { all = Q.modelAvoidAll(this.deps.dataDir); } catch { all = {}; }
+    // 只显示和这个号此刻会请求的模型对得上的记录（审核 2026-10-19）：配置已改成别的模型、或只是某个会话里临时换过的，不再挂「避让中」
+    const accounts = new Map((this.routeAccountsRaw() || []).map(a => [a.key, a]));
+    for (const [key, list] of Object.entries(all)) {
+      if (out[key]) continue;
+      const a = accounts.get(key);
+      if (!a) continue;
+      const e = Q.modelAvoidEntry({ [key]: list }, key, a.configModel || a.defaultModel || '');
+      if (e) out[key] = e;
+    }
+    return out;
   }
   routeAccountsRaw() {
     if (!this.deps.routeAccounts) return null;
@@ -659,19 +751,20 @@ class CompanyBridge {
   }
   // 「所有号额度用完，预计 X 恢复」（排队说明，发回对端）。
   avoidQueueNote(accounts, until, only = '', model = '') {
-    const avoid = this.avoidMap();
-    const keys = (accounts || []).filter(a => (!only || a.key === only) && (!model || route.canEverServe(a, model))).map(a => a.key).filter(k => avoid[k]);
-    const parts = keys.map(k => `${this.aliasOf(k)}：${Q.describeAvoid(avoid[k])}`);
-    const who = only ? `指定的${this.aliasOf(only)}在避让中` : model ? `能跑 ${model} 的号都在避让中` : '所有号都在避让中（额度用完或限流）';
+    const list = (accounts || []).filter(a => (!only || a.key === only) && (!model || route.canEverServe(a, model)) && route.avoidFor(a, model));
+    const parts = list.map(a => `${this.aliasOf(a.key)}：${Q.describeAvoid(route.avoidFor(a, model), this.now())}`);
+    const who = only ? `指定的${this.aliasOf(only)}在避让中` : model ? `能跑 ${model} 的号都在避让中` : '所有号都在避让中（额度用完、限流或模型配置有误）';
     return this.scrubText(`排队：${who}${until ? `，预计 ${Q.clock(until)} 恢复` : ''}；恢复后自动派发${parts.length ? `（${parts.join('；')}）` : ''}`);
   }
   // 家里指定的号：写法不对、没有这个号、在避让中 → 这一轮不发出，回报原因和现在可用的号；
   // 追问换了号、或原会话的号在避让中 → 换号新开会话（rehome），带上前几轮作上下文。返回 'rejected' / 'switched' / 'ok'。
   checkAccountRequest(t, r) {
-    const avoid = this.avoidMap();
+    // 整号避让，或这个号请求这一题的模型（指定的，或它配置里的）时在模型配置避让中
+    const routed = this.routeAccounts();
+    const avoidOf = key => this.accountAvoid(key, t.model || '', routed);
     const usable = () => {
       const accounts = this.routeAccounts() || [];
-      const names = accounts.filter(a => !a.avoid).map(a => this.aliasOf(a.key));
+      const names = accounts.filter(a => !route.avoidFor(a, t.model || '')).map(a => this.aliasOf(a.key));
       return names.length ? `现在可用：${names.join('、')}` : '现在所有号都在避让中';
     };
     if (r.badAccount) { this.rejectRound(t, r, `指定的号「${r.badAccount}」写法不对（只认「个人」「号 1」这样的代称）；没有发出。${usable()}，或不指定号交给自动路由`); return 'rejected'; }
@@ -679,7 +772,8 @@ class CompanyBridge {
       const key = this.accountKey(r.account);
       const accounts = this.routeAccounts();
       if (!key || (accounts && !accounts.some(a => a.key === key))) { this.rejectRound(t, r, `指定的号「${r.account}」现在不能用（不在这台电脑的账号里，或登录失效）；没有发出。${usable()}，或不指定号交给自动路由`); return 'rejected'; }
-      if (avoid[key]) { this.rejectRound(t, r, this.scrubText(`指定的${r.account}在避让中：${Q.describeAvoid(avoid[key])}${avoid[key].sample ? `（${avoid[key].sample}）` : ''}；没有发出。${usable()}，或不指定号交给自动路由`)); return 'rejected'; }
+      const av = avoidOf(key);
+      if (av) { this.rejectRound(t, r, this.scrubText(`指定的${r.account}在避让中：${Q.describeAvoid(av, this.now())}${av.sample ? `（${av.sample}）` : ''}；没有发出。${usable()}，或不指定号交给自动路由`)); return 'rejected'; }
       if (t.sessionId) {
         const cur = this.sessionAccountKey(t.sessionId);
         if (cur && cur !== key) { this.rehome(t, r, { why: `指定换到${r.account}`, fromKey: cur }); return 'switched'; }
@@ -688,7 +782,8 @@ class CompanyBridge {
     }
     if (t.sessionId) {
       const cur = this.sessionAccountKey(t.sessionId);
-      if (cur && avoid[cur]) { this.rehome(t, r, { why: `${Q.describeAvoid(avoid[cur])}`, fromKey: cur }); return 'switched'; }
+      const curAvoid = cur ? avoidOf(cur) : null;
+      if (curAvoid) { this.rehome(t, r, { why: `${Q.describeAvoid(curAvoid, this.now())}`, fromKey: cur }); return 'switched'; }
     }
     return 'ok';
   }
@@ -709,14 +804,16 @@ class CompanyBridge {
       ...x, sentAt: null, baseline: null, landed: null, resent: null, sendUncertain: null, receiptIssue: null, promptFingerprint: null, hijacked: 0,
       notReadySince: null, retryAt: null, queueNote: null, rewrite: false, rewriteAsked: false, resumePending: null, resumedAt: null,
       ...(hit ? { rehomed: (Number(x.rehomed) || 0) + 1, account: undefined, requestedAccount: x.account || x.requestedAccount || undefined } : {}),
-      rehome: { from: fromAlias, why: short(why, 120), progress, at: this.now(), kind: hit ? 'quota' : 'switch' },
+      rehome: { from: fromAlias, why: short(why, 120), progress, at: this.now(), kind: hit ? (hit.kind === 'model-config' ? 'model-config' : 'quota') : 'switch' },
     });
     const next = this.saveThread({ ...t, sessionId: null, everAnswered: false, prevSessions, rounds });
-    const note = this.scrubText(hit ? `${fromAlias}撞到${Q.KINDS[hit.kind] || '额度上限'}（${hit.text || why}），已暂停派给它；这一轮自动换号新开会话重做`
+    // 模型配置有误只对这个号的这个模型避让（2026-10-19）
+    const note = this.scrubText(hit && hit.kind === 'model-config' ? `${fromAlias}报模型配置有误（${hit.text || why}），请求这个模型时不再派给它；这一轮自动换号新开会话重做`
+      : hit ? `${fromAlias}撞到${Q.KINDS[hit.kind] || '额度上限'}（${hit.text || why}），已暂停派给它；这一轮自动换号新开会话重做`
       : `原会话在${fromAlias}上（${why}），这一轮换号新开会话，带上前几轮问答作上下文`);
     this.bridgeLog(`rehome ${t.id}#${r.round} from=${fromKey === 'personal' ? 'personal' : 'pool'} ${hit ? 'quota rule=' + hit.ruleId : 'switch'} session=${String(t.sessionId || '').slice(0, 8)}`);
     void this.link.send('status', { thread: t.id, gen: t.gen, round: r.round, state: 'received', note }).catch(() => {});
-    this.notify(hit ? '撞到额度，换号重做' : '换号新开会话', `${t.id}：${short(note, 80)}`, null, { quiet: !hit });
+    this.notify(hit ? (hit.kind === 'model-config' ? '模型配置有误，换号重做' : '撞到额度，换号重做') : '换号新开会话', `${t.id}：${short(note, 80)}`, null, { quiet: !hit });
     this.changed();
     return next;
   }
@@ -735,7 +832,7 @@ class CompanyBridge {
   // 换号后新会话的上下文：为什么换、上一会话的进展、此前各轮问答（从最近的往前放，总共不超过 12000 字）。
   rehomeContext(t, r) {
     const h = r.rehome || {};
-    const lines = [h.kind === 'quota'
+    const lines = [h.kind === 'quota' || h.kind === 'model-config'
       ? `（说明：这个请求原先在另一个会话里处理，那个会话所用的号${h.from ? `（${h.from}）` : ''}因${h.why || '额度'}中断，现换到新会话重做。${h.progress ? '上一会话已读到的进展如下，仅供参考，请自行核实：' : ''}）`
       : `（说明：同一编号此前的几轮在另一个会话里${h.from ? `（${h.from}）` : ''}，因${h.why || '换号'}换到这个新会话；下面附上此前各轮问答作上下文。）`];
     if (h.progress) lines.push('', '> ' + h.progress.split('\n').join('\n> '));
@@ -757,10 +854,10 @@ class CompanyBridge {
   // 额度识别报来的变化（quota-watch.js）：界面刷新，尽快把新的避让状态推给对端。
   avoidChanged({ marked = [], cleared = [] } = {}) {
     for (const k of [...new Set(marked)]) {
-      const e = this.avoidMap()[k];
-      if (e) this.notify('暂停派给' + this.aliasOf(k), this.scrubText(Q.describeAvoid(e) + (e.sample ? '：' + e.sample : '')), null, { quiet: true });
+      const e = this.avoidViewMap()[k];
+      if (e) this.notify('暂停派给' + this.aliasOf(k), this.scrubText(Q.describeAvoid(e, this.now()) + (e.sample ? '：' + e.sample : '')), null, { quiet: true });
     }
-    for (const k of [...new Set(cleared)]) this.notify('恢复派给' + this.aliasOf(k), 'Credit 读数已恢复', null, { quiet: true });
+    for (const k of [...new Set(cleared)]) this.notify('恢复派给' + this.aliasOf(k), this.avoidMap()[k] ? '部分避让已解除' : '避让已解除（Credit 读数回升，或用那个模型正常答出来了）', null, { quiet: true });
     this.nextPullAt = Math.min(this.nextPullAt || Infinity, this.now() + 5000);
     this.changed();
   }
@@ -934,6 +1031,7 @@ class CompanyBridge {
           if (!pick.ok && pick.reason === 'none') return this.rejectModel(t, r, accounts);
           if (!pick.ok) return; // 刚才还有空的号，这会儿被占了（或刚进避让）：留在队里，下一轮再派
           if (pick.model !== t.model) t = this.saveThread({ ...(this.thread(t.id) || t), model: pick.model });
+          this.noteProbe(pick.account, pick.model);
           created = await this.deps.createSession('codeagent', { ...opts, codeagentRouteModel: pick.model,
             ...(pick.account.pool ? { codeagentAccount: 'pool', codeagentPoolPick: pick.account.key } : {}) });
           this.bridgeLog(`route ${t.id} model=${pick.model} account=${pick.account.pool ? 'pool' : 'personal'}${pick.switchModel ? ' 切默认模型' : ''}`);
@@ -943,10 +1041,11 @@ class CompanyBridge {
           if (pick && !pick.ok && pick.reason === 'avoid') return; // 刚进避让：留在队里，advance 报排队原因
           // 号池开失败时退回个人账号：个人账号在避让中、或指定的是号池里的号时不退
           const personal = (accounts || []).find(a => a.key === 'personal');
-          if (personal && personal.avoid) fallbackPersonal = false;
+          if (personal && route.avoidFor(personal, '')) fallbackPersonal = false;
           const poolOpts = pick && pick.ok ? (pick.account.pool ? { codeagentAccount: 'pool', codeagentPoolPick: pick.account.key } : null)
             : poolLanes > 0 ? { codeagentAccount: 'pool' } : null;
           if (pick && pick.ok) this.bridgeLog(`route ${t.id} model=(default) account=${pick.account.pool ? 'pool' : 'personal'} active=${pick.account.activeSessions || 0}`);
+          if (pick && pick.ok) this.noteProbe(pick.account, '');
           if (poolOpts) {
             try { created = await this.deps.createSession('codeagent', { ...opts, ...poolOpts }); }
             catch (error) { console.warn('[company-bridge] 号池开会话失败，改用个人账号：' + error.message); created = null; }
@@ -1024,9 +1123,14 @@ class CompanyBridge {
         this.bridgeLog(`rehome-skip ${t.id}#${r.round} 撞额度后原会话自己答出来了，不换号`);
       } else {
         if (this.sessionBusy(t.sessionId) && this.now() - hit.at < REHOME_GRACE_MS) return;
+        // 模型配置有误、又没有别的号能接这一题：不换号重做（换了也只会排队 6 小时），直接如实报回并给出修法（审核 2026-10-19）
+        if (hit.kind === 'model-config' && !this.otherAccountUsable(t, hit.key)) {
+          return this.failRound(t, r, this.scrubText(this.modelConfigFailText(hit.key, hit.model)));
+        }
         if ((Number(r.rehomed) || 0) >= MAX_REHOME) {
           const alias = this.aliasOf(hit.key);
-          return this.failRound(t, r, this.scrubText(`这一轮已经因额度换过一次号，换到${alias}重做后，${alias}也撞到了${Q.KINDS[hit.kind] || '额度上限'}（${hit.text}）；按规则只换号重做一次，这一轮不再换号。等号恢复后可在「AI特战队专用功能」里点重试，或追问重问`));
+          const why = (r.rehome && r.rehome.kind === 'model-config') ? '模型配置有误' : '额度';
+          return this.failRound(t, r, this.scrubText(`这一轮已经因${why}换过一次号，换到${alias}重做后，${alias}也撞到了${Q.KINDS[hit.kind] || '额度上限'}（${hit.text}）；按规则只换号重做一次，这一轮不再换号。等号恢复后可在「AI特战队专用功能」里点重试，或追问重问`));
         }
         this.rehome(t, r, { why: Q.KINDS[hit.kind] || '额度上限', fromKey: hit.key, hit });
         return;

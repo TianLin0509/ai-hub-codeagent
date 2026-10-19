@@ -46,6 +46,12 @@ function registerCompanyBridgeIpc(ipcMain, service, { openGate } = {}) {
       return { ok: true, ...service.diagLatest(id || undefined) };
     };
     handlers.recollect = request => service.recollect(String(request?.sessionId || ''), { thread: String(request?.thread || '') });
+    // 特战队（2026-10-18）：同事粘贴邀请码；组长（本机有管理口令）新建 / 收回成员。
+    handlers['set-invite'] = request => service.setInvite(String(request?.code || ''));
+    handlers['clear-invite'] = () => service.clearInvite();
+    handlers['team-members'] = async () => ({ ok: true, members: await service.teamMembers() });
+    handlers['team-create'] = async request => ({ ok: true, ...(await service.teamCreate(String(request?.label || ''))) });
+    handlers['team-revoke'] = async request => ({ ok: true, member: await service.teamRevoke(String(request?.id || '')) });
   } else {
     handlers.pair = request => service.pair(String(request?.code || ''));
     handlers.retry = request => service.retry(String(request?.id || ''));

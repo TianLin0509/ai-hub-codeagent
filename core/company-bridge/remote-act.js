@@ -14,13 +14,17 @@
 //   retry          重试一个失败的问题（同页面上的「重试」按钮）。
 //   pause-account  手动让一个号避让（代称：个人 / 号 1…），可带「N 小时后自动恢复」；通道新开会话、换号重做都不再挑它（额度感知，2026-10-18）。
 //   resume-account 解除一个号的避让（手动暂停、识别到额度报错、Credit 读数，统统解除），之后照常派活。
+//   set-personal-model 修正个人账号的默认模型（2026-10-19 用户授权）：只改个人配置目录 settings.json 的 model 一个键，目标必须在个人账号的权限清单里；
+//                  改前整份备份、原子写、回读核对（不过就从备份还原），restore:true 用最近一次备份里的值撤销；只影响之后新开的会话；
+//                  权限依据：清单经过探测，或个人账号实际作答过这个模型；都没有时拒绝，force:true 跳过这一条（回报、审计标「未经权限校验」）；
+//                  改成某个模型成功后解除个人账号的模型配置避让，撤销不解除（core/codeagent-personal-model.js）。Hub 不会自动做这件事。
 const os = require('node:os');
 
-const ACTIONS = ['suspend-idle', 'kill-orphans', 'set-parallel', 'cancel-queued', 'retry', 'pause-account', 'resume-account'];
+const ACTIONS = ['suspend-idle', 'kill-orphans', 'set-parallel', 'cancel-queued', 'retry', 'pause-account', 'resume-account', 'set-personal-model'];
 const LABEL = { 'suspend-idle': '让空闲的通道会话休眠', 'kill-orphans': '结束残留进程', 'set-parallel': '临时调整并行档位', 'cancel-queued': '取消排队中的问题', retry: '重试失败的问题',
-  'pause-account': '暂停派活给一个号', 'resume-account': '恢复派活给一个号' };
+  'pause-account': '暂停派活给一个号', 'resume-account': '恢复派活给一个号', 'set-personal-model': '修改个人账号默认模型' };
 // 限频：结束进程最快 60 秒一次，其余 10 秒一次（按动作分别算）。
-const MIN_INTERVAL_MS = { 'kill-orphans': 60000 };
+const MIN_INTERVAL_MS = { 'kill-orphans': 60000, 'set-personal-model': 60000 };
 const DEFAULT_INTERVAL_MS = 10000;
 const DIAG_FRESH_MS = 5 * 60000;
 const MAX_KILL = 20;
@@ -65,7 +69,17 @@ function parseParams(action, raw = {}) {
     if (action === 'pause-account' && p.reason != null) out.reason = String(p.reason).replace(/[\r\n\t<>]/g, ' ').trim().slice(0, 60);
     return out;
   }
-  if (action === 'cancel-queued' || action === 'retry') {
+  if (action === 'set-personal-model') {
+    const restore = p.restore === true;
+    if (p.restore != null && typeof p.restore !== 'boolean') throw new Error('restore 要是 true / false');
+    if (p.force != null && typeof p.force !== 'boolean') throw new Error('force 要是 true / false');
+    const model = p.model == null ? '' : String(p.model).trim();
+    if (restore && model) throw new Error('model 和 restore 只能给一个：改成某个模型，或撤销上一次修改');
+    if (restore && p.force === true) throw new Error('force 只用于改成某个模型，撤销不需要');
+    if (!restore && !/^[A-Za-z0-9][A-Za-z0-9._:/-]{0,79}$/.test(model)) throw new Error('要给出模型名 model（必须在个人账号的权限清单里，如 GLM-5.2-WX-Auto），或 restore:true 撤销上一次修改');
+    // force：跳过「清单经过探测 / 实际作答过」这一条权限校验（回报和审计里标「未经权限校验」）；其余校验照常
+    return restore ? { restore: true } : { model, ...(p.force === true ? { force: true } : {}) };
+  }  if (action === 'cancel-queued' || action === 'retry') {
     const thread = String(p.thread || '');
     if (!THREAD_ID.test(thread)) throw new Error('要给出问题编号（如 Q-1018-03）');
     return { thread };
@@ -96,10 +110,11 @@ class RemoteAct {
     if (now - last < gap && now >= last) return this.refuse(id, action, `「${LABEL[action]}」${gap / 1000} 秒内只做一次：上一次在 ${Math.round((now - last) / 1000)} 秒前`);
     this.running = true;
     this.admin.save({ actLast: { ...(st.actLast || {}), [action]: now } });
-    this.bridge.notify('对端执行了：' + LABEL[action], `编号 ${id}`, null, { quiet: true });
+    // 改个人账号默认模型的提示在执行后给（带前后值）
+    if (action !== 'set-personal-model') this.bridge.notify('对端执行了：' + LABEL[action], `编号 ${id}`, null, { quiet: true });
     try {
       const result = await this[{ 'suspend-idle': 'suspendIdle', 'kill-orphans': 'killOrphans', 'set-parallel': 'setParallel', 'cancel-queued': 'cancelQueued', retry: 'retry',
-        'pause-account': 'pauseAccount', 'resume-account': 'resumeAccount' }[action]](params, id);
+        'pause-account': 'pauseAccount', 'resume-account': 'resumeAccount', 'set-personal-model': 'setPersonalModel' }[action]](params, id);
       this.audit(`${result.ok ? 'done' : 'failed'} ${id} ${action} ${JSON.stringify(params)} → ${short(result.note, 300)}`);
       this.bridge.changed();
       return { phase: 'act', note: `${LABEL[action]}：${result.note}`, act: { action, ...result } };
@@ -278,7 +293,41 @@ class RemoteAct {
     b.avoidChanged?.({}); // 排队等它恢复的问题下一轮（5 秒内）就派
     return { ok: true, account, before, after: '可用', cleared: r.cleared, note: r.cleared ? `${account}：${before} → 可用，照常派活` : `${account} 本来就没在避让中` };
   }
-  async retry({ thread }) {
+  // ---- set-personal-model（2026-10-19 用户授权）----
+  // 回给对端的只有固定文案 + code，路径、JSON 片段等原始信息只写本机审计日志（审核 2026-10-19）。
+  async setPersonalModel({ model = '', restore = false, force = false }, id = '') {
+    const b = this.bridge, Q = require('../codeagent-quota');
+    const personalDir = this.deps.personalConfigDir ? this.deps.personalConfigDir() : require('../codeagent-config').resolveCodeAgentConfig(process.env).configDir;
+    let answered = [];
+    try { answered = (b.personalAnsweredModels?.() || []).map(x => x.model); } catch { answered = []; }
+    let r;
+    try { r = require('../codeagent-personal-model').setPersonalModel({ dataDir: b.deps.dataDir, personalDir, model, restore, force, answered, now: this.now() }); }
+    catch (error) {
+      const code = error.code || 'unexpected';
+      this.audit(`detail ${id} set-personal-model ${code} ${short(error.detail || error.message, 400)}`);
+      const text = error.code ? error.message : '修改个人账号默认模型时出错，没改';
+      b.notify('对端修改个人账号默认模型没有成功', `${text}（${code}）`, null, { quiet: true });
+      throw Object.assign(new Error(`${text}（${code}）`), { code });
+    }
+    const show = v => v || '（未设置）';
+    const scope = '只影响之后新开的会话，已在跑的会话不动';
+    const unverified = r.verifiedBy === 'force' ? '（未经权限校验）' : '';
+    if (unverified) this.audit(`unverified-force ${id} set-personal-model ${show(r.before)} → ${r.ok ? show(r.after) : '（没改成）'} 权限清单未经探测、也没有作答记录，按 force 写入`);
+    if (!r.ok) {
+      this.audit(`detail ${id} set-personal-model ${r.code} ${short(r.detail, 400)}`);
+      b.notify('对端修改个人账号默认模型没有成功', `${r.error}（${r.code}）`, null, { quiet: true });
+      return { ok: false, code: r.code, before: r.before, after: r.after, backup: r.backup, rolledBack: !!r.rolledBack, error: `${r.error}（${r.code}）`, note: `没改成：${r.error}（${r.code}）` };
+    }
+    if (!r.changed) return { ok: true, changed: false, before: r.before, after: r.after, verifiedBy: r.verifiedBy, note: `个人账号默认模型本来就是 ${show(r.after)}，没改` };
+    // 改成某个模型成功：解除个人账号的模型配置避让，新问题可以重新派给它。撤销（restore）不清：回到的值若有避让记录就保留（审核 2026-10-19）
+    let cleared = 0;
+    if (!restore) { try { cleared = Q.clearModelAvoid(b.deps.dataDir, 'personal'); } catch { cleared = 0; } }
+    b.avoidChanged?.({});
+    b.notify('对端修改了个人账号默认模型：' + show(r.before) + ' → ' + show(r.after) + unverified, scope, null, { quiet: true });
+    const proof = { probe: '权限清单经过探测', enterprise: '权限清单是 CodeAgent 自己的账号模型清单', answered: '个人账号实际作答过这个模型', force: '未经权限校验（按 force 写入）', backup: '撤销到上一次修改前的值' }[r.verifiedBy] || '';
+    return { ok: true, changed: true, before: r.before, after: r.after, backup: r.backup, restoredFrom: r.restoredFrom || null, clearedAvoid: cleared, scope, verifiedBy: r.verifiedBy, ...(unverified ? { unverified: true } : {}),
+      note: `个人账号默认模型 ${show(r.before)} → ${show(r.after)}${unverified}${restore ? `（撤销上一次修改，用的是备份 ${r.restoredFrom}）` : ''}；依据：${proof}；改前已备份为 ${r.backup}；${scope}${cleared ? '；已解除个人账号的模型配置避让，新问题可以派给它' : ''}` };
+  }  async retry({ thread }) {
     const b = this.bridge, t = b.thread(thread);
     if (!t || t.gen !== b.link.gen()) throw new Error('找不到这个问题，或它属于上一次配对');
     const failed = t.rounds.filter(x => x.error && !x.reply);

@@ -23,7 +23,8 @@ const HISTORY = 20;
 // act（2026-10-18 三期远程维护，remote-act.js）：休眠空闲通道会话、结束残留进程、临时调并行档位、取消排队 / 重试问题。
 const OPS = ['update', 'restart', 'status', 'diag', 'act'];
 // quota（2026-10-18 额度感知）：认得 ask/followup 的 account、直查 errors 段、远程维护 pause-account / resume-account。
-const CAPS = ['diag', 'act', 'quota'];
+// personal-model（2026-10-19）：认得模型配置避让、远程维护 set-personal-model（修正个人账号默认模型）。
+const CAPS = ['diag', 'act', 'quota', 'personal-model'];
 // 执行中的阶段；其余都是结束态。
 const LIVE = ['checking', 'downloading', 'waiting', 'applying', 'restarting'];
 const GRACE_DEFAULT_MINUTES = 3;

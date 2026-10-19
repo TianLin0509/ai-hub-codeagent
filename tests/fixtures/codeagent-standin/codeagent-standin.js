@@ -47,6 +47,18 @@ try {
   const base = require('fs').readFileSync(require('path').join(env.CODEAGENT3_CONFIG_DIR || '', 'standin-api-base.txt'), 'utf8').trim();
   if (/^http:\/\/127\.0\.0\.1:\d+$/.test(base)) env.ANTHROPIC_BASE_URL = base;
 } catch { /* 没有这个文件：正常调用 */ }
+// 模型配置有误的端到端（2026-10-19）：配置目录里有 standin-model-permissions.json（{ base, allow: [这个号有权限的模型] }）时，
+// settings.json 写的模型不在 allow 里，这个号的请求就发到假后端的 /m/<模型>，假后端按公司真机原文回报「模型 "<模型>" 不存在或配置有误」；
+// 在 allow 里照常调用。模拟公司后端按号的权限校验模型：配置改对之前每次都报，改对之后正常。
+try {
+  const perm = JSON.parse(require('fs').readFileSync(require('path').join(env.CODEAGENT3_CONFIG_DIR || '', 'standin-model-permissions.json'), 'utf8'));
+  let written = '';
+  try { written = String(JSON.parse(require('fs').readFileSync(require('path').join(env.CODEAGENT3_CONFIG_DIR || '', 'settings.json'), 'utf8')).model || ''); } catch { /* 没有设置 */ }
+  const allow = (Array.isArray(perm.allow) ? perm.allow : []).map(m => String(m).toLowerCase());
+  if (written && !allow.includes(written.toLowerCase()) && /^http:\/\/127\.0\.0\.1:\d+$/.test(String(perm.base || ''))) {
+    env.ANTHROPIC_BASE_URL = `${perm.base}/m/${encodeURIComponent(written)}`;
+  }
+} catch { /* 没有这个文件：正常调用 */ }
 const command = env.CODEAGENT_STANDIN_CLAUDE || 'claude';
 // Let the child own Ctrl+C, like the real CLI does.
 process.on('SIGINT', () => {});

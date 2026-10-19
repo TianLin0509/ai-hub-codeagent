@@ -175,7 +175,7 @@
     const method = m => m === 'idaas' ? '账号密码登录' : m === 'devuc' ? '浏览器登录' : '';
     const personalRow = `<tr data-hl-account="personal"><td><b>${esc(personal.accountLabel || (personal.present ? '已登录' : '未登录'))}</b><div class="hl-muted">个人账号</div></td><td></td>
       <td><span class="hl-pill ${personal.present ? 'ok' : 'bad'}">${personal.present ? '可用' : '未登录'}</span><div class="hl-muted">${esc(method(personal.method))}</div></td>
-      <td>${modelCell('personal', personal.models, personal.modelsProbedAt)}</td><td class="hl-num">${Number(personal.activeSessions) || 0}</td><td data-hl-quota="personal">${quotaCell('personal', personal, !!personal.present)}</td><td></td></tr>`;
+      <td>${modelCell('personal', personal.models, personal.modelsProbedAt)}${personal.configNote ? `<div class="hl-muted"><span class="hl-pill bad">默认模型和权限不符</span>${esc(String(personal.configNote).replace(/^默认模型和权限不符：/, ''))}</div>` : ''}</td><td class="hl-num">${Number(personal.activeSessions) || 0}</td><td data-hl-quota="personal">${quotaCell('personal', personal, !!personal.present)}</td><td></td></tr>`;
     const rows = (pool.accounts || []).map(a => {
       let [label, tone] = POOL_STATE[a.state] || [a.state, ''];
       if (a.state === 'ready' && a.sameAsPersonal) [label, tone] = ['和个人账号同号，不参与挑号', 'bad'];

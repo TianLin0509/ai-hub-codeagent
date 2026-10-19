@@ -19,24 +19,43 @@ const isPrimary = model => /^glm/i.test(String(model || ''));
 
 // 个人账号此刻启动会用的模型（只用于判定和显示，不改写它的 settings.json）：规则见 codeagent-pool.js personalDefaultModel。
 // 2.1.11 要求「settings.json 写了模型且在菜单里」才算已知，没写或写分档名 GLM-5.2-WX 时个人账号整个从模型表消失（用户 2026-10-18 反馈）。
+// written：settings.json 里实际写的 model（原样，可能为空）；configMismatch：默认模型和权限不符（2026-10-19 公司真机：
+// 个人账号 settings.json 写了没权限的 deepseek-v4-flash-0731，每个会话一开就报「模型 … 不存在或配置有误」）——
+// 纠正后的默认模型为空、而权限清单只有一个模型时标出来（这时「该改成什么」是确定的），带上写的值，号表和直查据此提示。
+// 只判定和显示，不改写 settings.json（修正只走经授权的远程维护 set-personal-model，见 codeagent-personal-model.js）。
 function personalModels({ dataDir, personalDir, fsModule = fs }) {
-  if (!personalDir) return { models: [], defaultModel: '' };
+  if (!personalDir) return { models: [], defaultModel: '', written: '', configMismatch: null };
   const known = pool.accountModels(personalDir, fsModule, dataDir ? pool.personalModelsFile(dataDir) : null);
-  const defaultModel = pool.personalDefaultModel(pool.readSettingsModel(personalDir, fsModule), known);
+  const written = pool.readSettingsModel(personalDir, fsModule);
+  const defaultModel = pool.personalDefaultModel(written, known);
   const models = (known.models || []).slice();
+  // 收紧（审核 2026-10-19）：只有「写的值不在清单里（分档名按 -Auto 算在内）」且「这个号对写的值有还没清除的模型配置避让记录」
+  // 才算不符——合法的内部别名（如 MiniMax-M2.7-CodeAgentCLI，CLI 实际按它跑）没报过错就不标红。清单只有一个模型时给出建议改成它。
+  let configMismatch = null;
+  if (written && !models.some(m => eq(m, written) || eq(m, written + '-Auto'))) {
+    let record = null;
+    try { record = dataDir ? (require('./codeagent-quota').modelAvoidAll(dataDir, fsModule).personal || {})[String(written).toLowerCase()] || null : null; } catch { record = null; }
+    if (record) configMismatch = { written, models: models.slice(), suggest: models.length === 1 ? models[0] : '' };
+  }
   if (defaultModel && !models.some(m => eq(m, defaultModel))) models.push(defaultModel);
-  return { models, defaultModel };
+  return { models, defaultModel, written, configMismatch, authoritative: !!known.authoritative, probedAt: known.probedAt || null };
+}
+// 号表、直查里的一句话（模型名不涉及隐私，原样写）。
+function describeMismatch(m) {
+  if (!m) return '';
+  return `默认模型和权限不符：settings.json 里${m.written ? `写的是 ${m.written}` : '没写模型'}，权限只有 ${(m.models || []).join('、')}`;
 }
 
 // 个人账号的进行中会话数（activeSessions）包含号主自己手动开的、助理和论坛的会话（main.js routeAccounts）：
 // 号主自己忙的时候它少接通道的活。
+// configModel：不指定模型开会话时它实际会请求的模型（settings.json 写了就是写的那个，哪怕没权限）——模型配置避让按它判断。
 function personalAccount({ dataDir, personalDir, activeSessions = 0, now = Date.now(), fsModule = fs }) {
   if (!personalDir) return null;
   const creds = pool.readCredentials(personalDir, fsModule);
   if (pool.accountState(creds, now) !== 'ready') return null;
-  const { models, defaultModel } = personalModels({ dataDir, personalDir, fsModule });
-  return { key: 'personal', pool: false, models, defaultModel, activeSessions: Number(activeSessions) || 0,
-    lastAssignedAt: dataDir ? pool.personalLastAssignedAt(dataDir, fsModule) : 0 };
+  const { models, defaultModel, written, configMismatch } = personalModels({ dataDir, personalDir, fsModule });
+  return { key: 'personal', pool: false, models, defaultModel, configModel: written || defaultModel, activeSessions: Number(activeSessions) || 0,
+    lastAssignedAt: dataDir ? pool.personalLastAssignedAt(dataDir, fsModule) : 0, ...(configMismatch ? { configMismatch } : {}) };
 }
 
 // 能接通道会话的号：个人账号（登录有效）+ 号池里可用的号（登录有效、不与个人账号或别的号重复）。
@@ -48,7 +67,8 @@ function routeAccounts({ dataDir, personalDir = '', activeCounts = {}, personalA
     const personalAccountId = personalDir ? pool.readCredentials(personalDir, fsModule).accountId : '';
     for (const a of pool.listAccounts(dataDir, { activeCounts, personalAccountId, now, fsModule })) {
       if (a.state !== 'ready' || a.sameAsPersonal || a.duplicateOf) continue;
-      out.push({ key: a.id, pool: true, models: a.models || [], defaultModel: pool.effectiveModel(a.dir, fsModule),
+      const own = pool.effectiveModel(a.dir, fsModule);
+      out.push({ key: a.id, pool: true, models: a.models || [], defaultModel: own, configModel: own,
         activeSessions: a.activeSessions || 0, lastAssignedAt: a.lastAssignedAt || 0, routeSwitched: !!a.routeSwitched });
     }
   }
@@ -74,7 +94,7 @@ function listModels(accounts) {
   return [...seen.values()];
 }
 // 此刻就能开会话的模型（有号的默认就是它，或有空闲的号池号可以切过去）：等不到切换时回执里告诉家里可以换哪个。
-function servableNow(accounts) { return listModels(accounts).filter(m => accounts.some(a => canServe(a, m) && !a.avoid)); }
+function servableNow(accounts) { return listModels(accounts).filter(m => accounts.some(a => canServe(a, m) && !avoidFor(a, m))); }
 function canonicalModel(accounts, model) { return listModels(accounts).find(m => eq(m, model)) || ''; }
 
 // 挑号。working：各号上通道正在处理的问题数（键 personal / 号池编号）；cap：每号同时处理的上限。
@@ -86,17 +106,27 @@ function canonicalModel(accounts, model) { return listModels(accounts).find(m =>
 // 额度感知（2026-10-18，core/codeagent-quota.js）：账号带 avoid（避让中：额度用完 / 限流 / 手动暂停）的不参与挑号；
 // 能跑这个模型的号全在避让中 → { ok:false, reason:'avoid', until: 最早恢复时间 }（排队等恢复，回执写明，不硬派）。
 // only：家里指定了号（键），只在它里面挑。
-const avoided = a => !!(a && a.avoid);
-function earliestUntil(list) {
-  const times = list.map(a => a.avoid && a.avoid.until).filter(x => Number.isFinite(Number(x)) && x != null).map(Number);
+// 模型配置避让（2026-10-19）：账号带 modelAvoid（{ 模型小写 | '*': 记录 }，调用方只放此刻还在避让的）时，
+// 只在「这个号请求的模型」命中时算避让。请求的模型：指定了就是指定的；不指定就是号的 configModel（配置里写的，哪怕没权限）。
+const requestModel = (a, model) => String(model || (a && (a.configModel || a.defaultModel)) || '');
+function modelAvoidOf(a, model) {
+  if (!a || !a.modelAvoid) return null;
+  return a.modelAvoid[String(requestModel(a, model)).toLowerCase() || '*'] || a.modelAvoid['*'] || null;
+}
+// 这个号请求这个模型时的避让记录：整号避让优先，其次模型配置避让。
+function avoidFor(a, model = '') { return (a && a.avoid) || modelAvoidOf(a, model); }
+const avoided = (a, model = '') => !!avoidFor(a, model);
+const untilOf = e => (e ? (e.until != null ? e.until : e.kind === 'model-config' ? e.probeAt : null) : null);
+function earliestUntil(list, model = '') {
+  const times = list.map(a => untilOf(avoidFor(a, model))).filter(x => Number.isFinite(Number(x)) && x != null).map(Number);
   return times.length ? Math.min(...times) : null;
 }
 function pickRoute(accounts, model, { working = {}, cap = Infinity, only = '' } = {}) {
   const everyone = accounts.filter(a => canEverServe(a, model) && (!only || a.key === only));
   if (!everyone.length) return { ok: false, reason: 'none', model: '' };
   const canonical = canonicalModel(accounts, model);
-  const all = everyone.filter(a => !avoided(a));
-  if (!all.length) return { ok: false, reason: 'avoid', model: canonical, until: earliestUntil(everyone) };
+  const all = everyone.filter(a => !avoided(a, canonical));
+  if (!all.length) return { ok: false, reason: 'avoid', model: canonical, until: earliestUntil(everyone, canonical) };
   const ready = all.filter(a => canServe(a, canonical));
   if (!ready.length) return { ok: false, reason: 'switch', model: canonical };
   const free = ready.filter(a => (Number(working[a.key]) || 0) < cap);
@@ -141,13 +171,13 @@ function pickAnyRoute(accounts, { working = {}, cap = Infinity, only = '' } = {}
 // aliases：键 → 代称（个人 / 号 1…）；credit：键 → 最近一次 Credit 读数；describe：避让原因的说明文字（调用方已脱敏）。
 function modelTable(accounts, { working = {}, cap = Infinity, peak = false, parallel = null, at = Date.now(), aliases = null, credit = {}, describe = null } = {}) {
   const globalFree = parallel ? Math.max(0, (Number(parallel.cap) || 0) - (Number(parallel.working) || 0)) : Infinity;
-  const perCap = a => (avoided(a) ? 0 : Math.max(0, (Number.isFinite(cap) ? cap : 0) - (Number(working[a.key]) || 0)));
+  const perCap = (a, model = '') => (avoided(a, model) ? 0 : Math.max(0, (Number.isFinite(cap) ? cap : 0) - (Number(working[a.key]) || 0)));
   const models = listModels(accounts).map(id => {
     const own = accounts.filter(a => canEverServe(a, id));
     const ready = own.filter(a => canServe(a, id));
-    const free = ready.reduce((n, a) => n + perCap(a), 0);
+    const free = ready.reduce((n, a) => n + perCap(a, id), 0);
     const busy = own.filter(a => eq(a.defaultModel, id)).reduce((n, a) => n + (Number(working[a.key]) || 0), 0);
-    const avoidedCount = own.filter(avoided).length;
+    const avoidedCount = own.filter(a => avoided(a, id)).length;
     return { id, label: require('./codeagent-models').modelLabel(id), primary: isPrimary(id), accounts: own.length, working: busy, free: Math.min(free, globalFree),
       ...(avoidedCount ? { avoided: avoidedCount } : {}) };
   }).sort((a, b) => Number(b.primary) - Number(a.primary) || a.id.localeCompare(b.id));
@@ -155,10 +185,13 @@ function modelTable(accounts, { working = {}, cap = Infinity, peak = false, para
   if (aliases) {
     table.accountRows = accounts.filter(a => aliases.get(a.key)).map(a => {
       const c = credit && credit[a.key];
+      // 不指定模型时这个号会不会被避开（整号避让，或它配置里的模型在模型配置避让中）
+      const av = avoidFor(a, '');
       return { alias: aliases.get(a.key), pool: !!a.pool, models: (a.models || []).filter(m => canEverServe(a, m)), defaultModel: a.defaultModel || '',
         activeSessions: Number(a.activeSessions) || 0, working: Number(working[a.key]) || 0, free: Math.min(perCap(a), globalFree),
-        avoid: a.avoid ? { kind: a.avoid.kind || 'quota', source: a.avoid.source || 'error', since: a.avoid.since || null, until: a.avoid.until == null ? null : Number(a.avoid.until),
-          reason: describe ? describe(a.avoid) : String(a.avoid.reason || '') } : null,
+        avoid: av ? { kind: av.kind || 'quota', source: av.source || 'error', since: av.since || null, until: untilOf(av) == null ? null : Number(untilOf(av)),
+          reason: describe ? describe(av) : String(av.reason || '') } : null,
+        ...(a.configMismatch ? { configNote: describeMismatch(a.configMismatch) } : {}),
         credit: c && Number.isFinite(Number(c.remaining)) ? { remaining: Number(c.remaining), pct: Number(c.pct), bucket: c.bucket || '', at: c.at || null } : null };
     }).sort((x, y) => Number(x.pool) - Number(y.pool) || x.alias.localeCompare(y.alias, 'zh'));
   }
@@ -173,7 +206,7 @@ function tableSignature(table) {
 // 避让状态的签名（哪些号在避让、到什么时候）：变了就尽快推给家里，不等 10 分钟节流（额度感知，2026-10-18）。
 function avoidSignature(table) {
   if (!table || !Array.isArray(table.accountRows)) return '';
-  return JSON.stringify(table.accountRows.filter(r => r.avoid).map(r => [r.alias, r.avoid.source, r.avoid.until]));
+  return JSON.stringify(table.accountRows.filter(r => r.avoid || r.configNote).map(r => [r.alias, r.avoid && r.avoid.source, r.avoid && r.avoid.kind, r.avoid && r.avoid.until, r.configNote || '']));
 }
 
-module.exports = { routeAccounts, personalAccount, personalModels, canServe, canEverServe, servableNow, pickRoute, pickAnyRoute, modelTable, tableSignature, avoidSignature, listModels, canonicalModel, isPrimary, hasModel, earliestUntil };
+module.exports = { routeAccounts, personalAccount, personalModels, describeMismatch, canServe, canEverServe, servableNow, pickRoute, pickAnyRoute, modelTable, tableSignature, avoidSignature, listModels, canonicalModel, isPrimary, hasModel, earliestUntil, avoidFor, requestModel };

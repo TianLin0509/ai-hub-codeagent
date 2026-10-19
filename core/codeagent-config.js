@@ -52,6 +52,16 @@ function resolveCodeAgentConfig(env = process.env, provider = hubProviderConfig(
   return { command, configDirEnv, configDir, stateFile: STATE_FILE };
 }
 
+// 个人账号配置目录从哪来（直查用，不带路径）：hub-env = AI_HUB_CODEAGENT_CONFIG_DIR；hub-config = config.json 的 providers.codeagent.configDir；
+// codeagent-env = Hub 进程继承的 CODEAGENT3_CONFIG_DIR（例如 Hub 是从某个 CodeAgent 会话里启动的）；default = ~/.cac。
+// 2026-10-19 排查个人账号 settings.json 被写成 DS 模型时用来排除「个人账号目录其实不是 ~/.cac」这一候选。
+function configDirSource(env = process.env, provider = hubProviderConfig()) {
+  if (cleanString(env.AI_HUB_CODEAGENT_CONFIG_DIR)) return 'hub-env';
+  if (cleanString(provider.configDir)) return 'hub-config';
+  const configDirEnv = cleanString(env.AI_HUB_CODEAGENT_CONFIG_ENV) || cleanString(provider.configDirEnv) || DEFAULT_CONFIG_ENV;
+  return cleanString(env[configDirEnv]) ? 'codeagent-env' : 'default';
+}
+
 // PowerShell 里键入的命令头：普通命令名原样；带路径或空格的用调用运算符。
 function commandHead(command) {
   if (/^[A-Za-z0-9_.-]+$/.test(command)) return command;
@@ -92,6 +102,7 @@ module.exports = {
   EFFORTS,
   HOOK_EVENTS,
   resolveCodeAgentConfig,
+  configDirSource,
   commandHead,
   normalizeCodeAgentModel,
   localModelOptions,

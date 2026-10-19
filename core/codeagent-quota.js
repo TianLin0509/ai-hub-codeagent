@@ -14,7 +14,9 @@ const path = require('path');
 const RULES_FILE = 'quota-rules.json';
 const STATE_FILE = 'quota-avoid.json';
 const DEFAULT_RETRY_MS = 60 * 60000;
-const KINDS = { quota: '额度上限', 'rate-limit': '限流', balance: '余额不足' };
+// 模型配置有误（2026-10-19）：只对「这个号 + 被请求的模型」避让，不设自动到期（配置不变就一直报），每 6 小时放行一次试探。
+const MODEL_PROBE_MS = 6 * 3600000;
+const KINDS = { quota: '额度上限', 'rate-limit': '限流', balance: '余额不足', 'model-config': '模型配置有误' };
 const SOURCES = { error: '报错', credit: 'Credit 读数', manual: '手动暂停' };
 const MAX_SAMPLE = 300;
 
@@ -31,6 +33,16 @@ const BUILTIN_RULES = Object.freeze([
     flags: 'i',
     sample: 'API Error token消耗过快， 已达到4亿上限',
     origin: '2026-10-18 用户转述（公司 Hub 会话卡片视图），精确原文待直查 errors 段核对',
+  }),
+  // 样本 2（2026-10-19 00:18 公司 v2.1.13 直查 errors 段取回的原文，个人账号通道会话原生记录里的结构化 API 错误，出现 2 次）：
+  //   「API Error: 模型 "deepseek-v4-flash-0731" 不存在或配置有误，请检查模型配置」。这个号的配置（settings.json 的 model）写了它没权限的模型，
+  //   每次开会话都会报，不会自己恢复：只对这个号请求这个模型时避让，第 1 个捕获组是被请求的模型。全角半角冒号、各种引号、空格宽松。
+  Object.freeze({
+    id: 'codeagent-model-config-v1', kind: 'model-config', where: ['transcript', 'screen'],
+    pattern: 'API\\s*Error[\\s\\S]{0,160}?模\\s*型\\s*[:：]?\\s*\\\\?["\'“”‘’「」『』＂]?\\s*([A-Za-z0-9][A-Za-z0-9._:/-]{0,79}?)\\s*\\\\?["\'“”‘’「」『』＂]?\\s*不\\s*存\\s*在\\s*或(?:\\s*者)?\\s*配\\s*置\\s*有\\s*误',
+    flags: 'i',
+    sample: 'API Error: 模型 "deepseek-v4-flash-0731" 不存在或配置有误，请检查模型配置',
+    origin: '2026-10-19 00:18 公司 v2.1.13 直查 errors 段原文（个人账号通道会话的结构化 API 错误）',
   }),
 ]);
 
@@ -104,7 +116,9 @@ function matchText(text, rules, where, now = Date.now()) {
     const start = Math.max(0, s.lastIndexOf('\n', m.index) + 1);
     const endNl = s.indexOf('\n', m.index + m[0].length);
     const line = s.slice(start, endNl < 0 ? undefined : endNl).trim();
-    return { rule, text: line.slice(0, MAX_SAMPLE), resetAt: rule.reset ? parseReset(s, rule.reset, now) : null };
+    // 模型配置有误：第 1 个捕获组是被请求的模型（只认长得像模型名的）
+    const model = rule.kind === 'model-config' && m[1] && /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,79}$/.test(m[1]) ? m[1] : '';
+    return { rule, text: line.slice(0, MAX_SAMPLE), resetAt: rule.reset ? parseReset(s, rule.reset, now) : null, ...(rule.kind === 'model-config' ? { model } : {}) };
   }
   return null;
 }
@@ -160,14 +174,16 @@ function redactSnippet(text, { scrub = s => s } = {}) {
 function readState(dataDir, fsModule = fs) {
   try {
     const raw = JSON.parse(fsModule.readFileSync(stateFile(dataDir), 'utf8'));
-    return { accounts: raw && typeof raw.accounts === 'object' && raw.accounts ? raw.accounts : {}, credit: raw && typeof raw.credit === 'object' && raw.credit ? raw.credit : {} };
-  } catch { return { accounts: {}, credit: {} }; }
+    const obj = v => (v && typeof v === 'object' && !Array.isArray(v) ? v : {});
+    return { accounts: obj(raw && raw.accounts), credit: obj(raw && raw.credit), models: obj(raw && raw.models) };
+  } catch { return { accounts: {}, credit: {}, models: {} }; }
 }
 function writeState(dataDir, state, fsModule = fs) {
   const root = poolRoot(dataDir);
   fsModule.mkdirSync(root, { recursive: true });
   const file = stateFile(dataDir), tmp = `${file}.${process.pid}.tmp`;
-  fsModule.writeFileSync(tmp, JSON.stringify({ schema: 1, accounts: state.accounts || {}, credit: state.credit || {} }, null, 1) + '\n', 'utf8');
+  // models：按「号 → 被请求的模型」记的模型配置避让（2026-10-19），和整号避让分开存，互不覆盖。
+  fsModule.writeFileSync(tmp, JSON.stringify({ schema: 1, accounts: state.accounts || {}, credit: state.credit || {}, models: state.models || {} }, null, 1) + '\n', 'utf8');
   // Windows 上目标文件正被别处读（杀毒、另一个读者）时 rename 偶尔失败：重试一次，仍失败就抛给调用方（识别那边不前进读取位置，下一轮重来）
   try { fsModule.renameSync(tmp, file); }
   catch { fsModule.renameSync(tmp, file); }
@@ -211,12 +227,85 @@ function markAvoid(dataDir, key, { source = 'error', kind = 'quota', reason = ''
 function clearAvoid(dataDir, key, { by = 'manual' } = {}, now = Date.now(), fsModule = fs) {
   const state = readState(dataDir, fsModule);
   const prev = state.accounts[key];
+  // 「恢复派活」统统解除：整号避让和这个号的模型配置避让
+  const models = state.models[key] && Object.keys(state.models[key]).length ? state.models[key] : null;
   delete state.accounts[key];
+  delete state.models[key];
   prune(state, now);
   writeState(dataDir, state, fsModule);
-  return { cleared: !!prev && isActive(prev, now), previous: prev || null, by };
+  return { cleared: (!!prev && isActive(prev, now)) || !!models, previous: prev || (models ? Object.values(models)[0] : null), by };
 }
 function prune(state, now) { for (const [k, e] of Object.entries(state.accounts)) if (!isActive(e, now)) delete state.accounts[k]; }
+
+// ---- 模型配置避让（2026-10-19，样本见内置规则 codeagent-model-config-v1）----
+// 键：号（personal / 号池编号）→ 被请求的模型（小写；'*' = 报错里没写模型，按这个号请求的任何模型算）。
+// 没有自动到期：配置不变就一直会报。probeAt 之前避让；到了 probeAt 放行一次试探（noteModelProbe 把下一次推后 6 小时），
+// 试探又报同样的错就重新开始计 6 小时；这个号用这个模型正常答出来（quota-watch 从原生记录看到）、手动恢复派活、
+// 远程修正了个人账号默认模型时解除。
+const modelKey = m => String(m || '').trim().toLowerCase() || '*';
+function markModelAvoid(dataDir, key, { model = '', reason = '', sample = '', ruleId = null, session = null, have = [], probeMs = MODEL_PROBE_MS } = {}, now = Date.now(), fsModule = fs) {
+  if (!validKey(key)) throw new Error('账号编号无效');
+  const state = readState(dataDir, fsModule);
+  const mk = modelKey(model);
+  const list = state.models[key] && typeof state.models[key] === 'object' ? state.models[key] : {};
+  const prev = list[mk];
+  const entry = {
+    source: 'error', kind: 'model-config', model: String(model || '').trim() || '*', account: key === 'personal' ? 'personal' : 'pool',
+    have: (Array.isArray(have) ? have : []).map(String).filter(Boolean).slice(0, 12),
+    reason: String(reason || KINDS['model-config']).slice(0, 160),
+    since: prev ? prev.since : now, lastHitAt: now, probeAt: now + probeMs, until: null,
+    hits: (prev ? Number(prev.hits) || 0 : 0) + 1, probes: prev ? Number(prev.probes) || 0 : 0,
+    ...(ruleId ? { ruleId } : {}), ...(session ? { session: String(session).slice(0, 8) } : {}), ...(sample ? { sample: String(sample).slice(0, MAX_SAMPLE) } : {}),
+  };
+  // 新标记、或原来在试探窗口里（已放行）又撞到：算「变化」，通道据此提示并推号表
+  const changed = !prev || Number(prev.probeAt) <= now;
+  state.models[key] = { ...list, [mk]: entry };
+  writeState(dataDir, state, fsModule);
+  return { entry, changed };
+}
+// 全部模型配置避让（含已到试探时间、等着被试一次的）：{ 号: { 模型小写: 记录 } }
+function modelAvoidAll(dataDir, fsModule = fs) { return readState(dataDir, fsModule).models; }
+// 此刻避让中的（还没到试探时间）：{ 号: { 模型小写: 记录 } }
+function activeModelAvoid(dataDir, now = Date.now(), fsModule = fs) {
+  const out = {};
+  for (const [key, list] of Object.entries(modelAvoidAll(dataDir, fsModule))) {
+    for (const [mk, e] of Object.entries(list || {})) if (e && Number(e.probeAt) > now) (out[key] = out[key] || {})[mk] = e;
+  }
+  return out;
+}
+// 某个号请求某个模型时的记录（先找这个模型，再找 '*'）。
+function modelAvoidEntry(map, key, model) {
+  const list = map && map[key];
+  if (!list) return null;
+  return list[modelKey(model)] || list['*'] || null;
+}
+// 通道把这个号派给这个模型时调用：在试探窗口里（probeAt 已过）就记一次试探、把下一次推后 6 小时，返回 true。
+function noteModelProbe(dataDir, key, model, now = Date.now(), { probeMs = MODEL_PROBE_MS, fsModule = fs } = {}) {
+  if (!validKey(key)) return false;
+  const state = readState(dataDir, fsModule);
+  const list = state.models[key];
+  if (!list) return false;
+  const mk = list[modelKey(model)] ? modelKey(model) : list['*'] ? '*' : null;
+  if (!mk || Number(list[mk].probeAt) > now) return false;
+  list[mk] = { ...list[mk], probeAt: now + probeMs, probes: (Number(list[mk].probes) || 0) + 1, lastProbeAt: now };
+  writeState(dataDir, state, fsModule);
+  return true;
+}
+// 解除：model 不填 = 这个号的全部模型配置避让。返回解除的条数。
+function clearModelAvoid(dataDir, key, model = null, fsModule = fs) {
+  const state = readState(dataDir, fsModule);
+  const list = state.models[key];
+  if (!list) return 0;
+  let n = 0;
+  if (model == null) { n = Object.keys(list).length; delete state.models[key]; }
+  else {
+    const mk = modelKey(model);
+    if (list[mk]) { delete list[mk]; n = 1; }
+    if (!Object.keys(list).length) delete state.models[key];
+  }
+  if (n) writeState(dataDir, state, fsModule);
+  return n;
+}
 
 // 记一次 Credit 读数，并按读数决定避让：
 //   读数 ≤ 阈值 → 标避让（source credit，默认 1 小时后再看）；
@@ -298,16 +387,31 @@ function keyForAlias(aliases, alias) {
 
 // 给人看的一句话：「额度上限（Credit 读数），预计 18:30 恢复」。
 const clock = ms => { const d = new Date(Number(ms) + 8 * 3600000); return d.toISOString().slice(5, 16).replace('T', ' '); };
-function describeAvoid(entry) {
+// 怎么修（审核 2026-10-19）：个人账号可经远程维护改默认模型；号池的号由 Hub 管配置，提示核对。
+function modelConfigHint(entry) {
+  if (!entry || entry.kind !== 'model-config') return '';
+  const have = Array.isArray(entry.have) ? entry.have : [];
+  if (entry.account === 'personal') return `；可用 set-personal-model 改成 ${have.length === 1 ? have[0] : '权限清单里的模型'}`;
+  return '；请在「账号与号池」里核对这个号的模型配置';
+}
+function describeAvoid(entry, now = Date.now()) {
   if (!entry) return '';
+  // 模型配置有误：「模型配置有误：请求了 X，该号只有 Y；配置不变就一直避让，… 起允许试一次」
+  if (entry.kind === 'model-config') {
+    const have = Array.isArray(entry.have) && entry.have.length ? entry.have.join('、') : '（权限清单未知）';
+    const asked = entry.model && entry.model !== '*' ? entry.model : '（报错里没写模型）';
+    const probe = Number(entry.probeAt) > now ? `${clock(entry.probeAt)} 起允许试一次` : '现在允许试一次';
+    return `模型配置有误：请求了 ${asked}，该号只有 ${have}；配置不变就一直避让，${probe}${modelConfigHint(entry)}`;
+  }
   const what = entry.source === 'manual' ? '手动暂停' : `${KINDS[entry.kind] || '额度'}（${SOURCES[entry.source] || entry.source}）`;
   const until = entry.until == null ? '直到手动恢复' : `预计 ${clock(entry.until)} 恢复`;
   return `${what}，${until}`;
 }
 
 module.exports = {
-  BUILTIN_RULES, KINDS, SOURCES, DEFAULT_RETRY_MS, RULES_FILE, STATE_FILE,
+  BUILTIN_RULES, KINDS, SOURCES, DEFAULT_RETRY_MS, MODEL_PROBE_MS, RULES_FILE, STATE_FILE,
   rulesFile, stateFile, compileRule, loadRules, matchText, isSuspect, parseReset, redactSnippet,
   readState, activeAvoid, creditReadings, markAvoid, clearAvoid, recordCredit, isActive,
+  markModelAvoid, modelAvoidAll, modelConfigHint, activeModelAvoid, modelAvoidEntry, noteModelProbe, clearModelAvoid, modelKey,
   aliasMap, normalizeAlias, keyForAlias, describeAvoid, clock, ALIAS_FILE, MATCH_INPUT_CHARS, MAX_RESET_MS,
 };

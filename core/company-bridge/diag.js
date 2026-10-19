@@ -393,7 +393,10 @@ function poolAliases(raw, dataDir = null) {
 function avoidView(e) {
   if (!e) return null;
   const Q = require('../codeagent-quota');
-  return { source: e.source, kind: e.kind, label: Q.describeAvoid(e), since: e.since || null, until: e.until == null ? null : Number(e.until), sample: e.sample || '', hits: Number(e.hits) || 1 };
+  // 模型配置避让（2026-10-19）：没有到期时间，until 给下一次允许试探的时间，另带被请求的模型和这个号的权限清单。
+  const until = e.until != null ? Number(e.until) : e.kind === 'model-config' && e.probeAt ? Number(e.probeAt) : null;
+  return { source: e.source, kind: e.kind, label: Q.describeAvoid(e), since: e.since || null, until, sample: e.sample || '', hits: Number(e.hits) || 1,
+    ...(e.kind === 'model-config' ? { model: e.model || '', have: Array.isArray(e.have) ? e.have : [], probes: Number(e.probes) || 0 } : {}) };
 }
 function creditView(c) { return c && Number.isFinite(Number(c.remaining)) ? { remaining: Number(c.remaining), pct: Number(c.pct), bucket: c.bucket || '', at: c.at || null } : null; }
 function pool(raw, { avoid = {}, credit = {}, aliases: given = null, ...extra } = {}) {
@@ -401,8 +404,17 @@ function pool(raw, { avoid = {}, credit = {}, aliases: given = null, ...extra } 
   const aliases = given || poolAliases(raw);
   const pick = (a, alias, key) => ({ alias, state: POOL_STATE[a.state] || String(a.state || '未知'), ready: a.state === 'ready',
     activeSessions: Number(a.activeSessions) || 0, defaultModel: a.defaultModel ? String(a.defaultModel) : '', models: (Array.isArray(a.models) ? a.models : []).map(String).slice(0, 20),
-    ...(a.modelsProbedAt ? { modelsProbedAt: a.modelsProbedAt } : {}), ...(a.duplicateOf ? { duplicate: true } : {}), ...(a.sameAsPersonal ? { sameAsPersonal: true } : {}),
-    ...(a.routeSwitched ? { routeSwitched: true } : {}), avoid: avoidView(avoid[key]), credit: creditView(credit[key]) });
+    // 清单是否来自「获取模型权限」的探测文件（审核 2026-10-19：个人账号的修正要看它）
+    modelsAuthoritative: !!(a.modelsAuthoritative ?? a.authoritative), modelsProbedAt: a.modelsProbedAt || null,
+    modelsSource: a.modelsProbedAt ? 'probe' : (a.modelsAuthoritative ?? a.authoritative) ? 'enterprise' : 'config',
+    ...(a.duplicateOf ? { duplicate: true } : {}), ...(a.sameAsPersonal ? { sameAsPersonal: true } : {}),
+    ...(key === 'personal' && Array.isArray(a.answeredModels) ? { answeredModels: a.answeredModels } : {}),
+    ...(key === 'personal' && a.configModel != null ? { configModel: String(a.configModel) } : {}),
+    ...(key === 'personal' && a.lastBackup ? { lastBackup: { model: a.lastBackup.model == null ? null : String(a.lastBackup.model), at: String(a.lastBackup.name || '').replace(/^settings\.json\.hub-backup-/, '') } } : {}),
+    ...(a.routeSwitched ? { routeSwitched: true } : {}), avoid: avoidView(avoid[key]), credit: creditView(credit[key]),
+    // 默认模型和权限不符（个人账号，2026-10-19）：settings.json 里写的值和权限清单，号表据此提示、可远程修正（set-personal-model）
+    ...(a.configMismatch ? { configMismatch: { written: String(a.configMismatch.written || ''), models: (a.configMismatch.models || []).map(String).slice(0, 12), suggest: String(a.configMismatch.suggest || ''),
+      note: require('../codeagent-model-route').describeMismatch(a.configMismatch) } } : {}) });
   const accounts = [];
   if (raw.personal) accounts.push(pick(raw.personal, '个人', 'personal'));
   for (const a of raw.accounts || []) accounts.push(pick(a, aliases.get(a.id), a.id));
@@ -496,7 +508,9 @@ async function codeagent(bridge, deps, sys, ctx, poolRaw, poolError) {
   }
   if (poolError) out.loginError = errText(poolError);
   const p = poolRaw?.personal;
-  out.personal = p ? { state: POOL_STATE[p.state] || String(p.state || '未知'), ready: p.state === 'ready', expiresAt: Number(p.expiresAt) || null, defaultModel: p.defaultModel || '' } : null;
+  out.personal = p ? { state: POOL_STATE[p.state] || String(p.state || '未知'), ready: p.state === 'ready', expiresAt: Number(p.expiresAt) || null, defaultModel: p.defaultModel || '',
+    ...(p.configModel != null ? { configModel: String(p.configModel || '') } : {}), ...(p.configMismatch ? { configNote: require('../codeagent-model-route').describeMismatch(p.configMismatch) } : {}),
+    ...(p.configSource ? { configSource: p.configSource } : {}), ...(p.settingsMtime ? { settingsMtime: p.settingsMtime } : {}) } : null;
   const accounts = poolRaw?.accounts || [];
   out.pool = { total: accounts.length, ready: accounts.filter(a => a.state === 'ready').length, needLogin: accounts.filter(a => a.state !== 'ready').length };
   // 额度
@@ -526,7 +540,7 @@ async function codeagent(bridge, deps, sys, ctx, poolRaw, poolError) {
   out.quotaScreens = { live: live.length, read };
   // 每个号的避让状态（额度感知，2026-10-18）
   try {
-    const avoid = bridge.avoidMap ? bridge.avoidMap() : {};
+    const avoid = bridge.avoidViewMap ? bridge.avoidViewMap() : bridge.avoidMap ? bridge.avoidMap() : {};
     out.avoid = Object.entries(avoid).map(([k, e]) => ({ account: aliases.get(k) || (k === 'personal' ? '个人' : '号池'), ...avoidView(e) }));
   } catch (error) { out.avoidError = errText(error); }
   if (!out.quota.length && !out.quotaNote) out.quotaNote = live.length ? '开着的 CodeAgent 会话屏幕上没看到 Credit 行（Stats 面板没显示）' : '没有开着的 CodeAgent 会话，读不到额度';
@@ -696,8 +710,11 @@ async function collect({ bridge, deps = bridge.deps, sections, lines = DEFAULT_L
   if (sections.includes('pool')) await run('pool', () => {
     if (poolError) throw poolError;
     let avoid = {}, credit = {};
-    try { avoid = bridge.avoidMap ? bridge.avoidMap() : {}; credit = require('../codeagent-quota').creditReadings(deps.dataDir); } catch { /* 读不到避让状态不挡号池段 */ }
-    return pool(poolRaw, { usePool: !!bridge.settings().usePool, models: bridge.modelTableSafe?.() || null, avoid, credit, aliases: ctx.aliases });
+    try { avoid = bridge.avoidViewMap ? bridge.avoidViewMap() : bridge.avoidMap ? bridge.avoidMap() : {}; credit = require('../codeagent-quota').creditReadings(deps.dataDir); } catch { /* 读不到避让状态不挡号池段 */ }
+    // 个人账号实际作答过的模型（set-personal-model 的另一条权限依据）
+    let raw = poolRaw;
+    if (raw && raw.personal && bridge.personalAnsweredModels) { try { raw = { ...raw, personal: { ...raw.personal, answeredModels: bridge.personalAnsweredModels() } }; } catch { /* 读不到就不带 */ } }
+    return pool(raw, { usePool: !!bridge.settings().usePool, models: bridge.modelTableSafe?.() || null, avoid, credit, aliases: ctx.aliases });
   });
   if (sections.includes('errors')) await run('errors', () => errorsSection(bridge, ctx.aliases, errorsLimit));
   if (sections.includes('logs')) await run('logs', () => logs(sys, path.join(deps.dataDir, 'logs'), lines));

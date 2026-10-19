@@ -29,6 +29,8 @@ function sanitizeModelTable(raw) {
         defaultModel: MODEL_ID.test(String(a.defaultModel || '')) ? String(a.defaultModel) : '', activeSessions: int(a.activeSessions), working: int(a.working), free: int(a.free),
         avoid: av ? { kind: String(av.kind || 'quota').slice(0, 20), source: String(av.source || 'error').slice(0, 20), since: Number(av.since) || null,
           until: av.until == null ? null : Number(av.until) || null, reason: String(av.reason || '').replace(/[\r\n]+/g, ' ').slice(0, 300) } : null,
+        // 默认模型和权限不符（个人账号，2026-10-19）：一句话说明，模型名原样
+        ...(a.configNote ? { configNote: String(a.configNote).replace(/[\r\n]+/g, ' ').slice(0, 200) } : {}),
         credit: cr ? { remaining: Number(cr.remaining), pct: Number(cr.pct) || 0, bucket: String(cr.bucket || '').slice(0, 20), at: Number(cr.at) || null } : null });
     }
   }
@@ -52,7 +54,8 @@ function describeAccounts(table) {
   return ['各号（account 参数用这里的代称）：', ...rows.map(a => {
     const state = a.avoid ? `避让中：${a.avoid.reason || '额度用完或限流'}` : `可用，还能并行 ${a.free} 个`;
     const credit = a.credit ? `，Credit 剩 ${a.credit.remaining}（${a.credit.pct}%${a.credit.bucket ? '，' + a.credit.bucket : ''}）` : '';
-    return `- ${a.alias}：${a.defaultModel || (a.models[0] || '模型未知')}${a.models.length > 1 ? `（可切：${a.models.join('、')}）` : ''}，进行中 ${a.activeSessions} 个，${state}${credit}`;
+    const note = a.configNote ? `；${a.configNote}（可用 company_act set-personal-model 修正）` : '';
+    return `- ${a.alias}：${a.defaultModel || (a.models[0] || '模型未知')}${a.models.length > 1 ? `（可切：${a.models.join('、')}）` : ''}，进行中 ${a.activeSessions} 个，${state}${credit}${note}`;
   })];
 }
 

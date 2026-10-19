@@ -86,7 +86,7 @@ class QuotaWatch {
       const creditSeen = new Set();
       for (const x of live) {
         const key = this.sessionKey(x.s);
-        try { this.scanTranscript(x.id, x.s, key, rules, cfg, marked); } catch (error) { this.bridge.bridgeLog?.(`quota transcript ${String(x.id).slice(0, 8)} 读不了：${error.message}`); }
+        try { this.scanTranscript(x.id, x.s, key, rules, cfg, marked, cleared); } catch (error) { this.bridge.bridgeLog?.(`quota transcript ${String(x.id).slice(0, 8)} 读不了：${error.message}`); }
         try { await this.scanScreen(x, key, rules, cfg, marked, cleared, creditSeen); } catch { /* 这个会话的屏幕读不了，看下一个 */ }
       }
     } finally { this.scanning = false; }
@@ -100,7 +100,7 @@ class QuotaWatch {
     for (const [id, h] of [...this.hits]) if (!alive.has(id) && this.now() - h.at > HIT_KEEP_MS) this.hits.delete(id);
   }
 
-  scanTranscript(id, s, key, rules, cfg, marked) {
+  scanTranscript(id, s, key, rules, cfg, marked, cleared = []) {
     const file = s.transcriptPath;
     if (!file) return;
     let size;
@@ -114,11 +114,23 @@ class QuotaWatch {
     // 接着上次读到的行尾，或从文件头读：第一行是完整的；否则（第一次只读尾部、或积压太多跳过了一段）先跳过半行
     const { text, consumed } = completeLines(Buffer.isBuffer(buf) ? buf : Buffer.from(String(buf), 'utf8'), start === 0 || (known && start === from));
     if (!consumed) return;
+    // 这个号有模型配置避让记录时，也看正常回答的模型：用那个模型正常答出来了（试探成功、或配置已改好），就解除那一条。
+    let watching = null;
+    try { watching = Q.modelAvoidAll(this.dataDir)[key] || null; } catch { watching = null; }
     for (const line of text ? text.split('\n') : []) {
-      if (!line.includes('rror')) continue; // 快速跳过：API Error / isApiErrorMessage / error 都含它
+      const maybeAnswer = watching && line.includes('"assistant"') && line.includes('"model"');
+      if (!line.includes('rror') && !maybeAnswer) continue; // 快速跳过：API Error / isApiErrorMessage / error 都含它
       let o = null; try { o = JSON.parse(line); } catch { continue; }
       const e = apiErrorEntry(o);
-      if (!e) continue;
+      if (!e) {
+        const used = maybeAnswer && o && o.type === 'assistant' && o.message && typeof o.message.model === 'string' ? o.message.model : '';
+        if (used && used !== '<synthetic>' && watching[Q.modelKey(used)] && Q.clearModelAvoid(this.dataDir, key, used)) {
+          delete watching[Q.modelKey(used)];
+          cleared.push(key);
+          this.bridge.bridgeLog?.(`model-config cleared ${key === 'personal' ? 'personal' : 'pool'} session=${String(id).slice(0, 8)} model=${used}：用这个模型正常答出来了`);
+        }
+        continue;
+      }
       const at = e.at || this.now();
       const hit = Q.matchText(e.text, rules, 'transcript', this.now());
       // 样本：命中规则的都留；没命中的只留通道会话里以 API Error 开头的
@@ -127,7 +139,7 @@ class QuotaWatch {
       }
       // 太久以前的报错（超过一个重试周期）只留作样本，不再避让。写避让状态失败就不前进读取位置，下一轮再读一次（不丢这次命中）。
       if (hit && this.now() - at < cfg.retryMs) {
-        try { this.applyHit({ id, key, hit, at, cfg, marked }); }
+        try { this.applyHit({ id, key, hit, at, cfg, marked, s }); }
         catch (error) { this.bridge.bridgeLog?.(`quota hit ${String(id).slice(0, 8)} 记不下避让状态：${error.message}，下一轮重读`); return; }
       }
     }
@@ -172,7 +184,30 @@ class QuotaWatch {
     this.visible.set(id, now);
   }
 
-  applyHit({ id, key, hit, at, cfg, marked }) {
+  applyHit({ id, key, hit, at, cfg, marked, s = null }) {
+    // 模型配置有误（2026-10-19）：只对「这个号 + 被请求的模型」避让，不设自动到期，6 小时放行一次试探（codeagent-quota.js markModelAvoid）。
+    if (hit.rule.kind === 'model-config') {
+      const sample = Q.redactSnippet(hit.text, { scrub: t => this.bridge.scrubText(t) });
+      // 报错里没写模型时，按这个会话此刻请求的模型（通道指定的，或预计模型）记；都没有就记成这个号的任何模型（'*'）
+      const model = hit.model || (s && (s.codeagentRouteModel || (s.currentModel && s.currentModel.id))) || '';
+      let have = [], account = null;
+      try { account = (this.bridge.routeAccountsRaw?.() || []).find(x => x.key === key) || null; have = account ? (account.models || []).slice() : []; } catch { have = []; }
+      // 用户自己开的会话（在里面用 /model 临时换过模型等）报错不标记（审核 2026-10-19）：只认通道会话，
+      // 或报错里的模型就是这个号此刻配置里会请求的模型（新开会话一定也会报）。
+      const configModel = account ? String(account.configModel || account.defaultModel || '') : '';
+      if (!(s && s.purpose === 'company-bridge') && !(model && configModel && Q.modelKey(model) === Q.modelKey(configModel))) {
+        this.bridge.bridgeLog?.(`model-config skip ${key === 'personal' ? 'personal' : 'pool'} session=${String(id).slice(0, 8)} model=${model || '?'}：不是通道会话，也不是这个号配置里的模型`);
+        return;
+      }
+      const r = Q.markModelAvoid(this.dataDir, key, { model, have, reason: `${Q.KINDS['model-config']}：${sample}`, ruleId: hit.rule.id, session: id, sample }, this.now());
+      const prev = this.hits.get(id);
+      if (!prev || prev.at < at) this.hits.set(id, { at, key, ruleId: hit.rule.id, kind: 'model-config', text: sample, model: r.entry.model, resetAt: r.entry.probeAt });
+      if (r.changed) {
+        marked.push(key);
+        this.bridge.bridgeLog?.(`model-config hit ${key === 'personal' ? 'personal' : 'pool'} session=${String(id).slice(0, 8)} model=${r.entry.model} 避让到 ${Q.clock(r.entry.probeAt)}（之后允许试一次）`);
+      }
+      return;
+    }
     const resetAt = hit.resetAt && hit.resetAt > this.now() ? hit.resetAt : at + cfg.retryMs;
     const sample = Q.redactSnippet(hit.text, { scrub: t => this.bridge.scrubText(t) });
     const r = Q.markAvoid(this.dataDir, key, { source: 'error', kind: hit.rule.kind, reason: `${Q.KINDS[hit.rule.kind] || '额度'}：${sample}`, until: resetAt, ruleId: hit.rule.id, session: id, sample, retryMs: cfg.retryMs }, this.now());
