@@ -13,6 +13,14 @@ function registerCompanyAssistantIpc(ipcMain, service) {
     login: async () => ({ ok: true, flow: await service.login() }),
     'setup-calendar': request => service.setupCalendar(String(request?.email || '')),
     // 「手机」设置页（2026-10-18）：选群、开关、推送范围；测试消息只发到选定的群。
+    // 找 welink-cli（2026-10-19）：「再找一次」立刻全盘找；「手动选择…」弹系统选择框。
+    'find-cli': async () => ({ ok: true, search: await service.findCli({ force: true }) }),
+    'pick-cli': async () => {
+      const { dialog, BrowserWindow } = require('electron');
+      const r = await dialog.showOpenDialog(BrowserWindow.getFocusedWindow() || undefined, { title: '选择 welink-cli', properties: ['openFile'], filters: [{ name: 'welink-cli', extensions: ['exe', 'cmd'] }] });
+      if (r.canceled || !r.filePaths[0]) return { ok: true, canceled: true };
+      return service.useCliPath(r.filePaths[0]);
+    },
     'phone-status': () => ({ ok: true, phone: service.phone.status(), conversations: service.status().conversations }),
     'phone-settings': request => service.setPhone(request || {}),
     'phone-test': async () => ({ ok: await service.phone.send('测试消息：Hub 能往这个群发消息。在这里直接跟我说话就行。', 'test') }),

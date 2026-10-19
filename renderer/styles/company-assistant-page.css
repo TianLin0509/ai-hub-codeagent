@@ -108,3 +108,28 @@
 .session-sec-header.sec-resident{padding-left:10px}
 .session-item.resident-placeholder{cursor:pointer;color:#4a5568}
 .session-item.resident-placeholder .sl-time{color:#3478f6}
+/* ── 设置面板改版（2026-10-19 用户：设置页滚轮不好用、整体有点丑） ──
+   以前设置面板插在对话上面、没有自己的滚动条：内容一长就把输入框挤出屏幕，屏幕矮时底部被截掉。
+   现在设置盖在对话区上（盖住到页面底），卡片自己滚动；分页标签固定在顶上、「保存」固定在底下。
+   分组从「带标题的边框盒」改成细线分隔的小节（同「桌宠」分页的样式），输入框、下拉框统一 32px 高。 */
+.ca-panel[data-kind="settings"]{position:absolute;left:0;right:0;bottom:0;top:var(--ca-head-h,57px);z-index:6;width:auto;max-width:none;margin:0;border:0;border-radius:0;padding:18px 28px 24px;background:rgba(243,244,246,.96);overflow-y:auto;overscroll-behavior:contain}
+.ca-panel[data-kind="settings"] .ca-settings{max-width:900px;margin:0 auto;background:#fff;border:1px solid #e3e7ee;border-radius:12px;padding:0 24px;box-shadow:0 6px 24px rgba(15,23,42,.06)}
+.ca-settings-head{position:sticky;top:-18px;z-index:2;background:#fff;margin:0 -24px;padding:16px 24px 12px;border-bottom:1px solid #eef0f4;border-radius:12px 12px 0 0}
+.ca-settings-head h3{font-size:16px}
+.ca-tab{padding:5px 16px}
+.ca-tab-body{padding:6px 0 4px;min-height:220px}
+.ca-settings fieldset{border:0;border-top:1px solid #eef0f4;border-radius:0;margin:0;padding:16px 2px 18px;display:flex;flex-wrap:wrap;align-items:center;gap:10px 24px;min-width:0}
+.ca-tab-body>fieldset:first-child{border-top:0}
+.ca-settings legend{float:left;width:100%;padding:0;margin:0 0 4px;font-size:13.5px;font-weight:600;color:#1b2942}
+.ca-settings fieldset.col{flex-direction:column;align-items:stretch;gap:8px}
+.ca-settings label{display:inline-flex;align-items:center;gap:8px;font-size:13px;color:#2d3748;line-height:1.5}
+.ca-settings input[type=text],.ca-settings input[type=email],.ca-settings input[type=time],.ca-settings select{height:32px;box-sizing:border-box;padding:0 10px;border:1px solid #dfe3ea;border-radius:8px;background:#fff;color:#1b2942;font:inherit;font-size:13px;transition:border-color .12s,box-shadow .12s}
+.ca-settings input[type=text]:focus,.ca-settings input[type=email]:focus,.ca-settings input[type=time]:focus,.ca-settings select:focus{outline:0;border-color:#3478f6;box-shadow:0 0 0 3px rgba(52,120,246,.15)}
+.ca-settings input[type=checkbox]{width:16px;height:16px;accent-color:#3478f6;margin:0}
+.ca-settings .ca-note{margin:0;line-height:1.6}
+.ca-settings .ca-row{margin-top:0}
+.ca-settings .ca-btn{height:32px;box-sizing:border-box;padding:0 14px;display:inline-flex;align-items:center}
+.ca-settings .ca-btn.small{height:28px;padding:0 11px;font-size:12.5px}
+.ca-settings .ca-row.end{position:sticky;bottom:0;z-index:2;background:#fff;margin:0 -24px;padding:12px 24px 16px;border-top:1px solid #eef0f4;border-radius:0 0 12px 12px}
+.ca-settings .ca-src-row{min-height:30px}
+.ca-settings .ca-steps{margin:0;padding-left:20px}

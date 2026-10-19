@@ -11,7 +11,7 @@
 //   2. 改前把原文件整份备份为 settings.json.hub-backup-<时间>（撤销时自己的备份带 -undo 后缀，撤销只认非 -undo 的，连点两次撤销结果一样）；
 //   3. 先写临时文件再改名（失败重试一次）；写完回读核对：model 是目标值、其余键和原来一致；核对不过就用备份还原并报失败；
 //   4. 只影响之后新开的会话：CodeAgent 开会话时读一次 settings.json，已在跑的会话不受影响。
-// 个人账号目录落在号池目录里（配置异常）时拒绝，绝不改号池账号的目录。
+// 个人账号目录和号池（根目录或任何一个号的目录）相同或互相包含时拒绝（先 realpath 再比），绝不改号池账号的目录。
 const fs = require('fs');
 const path = require('path');
 
@@ -86,8 +86,15 @@ function atomicWrite(file, text, fsModule) {
 // 都不满足时拒绝，force:true 才跳过这一条（verifiedBy='force'，调用方回报里标「未经权限校验」）。其余校验照常。
 function setPersonalModel({ dataDir, personalDir, model = '', restore = false, force = false, answered = [], now = Date.now(), fsModule = fs } = {}) {
   if (!personalDir) throw fail('no-personal-dir', '读不到个人账号的配置目录');
-  if (dataDir && inside(personalDir, require('./codeagent-pool').poolRoot(dataDir))) {
-    throw fail('in-pool-dir', '个人账号的配置目录落在号池目录里，这不是个人账号的目录，不改', personalDir);
+  // 个人目录和号池根目录或任何一个号的目录相同、互相包含，都拒绝（先 realpath，Windows 上不分大小写和分隔符；
+  // 2026-10-19 公司真机：旧的按字面路径比对没拦住，改的其实是号 1 的目录，10:01 号 1 开会话又被同步写回）。
+  if (dataDir) {
+    let match = null;
+    try { match = require('./codeagent-pool').poolDirMatch(dataDir, personalDir, { fsModule }); }
+    catch (error) { throw fail('pool-check-failed', '核对个人账号目录是否和号池重叠时出错，没改', error.message); }
+    if (match || inside(personalDir, require('./codeagent-pool').poolRoot(dataDir))) {
+      throw fail('in-pool-dir', '个人账号的配置目录落在号池目录里（或和号池里某个号的目录重叠），这不是个人账号的目录，不改', `${personalDir}${match && match.id ? `（号 ${match.id}）` : ''}`);
+    }
   }
   const file = path.join(personalDir, 'settings.json');
   let raw = null;

@@ -107,6 +107,18 @@ function listAccounts(dataDir, { activeCounts = {}, personalAccountId = '', now 
   });
 }
 
+// 一个目录和号池是否重叠（相同或互相包含；先 realpath，Windows 上不分大小写和分隔符，见 codeagent-config.js dirsOverlap）：
+// 和某个号的目录重叠返回 { id }；只和号池根目录重叠（比如落在号池目录里、但不是哪个号）返回 { id: null }；不重叠返回 null。
+// 个人账号目录必须和号池完全分开：set-personal-model 据此拒绝，直查据此报「个人目录等于号 N 的目录」。
+function poolDirMatch(dataDir, dir, { fsModule = fs } = {}) {
+  if (!dataDir || !dir) return null;
+  const { dirsOverlap } = require('./codeagent-config');
+  for (const a of readRegistry(dataDir).accounts) {
+    if (dirsOverlap(dir, accountDir(dataDir, a.id), { fsModule })) return { id: a.id };
+  }
+  return dirsOverlap(dir, poolRoot(dataDir), { fsModule }) ? { id: null } : null;
+}
+
 // 一个配置目录能用的模型：优先用「一键获取模型权限」从它自己的 /model 菜单读到的（core/codeagent-model-probe.js），
 // 没获取过时退回配置文件里的账号清单。
 function accountModels(dir, fsModule = fs, probedFile = null) {
@@ -250,6 +262,11 @@ const ROUTE_MARKER = 'hub-route-model.json';
 function syncSharedConfig(personalDir, targetDir, fsModule = fs, { routeModel = '', idle = false } = {}) {
   const errors = [];
   let model = '';
+  // 来源和目标是同一个目录（或互相包含）时一个字都不写（2026-10-19 公司真机：个人目录被继承的环境变量指到了号 1 的目录，
+  // 每次号 1 开会话都把号 1 的模型写回「个人」settings.json）。
+  if (require('./codeagent-config').dirsOverlap(personalDir, targetDir, { fsModule })) {
+    return { errors: ['个人账号目录和这个号的目录是同一个（或互相包含），没同步配置'], model: effectiveModel(targetDir, fsModule), skipped: true };
+  }
   fsModule.mkdirSync(targetDir, { recursive: true });
   const readJson = file => { try { return JSON.parse(fsModule.readFileSync(file, 'utf8')); } catch { return null; } };
   try {
@@ -388,6 +405,6 @@ module.exports = {
   POOL_DIR, poolRoot, accountDir, readRegistry, maskAccountId, readCredentials, accountState,
   listAccounts, label, pickAccount, markAssigned, addAccount, setNote, removeAccount,
   personalLastAssignedAt, markPersonalAssigned,
-  projectCredentialsOverride, syncSharedConfig, poolModelOptions,
+  projectCredentialsOverride, syncSharedConfig, poolModelOptions, poolDirMatch,
   chooseAccountModel, personalDefaultModel, readSettingsModel, effectiveModel, ROUTE_MARKER,
 };

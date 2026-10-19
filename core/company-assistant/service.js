@@ -123,7 +123,44 @@ class CompanyAssistant {
   snapshot(day = D.dayKey(this.now())) { return this.read(`raw-${day}.json`, null); }
   brief(day = D.dayKey(this.now())) { return this.read(`brief-${day}.json`, null); }
   changed() { try { this.deps.onChanged?.(); } catch { /* 界面没开 */ } }
-  cli() { return welink.resolveCli({ configured: this.settings().cliPath }); }
+  cli() { return (this.deps.resolveCli || welink.resolveCli)({ configured: this.settings().cliPath }); }
+  // 快速查找没找到：后台全盘找一次（2026-10-19），找到就记进设置；同一次启动里没找到的，6 小时后再自动找。
+  // 「再找一次」按钮传 force 立刻重找；状态给界面显示（正在找 / 找到了 / 没找到）。
+  findCli({ force = false } = {}) {
+    const s = this.cliSearch || { state: 'idle', at: 0 };
+    if (s.state === 'searching') return this.cliSearching;
+    if (!force && s.state === 'notfound' && this.now() - s.at < 6 * 3600000) return Promise.resolve(s);
+    this.cliSearch = { state: 'searching', at: this.now(), stage: 'path' };
+    this.changed();
+    const find = this.deps.findCliDeep || welink.findCliDeep;
+    this.cliSearching = Promise.resolve().then(() => find({ onStage: stage => { this.cliSearch = { ...this.cliSearch, stage }; this.changed(); } }))
+      .catch(() => ({ path: null }))
+      .then(found => {
+        if (found && found.path) {
+          this.setSettings({ cliPath: found.path });
+          this.prepareWorkspace();
+          this.cliSearch = { state: 'found', at: this.now(), path: found.path, via: found.via };
+          // 找到了：马上取数；今天的简报还是「没找到 welink-cli」的空简报就重新生成。
+          void this.refresh({ force: true }).then(() => { const b = this.brief(); if (!b || b.by === 'none') return this.generateBrief(); }).catch(() => {});
+        } else this.cliSearch = { state: 'notfound', at: this.now() };
+        this.cliSearching = null;
+        this.changed();
+        return this.cliSearch;
+      });
+    return this.cliSearching;
+  }
+  // 「手动选择…」：用户选的是 welink-cli.cmd 时换成旁边 node_modules 里的真 exe（不经 shell 调用）。
+  useCliPath(file) {
+    const f = String(file || '').trim();
+    if (!f || !fs.existsSync(f)) throw new Error('这个文件不存在');
+    const exe = /\.exe$/i.test(f) ? f : welink.cliUnder(path.dirname(f));
+    if (!exe) throw new Error('请选 welink-cli.exe（或 npm 全局目录里的 welink-cli.cmd）');
+    this.setSettings({ cliPath: exe });
+    this.prepareWorkspace();
+    this.cliSearch = { state: 'found', at: this.now(), path: exe, via: 'manual' };
+    void this.refresh({ force: true }).then(() => { const b = this.brief(); if (!b || b.by === 'none') return this.generateBrief(); }).catch(() => {});
+    return { ok: true, path: exe };
+  }
   welink(args, opts = {}) { return (this.deps.welinkRun || ((a, o) => welink.run(a, { cli: this.cli(), ...o })))(args, opts); }
 
   start() {
@@ -209,6 +246,7 @@ class CompanyAssistant {
       snap.login = { ...welink.loginState(st.stdout + '\n' + st.stderr), checkedAt: now };
     } catch (error) {
       snap.login = { ok: false, reason: error.code === 'WELINK_MISSING' ? 'missing' : 'error', error: error.message, checkedAt: now };
+      if (error.code === 'WELINK_MISSING') void this.findCli();
     }
     if (snap.login.ok) {
       const meetingsRaw = await runJson('会议', ['meeting', 'query-list', '--type', '1']);
@@ -530,7 +568,7 @@ class CompanyAssistant {
     const next = this.nextBriefAt(s, now);
     const sid = st.sessionId || null;
     return { ok: true, enabled: s.enabled, now, day, settings: s, chips: [...BUILTIN_CHIPS, ...s.chips.map(c => ({ ...c, custom: true }))],
-      cliFound: !!this.cli(), login: snap?.login || null, loginFlow: this.loginFlow, calendarNeedsSetup: !!snap?.calendarNeedsSetup, mailSetup: snap?.mailSetup || null,
+      cliFound: !!this.cli(), cliPath: this.cli() || '', cliSearch: this.cliSearch || { state: 'idle' }, login: snap?.login || null, loginFlow: this.loginFlow, calendarNeedsSetup: !!snap?.calendarNeedsSetup, mailSetup: snap?.mailSetup || null,
       counts: snap ? { meetings: (snap.meetings || []).length, calendar: (snap.calendar || []).length, messages: Object.values(snap.messages || {}).reduce((n, l) => n + l.length, 0), mails: (snap.mails || []).length } : null,
       refreshedAt: snap?.at || null, refreshing: !!this.refreshing, errors: snap?.errors || [], conversations: (snap?.conversations || []).slice(0, 60), scope: snap?.scope || null,
       brief: this.brief(day), nextBriefAt: next, chat: this.chat().slice(-60), job: this.job ? { type: this.job.type, sentAt: this.job.sentAt || null } : null,

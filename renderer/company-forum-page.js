@@ -59,10 +59,11 @@ function createCompanyForumPage({ document, window, ipcRenderer, closeOtherPanel
   }
   function place() {
     if (!page || page.hidden) return;
-    const rail = document.getElementById('scene-rail'), bar = document.getElementById('app-toolbar'), panel = document.getElementById('terminal-panel');
+    // 底边按底栏高度算（同云端页）：以前按会话区算，从「规则」切过来时会话区被规则页藏着，量出来高度是 0，页面被压成一条、和规则页叠在一起（2026-10-19 用户）。
+    const rail = document.getElementById('scene-rail'), bar = document.getElementById('app-toolbar'), footer = document.getElementById('hub-system-footer');
     const left = rail && rail.offsetParent !== null ? rail.getBoundingClientRect().right : 0;
     const top = bar ? bar.getBoundingClientRect().bottom : 0;
-    const bottom = panel ? window.innerHeight - panel.getBoundingClientRect().bottom : 0;
+    const bottom = footer ? footer.getBoundingClientRect().height : 0;
     Object.assign(page.style, { left: left + 'px', top: top + 'px', bottom: Math.max(0, bottom) + 'px' });
   }
 
@@ -168,7 +169,9 @@ function createCompanyForumPage({ document, window, ipcRenderer, closeOtherPanel
 
   const onResize = () => place();
   async function open() {
-    build(); closeOtherPanels(); window.__assistantHide?.(); window.__wirelessHide?.(); window.__companyAssistantHide?.(); window.setShellNavActive?.('company-forum');
+    build(); closeOtherPanels(); window.__assistantHide?.(); window.__wirelessHide?.(); window.__companyAssistantHide?.();
+    // 规则、写作、研究等整页面板也关掉（同云端页），不然从这些页切过来会叠在一起。
+    for (const name of ['__rulesHide', '__writingHide', '__xresearchHide', '__studyHide', '__ranHide']) window[name]?.(); window.setShellNavActive?.('company-forum');
     page.hidden = false; document.body.classList.add('company-forum-page-open'); place();
     nav()?.classList.add('active');
     window.addEventListener('resize', onResize);

@@ -41,22 +41,89 @@ function checkArgs(args, { allowSetup = false, sendGroup = '' } = {}) {
   return list;
 }
 
-// 找 welink-cli：环境变量（测试用假程序）→ 设置里填的路径 → npm 全局安装位置（.cmd 旁边的真 exe，不经 shell）。
-function resolveCli({ env = process.env, configured = '', fsModule = fs } = {}) {
+// 找 welink-cli（2026-10-19 扩大范围：用户在一台新电脑上装了，Hub 却说没找到——每个人的 npm 全局目录不一样，
+// 有人改到 D:\nodejs\node_global，有人用 nvm；装完没重启 Hub 时，Hub 的 PATH 也还是旧的）。
+// 快速查找（同步、只看文件在不在）：环境变量（测试用假程序）→ 设置里记住的路径 → 各个 npm 全局目录 → where。
+// 还找不到就交给 findCliDeep 在后台全盘找，找到后记进设置，下次直接用。
+const PKG_EXE = ['node_modules', '@welink', 'welink-cli', 'welink-cli.exe'];
+function cliUnder(dir, fsModule = fs) {
+  if (!dir) return null;
+  for (const p of [path.join(dir, ...PKG_EXE), path.join(dir, 'welink-cli.exe')]) { try { if (fsModule.existsSync(p)) return p; } catch { /* 读不了就跳过 */ } }
+  return null;
+}
+// npm 全局目录的候选：npm 配置文件里的 prefix、环境变量、nvm / pnpm / volta 的常见位置。
+function npmPrefixes(env = process.env, fsModule = fs) {
+  const out = [];
+  const add = p => { if (p && !out.includes(p)) out.push(p); };
+  const expand = v => String(v).trim().replace(/^["']|["']$/g, '').replace(/\$\{([^}]+)\}|%([^%]+)%/g, (_, a, b) => env[a || b] || '');
+  add(env.npm_config_prefix || env.NPM_CONFIG_PREFIX);
+  for (const rc of [env.USERPROFILE && path.join(env.USERPROFILE, '.npmrc'), env.APPDATA && path.join(env.APPDATA, 'npm', 'etc', 'npmrc')]) {
+    if (!rc) continue;
+    try { const m = /^\s*prefix\s*=\s*(.+?)\s*$/m.exec(fsModule.readFileSync(rc, 'utf8')); if (m) add(expand(m[1])); } catch { /* 没有这个文件 */ }
+  }
+  add(env.APPDATA && path.join(env.APPDATA, 'npm'));
+  add(env.NVM_SYMLINK);
+  add(env.ProgramFiles && path.join(env.ProgramFiles, 'nodejs'));
+  add(env.LOCALAPPDATA && path.join(env.LOCALAPPDATA, 'npm'));
+  add(env.PNPM_HOME);
+  add(env.VOLTA_HOME && path.join(env.VOLTA_HOME, 'bin'));
+  return out;
+}
+// 快速查找没找到时，一分钟内不再跑 where（where 是同步的，会卡住主进程；状态每 20 秒查一次）。
+let missCache = 0;
+function resolveCli({ env = process.env, configured = '', fsModule = fs, now = Date.now } = {}) {
   const pick = [env.CLAUDE_HUB_WELINK_CLI, configured].find(p => p && fsModule.existsSync(p));
   if (pick) return pick;
-  const appData = env.APPDATA || '';
-  const exe = path.join(appData, 'npm', 'node_modules', '@welink', 'welink-cli', 'welink-cli.exe');
-  if (appData && fsModule.existsSync(exe)) return exe;
+  for (const dir of npmPrefixes(env, fsModule)) { const hit = cliUnder(dir, fsModule); if (hit) return hit; }
+  const real = env === process.env && fsModule === fs;
+  if (real && now() - missCache < 60000) return null;
   try {
-    const found = execFileSync('where', ['welink-cli'], { encoding: 'utf8', windowsHide: true, timeout: 5000, stdio: ['ignore', 'pipe', 'ignore'] }).split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+    const found = execFileSync('where', ['welink-cli'], { encoding: 'utf8', windowsHide: true, timeout: 5000, stdio: ['ignore', 'pipe', 'ignore'], env }).split(/\r?\n/).map(s => s.trim()).filter(Boolean);
     for (const f of found) {
-      const sibling = path.join(path.dirname(f), 'node_modules', '@welink', 'welink-cli', 'welink-cli.exe');
-      if (fsModule.existsSync(sibling)) return sibling;
+      const sibling = cliUnder(path.dirname(f), fsModule);
+      if (sibling) return sibling;
       if (/\.exe$/i.test(f)) return f;
     }
-  } catch { /* 没装 */ }
+  } catch { /* 没装，或不在 PATH 里 */ }
+  if (real) missCache = now();
   return null;
+}
+
+// 全盘找（异步，后台跑，最多约 2 分钟）：
+//   1) 注册表里最新的 PATH（装完 welink-cli 没重启 Hub 时，Hub 进程的 PATH 是旧的）；
+//   2) npm config get prefix（用最新的 PATH 跑）；
+//   3) 用户目录、各个硬盘里按文件名找 welink-cli.exe（限制深度，跳过 Windows 系统目录）。
+function runText(file, args, { timeoutMs = 15000, env = process.env, execFileImpl = require('node:child_process').execFile } = {}) {
+  return new Promise(resolve => {
+    execFileImpl(file, args, { windowsHide: true, timeout: timeoutMs, encoding: 'utf8', env, maxBuffer: 1024 * 1024 }, (error, stdout) => resolve(error && !stdout ? '' : String(stdout || '')));
+  });
+}
+async function findCliDeep({ env = process.env, fsModule = fs, execFileImpl, timeoutMs = 120000, onStage = () => {}, roots: rootsOverride = null } = {}) {
+  const started = Date.now(), left = () => Math.max(5000, timeoutMs - (Date.now() - started));
+  const expand = v => String(v).replace(/%([^%]+)%/g, (_, k) => env[k] || env[Object.keys(env).find(x => x.toLowerCase() === k.toLowerCase())] || '');
+  onStage('path');
+  const regPath = async key => { const t = await runText('reg.exe', ['query', key, '/v', 'Path'], { execFileImpl }); const m = /Path\s+REG_(?:EXPAND_)?SZ\s+(.+)/i.exec(t); return m ? expand(m[1].trim()) : ''; };
+  const fresh = [await regPath('HKCU\\Environment'), await regPath('HKLM\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Environment')].filter(Boolean).join(';');
+  for (const dir of fresh.split(';').map(s => s.trim()).filter(Boolean)) {
+    const hit = cliUnder(dir, fsModule);
+    if (hit) return { path: hit, via: 'path' };
+    try { if (fsModule.existsSync(path.join(dir, 'welink-cli.cmd'))) { const sib = cliUnder(dir, fsModule); if (sib) return { path: sib, via: 'path' }; } } catch { /* 跳过 */ }
+  }
+  onStage('npm');
+  const npmEnv = fresh ? { ...env, PATH: fresh + ';' + (env.PATH || env.Path || '') } : env;
+  const prefix = (await runText('cmd.exe', ['/d', '/c', 'npm', 'config', 'get', 'prefix'], { env: npmEnv, timeoutMs: 20000, execFileImpl })).trim().split(/\r?\n/).pop();
+  const viaNpm = prefix && cliUnder(prefix.trim(), fsModule);
+  if (viaNpm) return { path: viaNpm, via: 'npm' };
+  onStage('disk');
+  const drives = 'CDEFGH'.split('').map(l => l + ':\\').filter(d => { try { return fsModule.existsSync(d); } catch { return false; } });
+  const roots = rootsOverride || [[env.USERPROFILE, 8], ...drives.map(d => [d, 5])].filter(([r]) => r);
+  for (const [root, depth] of roots) {
+    if (Date.now() - started > timeoutMs) break;
+    const script = `$ErrorActionPreference='SilentlyContinue'; Get-ChildItem -LiteralPath '${String(root).replace(/'/g, "''")}' -Directory -Force | Where-Object { $_.Name -notmatch '^(Windows|\$Recycle\.Bin|System Volume Information|ProgramData)$' } | ForEach-Object { Get-ChildItem -LiteralPath $_.FullName -Filter 'welink-cli.exe' -File -Recurse -Depth ${depth} -Force } | Select-Object -First 1 -ExpandProperty FullName`;
+    const out = (await runText('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], { timeoutMs: left(), execFileImpl })).trim().split(/\r?\n/)[0];
+    if (out && fsModule.existsSync(out)) return { path: out, via: 'disk' };
+  }
+  return { path: null, via: null };
 }
 
 // 跑一条 welink-cli。.js 结尾的是测试用的假程序，用 Hub 自己的程序以 Node 方式运行。
@@ -157,4 +224,4 @@ function qrFromLoginOutput(text) {
   return null;
 }
 
-module.exports = { READ_ONLY, SETUP, checkArgs, resolveCli, run, parseJson, parseJsonBig, groupMessages, groupMembers, loginState, calendarNeedsSetup, qrFromLoginOutput };
+module.exports = { READ_ONLY, SETUP, checkArgs, resolveCli, findCliDeep, npmPrefixes, cliUnder, run, parseJson, parseJsonBig, groupMessages, groupMembers, loginState, calendarNeedsSetup, qrFromLoginOutput };

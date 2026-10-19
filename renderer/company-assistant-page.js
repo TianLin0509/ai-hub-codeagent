@@ -66,6 +66,11 @@ function createCompanyAssistantPage({ document, window, ipcRenderer, openSession
         <div class="ca-foot-note"><span data-slot="job"></span><button type="button" class="ca-link" data-ca="open-session">打开会话</button></div>
       </footer>`;
     document.body.append(page);
+    // Esc 关掉盖在上面的设置。
+    page.addEventListener('keydown', event => {
+      const panel = page.querySelector('[data-slot="panel"]');
+      if (event.key === 'Escape' && panel.dataset.kind === 'settings' && !panel.hidden) { panel.hidden = true; panel.innerHTML = ''; panel.dataset.kind = 'closed'; }
+    });
     page.addEventListener('click', event => {
       const b = event.target.closest('[data-ca]');
       if (b) { event.preventDefault(); void action(b.dataset.ca, b).catch(e => showMessage?.(e.message)); }
@@ -76,17 +81,18 @@ function createCompanyAssistantPage({ document, window, ipcRenderer, openSession
   }
   function place() {
     if (!page || page.hidden) return;
-    const rail = document.getElementById('scene-rail'), bar = document.getElementById('app-toolbar'), panel = document.getElementById('terminal-panel');
+    // 底边按底栏高度算（同云端页）：以前按会话区算，从「规则」切过来时会话区被规则页藏着，量出来高度是 0，页面被压成一条、和规则页叠在一起（2026-10-19 用户）。
+    const rail = document.getElementById('scene-rail'), bar = document.getElementById('app-toolbar'), footer = document.getElementById('hub-system-footer');
     const left = rail && rail.offsetParent !== null ? rail.getBoundingClientRect().right : 0;
     const top = bar ? bar.getBoundingClientRect().bottom : 0;
-    const bottom = panel ? window.innerHeight - panel.getBoundingClientRect().bottom : 0;
+    const bottom = footer ? footer.getBoundingClientRect().height : 0;
     Object.assign(page.style, { left: left + 'px', top: top + 'px', bottom: Math.max(0, bottom) + 'px' });
   }
 
   function status() {
     const d = data, chips = [];
     const login = d.login;
-    if (!d.cliFound) chips.push('<span class="ca-chip bad">没找到 welink-cli</span>');
+    if (!d.cliFound) chips.push(cliChip(d));
     else if (!login) chips.push('<span class="ca-chip">WeLink 状态还没查</span>');
     else if (login.ok) chips.push('<span class="ca-chip ok">WeLink 已登录</span>');
     else chips.push(`<span class="ca-chip warn">${login.reason === 'expired' ? 'WeLink 登录已过期' : 'WeLink 没登录'}</span><button type="button" class="ca-btn small primary" data-ca="login">扫码登录</button>`);
@@ -98,6 +104,13 @@ function createCompanyAssistantPage({ document, window, ipcRenderer, openSession
     return chips.join('');
   }
 
+  // welink-cli 没找到时（2026-10-19）：后台在全盘找就显示进度；找完还没有就给「再找一次」「手动选择…」。
+  const CLI_STAGE = { path: '看系统路径', npm: '问 npm 全局目录', disk: '在各个硬盘里找' };
+  function cliChip(d) {
+    const s = d.cliSearch || {};
+    if (s.state === 'searching') return `<span class="ca-chip run">正在查找 welink-cli…${CLI_STAGE[s.stage] ? '（' + CLI_STAGE[s.stage] + '）' : ''}</span>`;
+    return '<span class="ca-chip bad">没找到 welink-cli</span><button type="button" class="ca-btn small" data-ca="find-cli">再找一次</button><button type="button" class="ca-btn small" data-ca="pick-cli">手动选择…</button>';
+  }
   function loginPanel() {
     const f = data.loginFlow;
     if (!f || f.state === 'ok') return '';
@@ -247,6 +260,9 @@ function createCompanyAssistantPage({ document, window, ipcRenderer, openSession
     if (verb === 'setup-mail') return setupMail(page.querySelector('[data-f="setup-email"]'), page.querySelector('[data-f="setup-msg"]'), button);
     if (verb === 'settings-tab') return openSettings(arg);
     if (verb === 'open-session') return window.__companyAssistantOpenSession();
+    const reopenSettings = () => { const p = page.querySelector('[data-slot="panel"]'); if (p.dataset.kind === 'settings' && !p.hidden) openSettings(); };
+    if (verb === 'find-cli') { button.disabled = true; await call('find-cli'); await load(); reopenSettings(); showMessage?.(data.cliFound ? '找到 welink-cli 了' : '全盘也没找到 welink-cli，可以点「手动选择…」'); return; }
+    if (verb === 'pick-cli') { const r = await call('pick-cli'); if (!r.canceled) { showMessage?.('已用 ' + r.path); await load(); reopenSettings(); } return; }
   }
 
   async function setupMail(input, msg, button) {
@@ -339,7 +355,7 @@ function createCompanyAssistantPage({ document, window, ipcRenderer, openSession
 
   function welinkTab() {
     const d = data, s = d.settings, login = d.login;
-    const loginLine = !d.cliFound ? '<span class="ca-chip bad">没找到 welink-cli</span><span class="ca-note">公司电脑上需先安装 npm 全局包 @welink/welink-cli</span>'
+    const loginLine = !d.cliFound ? cliChip(d) + `<span class="ca-note">${d.cliSearch?.state === 'notfound' ? '全盘也没找到：先安装 npm 全局包 @welink/welink-cli；装在特殊位置的，点「手动选择…」选 welink-cli.exe。' : '会自动在常见位置和各个硬盘里找。'}</span>`
       : login?.ok ? `<span class="ca-chip ok">已登录</span><span class="ca-note">账号 ${esc(login.uid || '')}</span>`
         : `<span class="ca-chip warn">${login?.reason === 'expired' ? '登录已过期' : '没登录'}</span><button type="button" class="ca-btn small primary" data-ca="login">扫码登录</button>`;
     const from = s.emailFrom === 'welink' ? '从 WeLink 账号自动读到' : s.email ? '你填写的' : '';
@@ -349,7 +365,10 @@ function createCompanyAssistantPage({ document, window, ipcRenderer, openSession
       const e = errOf(label);
       return `<div class="ca-src-row"><span>${label}</span>${e ? `<span class="ca-chip warn" title="${esc(e.text)}">没取到</span><span class="ca-note">${esc(e.text)}</span>` : login?.ok && d.refreshedAt ? `<span class="ca-chip ok">已取到 ${n ?? 0} 条</span>` : '<span class="ca-note">—</span>'}</div>`;
     }).join('');
-    return `<fieldset><legend>WeLink 登录</legend><div class="ca-row">${loginLine}</div></fieldset>
+    const VIA = { path: '系统路径里找到的', npm: 'npm 全局目录里找到的', disk: '在硬盘里找到的', manual: '你手动选的' };
+    const cliLine = d.cliFound ? `<fieldset class="col"><legend>welink-cli 位置</legend><div class="ca-row"><span class="ca-chip ok">已找到</span><span class="ca-note" title="${esc(d.cliPath)}">${esc(d.cliPath)}${VIA[d.cliSearch?.via] ? '（' + VIA[d.cliSearch.via] + '）' : ''}</span></div>
+        <div class="ca-row"><button type="button" class="ca-btn small" data-ca="find-cli">重新查找</button><button type="button" class="ca-btn small" data-ca="pick-cli">手动选择…</button></div></fieldset>` : '';
+    return `<fieldset><legend>WeLink 登录</legend><div class="ca-row">${loginLine}</div></fieldset>${cliLine}
       <fieldset class="col"><legend>公司邮箱（邮件和日历要用）</legend>
         <div class="ca-row"><input type="email" data-f="email" placeholder="公司邮箱地址" value="${esc(s.email || '')}"><button type="button" class="ca-btn primary" data-x="mail">${d.calendarNeedsSetup ? '配置邮件和日历' : '重新配置'}</button>${from ? `<span class="ca-note">${from}</span>` : ''}</div>
         <p class="ca-note" data-f="mail-msg">${d.calendarNeedsSetup ? '还没接入。' : '已接入。'}只让 welink-cli 按邮箱找一次公司邮件服务器，不发邮件。</p></fieldset>
@@ -385,6 +404,9 @@ function createCompanyAssistantPage({ document, window, ipcRenderer, openSession
     const panel = page.querySelector('[data-slot="panel"]');
     const current = TABS.some(([k]) => k === tab) ? tab : (panel.dataset.kind === 'settings' && panel.dataset.tab) || 'brief';
     panel.dataset.kind = 'settings'; panel.dataset.tab = current; panel.hidden = false;
+    // 设置盖在对话区上（从标题栏下面盖到页面底），按标题栏的实际高度放。
+    const head = page.querySelector('.ca-head');
+    if (head) page.style.setProperty('--ca-head-h', head.offsetHeight + 'px');
     const s = data.settings;
     panel.innerHTML = `<div class="ca-settings" role="dialog" aria-label="助理设置">
       <div class="ca-settings-head"><h3>助理设置</h3><div class="ca-tabs" role="tablist">${TABS.map(([k, label]) => `<button type="button" role="tab" class="ca-tab${k === current ? ' on' : ''}" aria-selected="${k === current}" data-ca="settings-tab:${k}">${label}</button>`).join('')}</div>
@@ -421,7 +443,9 @@ function createCompanyAssistantPage({ document, window, ipcRenderer, openSession
 
   const onResize = () => place();
   async function open() {
-    build(); closeOtherPanels(); window.__assistantHide?.(); window.__wirelessHide?.(); window.__companyForumHide?.(); window.setShellNavActive?.('company-assistant');
+    build(); closeOtherPanels(); window.__assistantHide?.(); window.__wirelessHide?.(); window.__companyForumHide?.();
+    // 规则、写作、研究等整页面板也关掉（同云端页），不然从这些页切过来会叠在一起。
+    for (const name of ['__rulesHide', '__writingHide', '__xresearchHide', '__studyHide', '__ranHide']) window[name]?.(); window.setShellNavActive?.('company-assistant');
     page.hidden = false; document.body.classList.add('company-assistant-page-open'); place();
     const btn = nav(); btn?.classList.add('active'); btn?.classList.remove('has-unread');
     window.addEventListener('resize', onResize);

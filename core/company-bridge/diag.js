@@ -144,6 +144,7 @@ function defaultSys() {
   };
 }
 
+
 // CodeAgent 版本：跑一次「<命令> --version」（隐藏窗口、8 秒超时），10 分钟内复用。命令取本机配置（codeagent-config.js 已拦掉特殊字符），不来自对端。
 // cmd.exe 用 windowsVerbatimArguments 原样传命令行（同 codeagent-pool.js 的号池登录）；超时只按 PID 用 taskkill /T 结束我们自己刚起的这一个 cmd 进程树
 // ——这是整个直查 / 远程维护里唯一用 /T 的地方，因为这棵树确定是这里自己起的（2026-10-18 审核）。
@@ -510,7 +511,21 @@ async function codeagent(bridge, deps, sys, ctx, poolRaw, poolError) {
   const p = poolRaw?.personal;
   out.personal = p ? { state: POOL_STATE[p.state] || String(p.state || '未知'), ready: p.state === 'ready', expiresAt: Number(p.expiresAt) || null, defaultModel: p.defaultModel || '',
     ...(p.configModel != null ? { configModel: String(p.configModel || '') } : {}), ...(p.configMismatch ? { configNote: require('../codeagent-model-route').describeMismatch(p.configMismatch) } : {}),
-    ...(p.configSource ? { configSource: p.configSource } : {}), ...(p.settingsMtime ? { settingsMtime: p.settingsMtime } : {}) } : null;
+    ...(p.configSource ? { configSource: p.configSource } : {}), ...(p.settingsMtime ? { settingsMtime: p.settingsMtime } : {}),
+    // 个人目录是否等于（或包含于）某个号池号的目录：只回是否和号的代称（2026-10-19）
+    inPool: !!p.poolDirMatch, ...(p.poolDirMatch ? { inPoolAlias: p.poolDirMatch.account ? (ctx.aliases?.get(p.poolDirMatch.account) || '号池里的一个号') : '号池目录' } : {}) } : null;
+  // Hub 进程继承的配置目录：采用还是忽略、原因、来自哪一层环境变量、是否落在号池（代称），都不带路径。
+  // 判定在 Hub 启动时读一次注册表做好（codeagent-config.js loadInheritedDecision，和个人目录的判定共用），这里不再读。
+  const inh = p && p.inheritedConfigDir;
+  if (out.personal && inh) {
+    const env = sys.hubEnv || process.env; // Hub 主进程自己的环境（单测可替换）
+    const origin = ['user-env', 'system-env', 'process-only', 'unknown'].includes(inh.origin) ? inh.origin : 'unknown';
+    out.personal.inheritedConfigDir = { adopted: !!inh.adopted, ignored: !inh.adopted, reason: String(inh.reason || ''), note: String(inh.note || ''), variable: String(inh.variable || ''),
+      origin, inPool: !!inh.inPool, ...(inh.inPool ? { inPoolAlias: inh.inPoolAccount ? (ctx.aliases?.get(inh.inPoolAccount) || '号池里的一个号') : '号池目录' } : {}),
+      // 旁证（只给是否）：Hub 自己的环境里有 Hub 会话标记 / CodeAgent 启动器标记，说明这个 Hub 是从某个会话的进程树里启动的
+      // （之后的远程重启、更新都会把同一份环境带下去）
+      startedInside: { hubSession: !!env.CLAUDE_HUB_SESSION_ID, codeagent: !!env.CODEAGENT3_LAUNCHER_PID || Object.keys(env).some(k => /^CODEAGENT_HUB_/.test(k)) } };
+  }
   const accounts = poolRaw?.accounts || [];
   out.pool = { total: accounts.length, ready: accounts.filter(a => a.state === 'ready').length, needLogin: accounts.filter(a => a.state !== 'ready').length };
   // 额度
@@ -747,6 +762,8 @@ function summarize(d) {
   }
   const c = d.codeagent;
   if (c && !c.error) parts.push(`CodeAgent ${c.version ? 'v' + c.version : '版本没读到'}${(c.quota || []).length ? ' · 额度 ' + c.quota.map(q => `${q.account} ${q.pct}%`).join('、') : ''}`);
+  if (c && c.personal && c.personal.inPool) parts.push(`个人配置目录和${c.personal.inPoolAlias || '号池'}的目录重叠`);
+  if (c && c.personal && c.personal.inheritedConfigDir) parts.push(c.personal.inheritedConfigDir.note + (c.personal.inheritedConfigDir.inPool ? `（它指向${c.personal.inheritedConfigDir.inPoolAlias || '号池'}的目录）` : ''));
   const avoiding = (d.pool && Array.isArray(d.pool.accounts) ? d.pool.accounts.filter(a => a.avoid).map(a => a.alias) : (c && c.avoid || []).map(a => a.account));
   if (avoiding.length) parts.push(`避让中：${avoiding.join('、')}`);
   const e = d.errors;
