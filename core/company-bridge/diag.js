@@ -165,10 +165,12 @@ function codeagentVersion(command) {
       if (m) resolve(m[0]); else reject(new Error(!error ? '版本号没读出来' : timedOut ? '8 秒没返回' : `命令没跑成（退出码 ${error.code}），可能没装 CodeAgent 或它不在 PATH 里`));
     };
     let child;
+    const env = { ...process.env };
+    require('../codeagent-launch-env').applyAccountEnv(env, require('../codeagent-config').resolveCodeAgentConfig(env));
     if (process.platform === 'win32') {
       const head = /^[A-Za-z0-9_.-]+$/.test(command) ? command : `"${String(command).replace(/"/g, '')}"`;
-      child = execFile('cmd.exe', ['/d', '/s', '/c', `"call ${head} --version"`], { windowsHide: true, windowsVerbatimArguments: true, encoding: 'utf8' }, done);
-    } else child = execFile(command, ['--version'], { encoding: 'utf8' }, done);
+      child = execFile('cmd.exe', ['/d', '/s', '/c', `"call ${head} --version"`], { windowsHide: true, windowsVerbatimArguments: true, encoding: 'utf8', env }, done);
+    } else child = execFile(command, ['--version'], { encoding: 'utf8', env }, done);
     timer = setTimeout(() => {
       timedOut = true;
       const pid = child && child.pid;
@@ -536,6 +538,10 @@ async function codeagent(bridge, deps, sys, ctx, poolRaw, poolError) {
   // Hub 进程继承的配置目录：采用还是忽略、原因、来自哪一层环境变量、是否落在号池（代称），都不带路径。
   // 判定在 Hub 启动时读一次注册表做好（codeagent-config.js loadInheritedDecision，和个人目录的判定共用），这里不再读。
   const inh = p && p.inheritedConfigDir;
+  if (out.personal) {
+    // Presence only: never include a token value, account identity, or credentials.
+    out.personal.inheritedAuthToken = require('../codeagent-launch-env').authStatus(sys.hubEnv || process.env);
+  }
   if (out.personal && inh) {
     const env = sys.hubEnv || process.env; // Hub 主进程自己的环境（单测可替换）
     const origin = ['user-env', 'system-env', 'process-only', 'unknown'].includes(inh.origin) ? inh.origin : 'unknown';
@@ -782,6 +788,7 @@ function summarize(d) {
   const c = d.codeagent;
   if (c && !c.error) parts.push(`CodeAgent ${c.version ? 'v' + c.version : '版本没读到'}${(c.quota || []).length ? ' · 额度 ' + c.quota.map(q => `${q.account} ${q.pct}%`).join('、') : ''}`);
   if (c && c.personal && c.personal.inPool) parts.push(`个人配置目录和${c.personal.inPoolAlias || '号池'}的目录重叠`);
+  if (c?.personal?.inheritedAuthToken?.present) parts.push('Hub 继承了认证令牌；新会话优先使用完整且可登录的账号凭证');
   if (c && c.personal && c.personal.inheritedConfigDir) parts.push(c.personal.inheritedConfigDir.note + (c.personal.inheritedConfigDir.inPool ? `（它指向${c.personal.inheritedConfigDir.inPoolAlias || '号池'}的目录）` : ''));
   const avoiding = (d.pool && Array.isArray(d.pool.accounts) ? d.pool.accounts.filter(a => a.avoid).map(a => a.alias) : (c && c.avoid || []).map(a => a.account));
   if (avoiding.length) parts.push(`避让中：${avoiding.join('、')}`);

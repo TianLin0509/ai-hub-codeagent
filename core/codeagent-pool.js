@@ -59,7 +59,7 @@ function maskAccountId(value) {
   return s.length <= 5 ? s.slice(0, 1) + '***' : s.slice(0, 4) + '****' + s.slice(-2);
 }
 
-// 只读凭证文件里的明文字段（工号、到期时间、登录方式），token 本身是 DPAPI 密文，不碰。
+// 只回凭证元数据（工号、到期时间、登录方式、是否有认证内容）；token 不解密、不返回。
 function readCredentials(configDir, fsModule = fs) {
   // 读不懂时带一句原因（detail，不含凭证内容；2026-10-19 公司 2.1.15 直查个人账号「凭证读不到」，要分清是读文件出错、
   // 不是 JSON，还是 JSON 里没有登录项）。文件开头的 BOM 去掉再解析；登录项的键名大小写不敏感（xxxOAuth / xxxOauth）。
@@ -86,6 +86,10 @@ function readCredentials(configDir, fsModule = fs) {
     method: key === 'idaasOAuth' ? 'idaas' : key === 'devUCOAuth' ? 'devuc' : key.replace(/oauth$/i, ''),
     accountId: typeof entry.accountId === 'string' ? entry.accountId : '',
     expiresAt,
+    // Presence only; never decrypt or return credential material. Display-ready
+    // metadata alone is insufficient to replace an environment-token login.
+    authMaterialPresent: ['xAuthToken', 'accessToken', ...(key.toLowerCase() === 'devucoauth' ? ['refreshToken'] : [])]
+      .some(name => typeof entry[name] === 'string' && !!entry[name].trim()),
   };
 }
 
@@ -421,6 +425,7 @@ function openLoginWindow(dataDir, id, config, { env = process.env, spawnFn = req
   }
   if (process.platform !== 'win32') throw new Error('号池登录只支持 Windows');
   const childEnv = { ...env, [config.configDirEnv]: dir };
+  require('./codeagent-launch-env').applyAccountEnv(childEnv, { ...config, configDir: dir });
   for (const key of Object.keys(childEnv)) if (/^CODEAGENT_HUB_/.test(key) || key === 'CODEAGENT3_LAUNCHER_PID') delete childEnv[key];
   const command = /^[A-Za-z0-9_.-]+$/.test(config.command) ? config.command : `"${String(config.command).replace(/"/g, '')}"`;
   const hint = personal ? 'echo 个人账号重新登录：请在下面输入你自己的 W3 用户名和密码。登录成功后关闭本窗口，回到 AI Hub 即可。& echo.'

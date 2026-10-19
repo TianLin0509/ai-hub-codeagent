@@ -462,7 +462,7 @@ function shouldPickCodeAgentModel(opts) {
   // model 也来自分支、历史恢复和场景元数据；只有本次操作的明确意图才能打开菜单。
   return !!(opts && opts.model && opts.codeagentModelPick === true && !codeAgentReadOnly(opts));
 }
-function buildCodeAgentPtyLaunch(id, kind, opts, cwd, env, config) {
+function buildCodeAgentPtyLaunch(id, kind, opts, cwd, env, config, auth = null) {
   const { normalizeCodeAgentModel, EFFORTS, commandHead } = require('./codeagent-config');
   const hubDataDir = getHubDataDir();
   const bridge = codeAgentReadOnly(opts); // 家里联动会话不挂 Hub 自己的 MCP
@@ -510,6 +510,7 @@ function buildCodeAgentPtyLaunch(id, kind, opts, cwd, env, config) {
     event: 'launch', session: String(id || '').slice(0, 8), account: account.replace(/\s+/g, ''), kind,
     ...(opts.purpose ? { purpose: opts.purpose } : {}),
     requested: inheritModel ? '(inherit)' : opts.model || '(default)', model: requestedModel || '(inherit)', resume: identity.length ? identity[0] : '',
+    ...(auth ? { auth: auth.source, inheritedAuthIgnored: auth.ignoredForNewSessions } : {}),
     ...(codeAgentRouteModel(opts) ? { route: codeAgentRouteModel(opts) } : {}),
   });
   return { cmd, sessionId, model: requestedModel };
@@ -1928,7 +1929,10 @@ class SessionManager extends EventEmitter {
       // .cac.json 的 projects 也预写信任（--skip-safe-check 之外的第二道保险）。
       require('./claude-project-trust.js').ensureClaudeProjectTrusted(spawnCwd,
         { configDir: codeagentConfig.configDir, stateFileName: codeagentConfig.stateFile });
-      codeagentLaunch = buildCodeAgentPtyLaunch(id, kind, opts, spawnCwd, sessionEnv, codeagentConfig);
+      // Only a newly created child environment is changed. relaunchCli reuses
+      // the existing shell; its command builder must never mutate process.env.
+      const auth = require('./codeagent-launch-env').applyAccountEnv(sessionEnv, codeagentConfig);
+      codeagentLaunch = buildCodeAgentPtyLaunch(id, kind, opts, spawnCwd, sessionEnv, codeagentConfig, auth);
       // 只有真正 --resume 已有记录时身份才已知；其余一律清空，等第一个 hook 绑定。
       // 留着一个 CLI 不会用的旧 id，后面每个 hook 都会被当成外来会话丢弃。
       opts = { ...opts, resumeCCSessionId: codeagentLaunch.sessionId || undefined,

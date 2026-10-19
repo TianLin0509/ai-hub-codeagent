@@ -52,6 +52,7 @@ async function probeModels({ command, configDirEnv, configDir, cwd, env = proces
   fs.mkdirSync(cwd, { recursive: true });
   try { require('./claude-project-trust.js').ensureClaudeProjectTrusted(cwd, { configDir, stateFileName: '.cac.json' }); } catch { /* 有 --skip-safe-check 兜底 */ }
   const childEnv = { ...env, [configDirEnv]: configDir };
+  require('./codeagent-launch-env').applyAccountEnv(childEnv, { configDirEnv, configDir });
   // 不让这个临时进程的 hook 冒充 Hub 会话
   for (const key of Object.keys(childEnv)) if (/^CLAUDE_HUB_(?:SESSION_ID|PORT|TOKEN)$|^CODEAGENT_HUB_/.test(key)) delete childEnv[key];
   if (process.platform === 'win32' && !childEnv.WT_SESSION) childEnv.WT_SESSION = 'ai-hub';
