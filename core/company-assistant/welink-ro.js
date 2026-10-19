@@ -1,14 +1,38 @@
 'use strict';
 // 助理会话（CodeAgent）调用 welink-cli 的只读包装：只放行查询类子命令，其余直接拒绝（白名单见 welink.js）。
 // 用法（Hub 写进助理工作目录的 welink-ro.cmd 会这样调用）：<Hub 程序> welink-ro.js <welink-cli 参数…>
-const { run, resolveCli } = require('./welink');
+const W = require('./welink');
+const D = require('./data');
+const { resolveNames } = require('./identity');
 
-(async () => {
+async function runReadOnly(args, { run = W.run, cli = W.resolveCli({ configured: process.env.CLAUDE_HUB_WELINK_CONFIGURED || '' }), cacheDir = process.env.CLAUDE_HUB_ASSISTANT_DIR } = {}) {
+  const autodiscover = args[0] === 'mail' && args[1] === 'autodiscover';
+  const execute = (a, opts = {}) => run(a, { cli, timeoutMs: autodiscover ? 120000 : 60000, allowSetup: autodiscover, ...opts });
+  const result = await execute(args);
+  if (Number(result.code || 0) !== 0 || args[0] !== 'im' || args[1] !== 'query-history-message') return result;
+  const raw = W.parseJsonBig(result.stdout);
+  if (!raw || (raw.resultCode !== undefined && String(raw.resultCode) !== '0') || (raw.code !== undefined && !['0', '200'].includes(String(raw.code)))) return result;
+  const rows = D.messageRecords(raw);
+  if (!rows?.length) return result;
+  let identity;
+  try { const auth = await execute(['auth', 'status'], { timeoutMs: 5000 }); const state = W.loginState(auth.stdout + '\n' + auth.stderr); if (Number(auth.code || 0) === 0 && state.ok) identity = state.uid; } catch { /* 姓名不可查时保留消息 */ }
+  const accounts = rows.map(m => String(m.sender ?? m.sender_account ?? m.senderAccount ?? ''));
+  const seeds = new Map(rows.map((m, i) => [accounts[i], m.senderName || m.sender_name || m.native_name || '']));
+  const resolution = await resolveNames({ run: execute, cacheDir, identity, accounts, seeds });
+  rows.forEach((m, i) => {
+    const entry = resolution.entries.get(accounts[i]);
+    if (!entry) return;
+    // sender 永远保留厂商账号；手机本人识别和其他原始消费者不受显示名影响。
+    Object.assign(m, { senderName: entry.name || '', displayName: entry.displayName, nameStatus: entry.status, nameSource: entry.source, nameResolvedAt: entry.resolvedAt || null });
+  });
+  return { ...result, stdout: JSON.stringify(raw) + '\n' };
+}
+
+if (require.main === module) (async () => {
   try {
     const args = process.argv.slice(2);
     // 例外只有 mail autodiscover：只写 welink-cli 自己的本地配置（按邮箱找 Exchange 服务器），助理兜底配置邮件时要用；扫码登录仍只能由用户在页面上点。
-    const autodiscover = args[0] === 'mail' && args[1] === 'autodiscover';
-    const result = await run(args, { cli: resolveCli({ configured: process.env.CLAUDE_HUB_WELINK_CONFIGURED || '' }), timeoutMs: autodiscover ? 120000 : 60000, allowSetup: autodiscover });
+    const result = await runReadOnly(args);
     process.stdout.write(result.stdout);
     if (result.stderr) process.stderr.write(result.stderr);
     process.exitCode = result.code || 0;
@@ -17,3 +41,5 @@ const { run, resolveCli } = require('./welink');
     process.exitCode = 2;
   }
 })();
+
+module.exports = { runReadOnly };

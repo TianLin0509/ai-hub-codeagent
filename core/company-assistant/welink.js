@@ -171,7 +171,7 @@ function loginState(statusText) {
 }
 // 同 parseJson，但先把长整数的消息编号改成字符串（JSON.parse 会把它们舍入成同一个数，相邻两条消息就分不清了）。
 function parseJsonBig(text) {
-  return parseJson(String(text || '').replace(/("(?:msgId|msg_id|messageId)"\s*:\s*)(\d{15,})/g, '$1"$2"'));
+  return parseJson(String(text || '').replace(/("(?:msgId|msg_id|messageId|message_id|maxMsgId|minMsgId|meetingId)"\s*:\s*)(\d{15,})/g, '$1"$2"'));
 }
 // 群的历史消息（im query-history-message）。字段依据公司真机回执 Q-1018-04：msgId（整型）、sender（账号）、content、contentType、serverSendTime。
 // msgId 是很长的整数，JSON.parse 会丢精度（游标就对不上了）：先把它们改成字符串再解析，比较大小用 BigInt。

@@ -58,7 +58,7 @@ function calendarEvents(raw) {
 // 会话列表（im query-recent-conversation --count 50）：真机每个会话只有 8 个字段，没有最后消息时间、免打扰、置顶、未读数（Q-1018-10），
 // welink-cli 的其他命令也查不到免打扰和置顶。单聊的 group_id 是 "0"。
 function conversations(raw) {
-  return listIn(raw, ['conversation_info', 'conversations']).map(c => {
+  return (conversationRecords(raw) || []).map(c => {
     const group = c.recent_conversation_type === 'CHAT_TYPE_GROUP_MSG' || (!!c.group_id && !c.target_account);
     const id = String(group ? c.group_id : (c.target_account || c.group_id || '')) || '';
     return { id, group, name: String(first(c, group ? ['group_name', 'native_name'] : ['native_name', 'staff_name', 'target_account']) ?? id) };
@@ -67,27 +67,45 @@ function conversations(raw) {
 
 // 账号 → 姓名：单聊会话的对方（target_account → native_name）。
 function namesOf(conversations) { return new Map((conversations || []).filter(c => !c.group && c.name && c.name !== c.id).map(c => [c.id, c.name])); }
+// 只认消息列表路径；未知结构返回 null，不能把接口变更误报为“没有消息”。
+function recordsAt(raw, keys) {
+  if (Array.isArray(raw)) return raw.every(m => m && typeof m === 'object' && !Array.isArray(m)) ? raw : null;
+  if (!raw || typeof raw !== 'object') return null;
+  for (const key of keys) {
+    if (Array.isArray(raw[key])) return recordsAt(raw[key], keys);
+  }
+  for (const key of ['data', 'result', 'payload']) if (raw[key] && typeof raw[key] === 'object') {
+    const found = recordsAt(raw[key], keys); if (found !== null) return found;
+  }
+  return null;
+}
+const messageRecords = raw => recordsAt(raw, ['chatInfo', 'messages', 'message_list', 'msgList', 'history', 'msgs', 'data']);
+const conversationRecords = raw => recordsAt(raw, ['conversation_info', 'conversations', 'data']);
+const messageId = m => first(m, ['msgId', 'msg_id', 'message_id', 'messageId', 'id']);
 
 // 一个会话的历史消息。me：本人账号（auth status 的 UID），用来判断「最后一句是不是我说的」「有没有 @ 我」。
 // 真机字段（Q-1018-04、Q-1018-10）：列表在 chatInfo 里；msgId（长整数）、sender（账号，和 auth status 的 UID 同格式）、content、contentType、
 // serverSendTime（毫秒）、at（这条有没有 @ 人）、atAccountList（被点名 @ 的账号；@所有人 时是空数组）。
 // names：账号 → 姓名（真机消息只有账号；单聊对方的姓名从会话列表拿）。自己发的显示「我」。
 function messages(raw, conv, me, { myName = '', names = null } = {}) {
-  const list = listIn(raw, ['chatInfo', 'messages', 'message_list', 'msgList', 'history', 'msgs', 'data']);
+  const list = messageRecords(raw) || [];
   return list.map((m, i) => {
     const at = toMs(first(m, ['serverSendTime', 'server_send_time', 'send_time', 'sendTime', 'msg_time', 'msgTime', 'time', 'timestamp', 'create_time', 'createTime']));
     const account = String(first(m, ['sender_account', 'senderAccount', 'from_account', 'fromAccount', 'sender_id', 'senderId', 'sender', 'from', 'account']) ?? '');
     const named = first(m, ['sender_name', 'senderName', 'staff_name', 'native_name', 'nick_name', 'from_name']);
     const key = String(first(m, ['msgId', 'msg_id', 'message_id', 'messageId', 'id']) ?? `${at || 0}-${i}`);
-    const mine = m.is_self === true || m.isSelf === true || m.direction === 'send' || (!!me && (account === me || named === me));
+    const mine = m.is_self === true || m.isSelf === true || m.direction === 'send' || (!!me && account === me);
     const sender = mine ? '我' : String(named ?? (names && names.get(account)) ?? account);
-    const text = short(textOf(first(m, ['content', 'msg_content', 'msgContent', 'text', 'message', 'body'])), 400);
+    const content = first(m, ['content', 'msg_content', 'msgContent', 'text', 'message', 'body']) ?? '';
+    const text = textOf(content);
+    const contentType = String(first(m, ['contentType', 'content_type', 'msgType']) ?? '');
     const atList = Array.isArray(m.atAccountList) ? m.atAccountList.map(String) : [];
     const atFlag = m.at === true || m.at === 'true';
     const atMe = !mine && ((!!me && atList.includes(me)) || (!!myName && text.includes('@' + myName)));
     const atAll = !mine && !atMe && atFlag && !atList.length;
-    return { sourceId: `msg:${conv.id}:${key}`, conv: conv.id, convName: conv.name, group: conv.group, key, at, sender, account, mine, atMe, atAll, text };
-  }).filter(m => m.text).sort((a, b) => (a.at || 0) - (b.at || 0));
+    return { sourceId: `msg:${conv.id}:${key}`, conv: conv.id, convName: conv.name, group: conv.group, key, at, sender, account, mine, atMe, atAll, text, content, contentType,
+      preview: short(text, 200) || (contentType ? `［非文字消息 · ${contentType}］` : '［消息正文为空］') };
+  }).sort((a, b) => (a.at || 0) - (b.at || 0));
 }
 
 function mails(raw) {
@@ -153,4 +171,4 @@ function todaysMeetings(snapshot, day) {
   return [...ms, ...cal].sort((a, b) => a.start - b.start);
 }
 
-module.exports = { dayKey, clock, toMs, listIn, textOf, short, namesOf, meetings, calendarEvents, conversations, messages, mails, awaiting, relatedGroups, sourceIndex, todaysMeetings };
+module.exports = { dayKey, clock, toMs, listIn, textOf, short, namesOf, messageRecords, conversationRecords, messageId, meetings, calendarEvents, conversations, messages, mails, awaiting, relatedGroups, sourceIndex, todaysMeetings };

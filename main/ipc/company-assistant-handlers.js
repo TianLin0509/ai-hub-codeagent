@@ -9,6 +9,7 @@ function registerCompanyAssistantIpc(ipcMain, service) {
     ask: request => ({ ok: true, item: service.ask(String(request?.text || '')) }),
     'retry-chat': request => ({ ok: true, item: service.retryChat(String(request?.id || '')) }),
     'mark-done': request => service.markDone(String(request?.source || ''), request?.done !== false),
+    source: request => service.sourceContext(String(request?.source || ''), request?.day),
     'set-settings': request => ({ ok: true, settings: service.setSettings(request || {}) }),
     login: async () => ({ ok: true, flow: await service.login() }),
     'setup-calendar': request => service.setupCalendar(String(request?.email || '')),

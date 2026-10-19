@@ -19,7 +19,7 @@ const FIRST_SCREEN = 10;
 const INLINE_CHARS = 40000; // 直接写进提问的消息原文上限（提问是贴进 CodeAgent 终端的，太长不稳）
 const lookback = settings => Math.max(1, Number(settings?.lookbackHours) || 36);
 const when = at => (at ? new Date(at).toLocaleString('zh-CN', { hour12: false }) : '');
-const lineOf = m => `[${m.sourceId}] ${m.group ? '群「' + m.convName + '」' : '单聊「' + m.convName + '」'} ${m.mine ? '我' : m.sender}${m.at ? ' ' + when(m.at) : ''}${m.atMe ? '（@我）' : m.atAll ? '（@所有人）' : ''}：${D.short(m.text, 200)}`;
+const lineOf = (m, full = false) => `[${m.sourceId}] ${m.group ? '群「' + m.convName + '」' : '单聊「' + m.convName + '」'} ${m.mine ? '我' : m.sender}${m.account ? '（账号 ' + m.account + '）' : ''}${m.at ? ' ' + when(m.at) : ''}${m.atMe ? '（@我）' : m.atAll ? '（@所有人）' : ''}：${full ? (m.text || m.preview || '［消息正文为空］') : D.short(m.text || m.preview, 200)}`;
 
 // 按规则排的清单：AI 不可用或还没整理完时先给这个。
 function fallbackBrief(snapshot, { day, now = Date.now(), settings = {}, commitments = [], done = new Set() } = {}) {
@@ -49,6 +49,8 @@ function briefPrompt(snapshot, { day, now = Date.now(), settings = {}, commitmen
   return [
     `请帮我整理今天（${day}）的工作简报。下面是从我的 WeLink 里取到的原始数据（最近 ${lookback(settings)} 小时），每条前面方括号里是出处编号。`,
     picked.omitted ? `下面列出了单聊、@我的、@所有人的、我说过话的和提到关注词的群消息，以及最新的一部分群消息；另有 ${picked.omitted} 条群消息没有列出，全部消息（同样带出处编号）在当前目录 ${picked.file}，判断群里有没有和我相关的事时可以去读。` : '',
+    `下面的消息是最多 200 字的预览；完整原文保存在当前目录 ${picked.file}，长消息的结论需读全文核对。非文字消息的原始内容在 data/today.json。`,
+    snapshot.errors?.length ? `有 ${snapshot.errors.length} 项查询失败或不完整：${snapshot.errors.map(e => e.label + '：' + e.text).join('；')}。没取到不等于没有，请在简报中说明影响。` : '',
     '',
     '要求：',
     '1. 只根据下面的数据写，不编造；每条必须带且只带一个出处编号（原样抄方括号里的编号）。',
@@ -73,7 +75,7 @@ function inlineMessages(snapshot, { now = Date.now(), settings = {} } = {}) {
   for (const m of all.filter(must).sort((a, b) => (b.at || 0) - (a.at || 0))) if (!take(m)) break;
   for (const m of all.filter(m => !must(m)).sort((a, b) => (b.at || 0) - (a.at || 0))) if (!take(m)) break;
   const order = new Map(Object.keys(snapshot.messages || {}).map((id, i) => [id, i]));
-  const lines = [...chosen].sort((a, b) => (order.get(a.conv) - order.get(b.conv)) || (a.at || 0) - (b.at || 0)).map(lineOf);
+  const lines = [...chosen].sort((a, b) => (order.get(a.conv) - order.get(b.conv)) || (a.at || 0) - (b.at || 0)).map(m => lineOf(m));
   return { lines, omitted: all.length - chosen.size, total: all.length, file: inputFileName(settings.day) };
 }
 const inputFileName = day => `data/brief-input${day ? '-' + day : ''}.md`;
@@ -85,7 +87,7 @@ function briefInputFile(snapshot, { day, now = Date.now(), settings = {} } = {})
     const rows = list.filter(m => !m.at || m.at >= since || m.mine);
     if (!rows.length) continue;
     const c = convs.get(id) || {};
-    parts.push(`## ${c.group ? '群' : '单聊'}「${c.name || id}」（${rows.length} 条）`, ...rows.map(lineOf), '');
+    parts.push(`## ${c.group ? '群' : '单聊'}「${c.name || id}」（${rows.length} 条）`, ...rows.map(m => lineOf(m, true) + (!m.text && m.content ? '\n原始内容：' + (typeof m.content === 'string' ? m.content : JSON.stringify(m.content)) : '')), '');
   }
   return parts.join('\n');
 }

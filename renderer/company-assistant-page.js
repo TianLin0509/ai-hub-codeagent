@@ -53,6 +53,7 @@ function createCompanyAssistantPage({ document, window, ipcRenderer, openSession
       <div class="ca-panel" data-slot="panel" hidden></div>
       <div class="ca-scroll"><div class="ca-convo">
         <div data-slot="setup"></div>
+        <div data-slot="coverage"></div>
         <div data-slot="brief"></div>
         <div data-slot="notices"></div>
         <div data-slot="chat"></div>
@@ -69,7 +70,7 @@ function createCompanyAssistantPage({ document, window, ipcRenderer, openSession
     // Esc 关掉盖在上面的设置。
     page.addEventListener('keydown', event => {
       const panel = page.querySelector('[data-slot="panel"]');
-      if (event.key === 'Escape' && panel.dataset.kind === 'settings' && !panel.hidden) { panel.hidden = true; panel.innerHTML = ''; panel.dataset.kind = 'closed'; }
+      if (event.key === 'Escape' && ['settings', 'source'].includes(panel.dataset.kind) && !panel.hidden) { panel.hidden = true; panel.innerHTML = ''; panel.dataset.kind = 'closed'; }
     });
     page.addEventListener('click', event => {
       const b = event.target.closest('[data-ca]');
@@ -137,10 +138,10 @@ function createCompanyAssistantPage({ document, window, ipcRenderer, openSession
     if (!b) return `<article class="ca-brief empty"><div class="ca-card-head"><b>助理 · 今日简报</b></div><p class="ca-note">今天的简报还没生成。<button type="button" class="ca-btn small primary" data-ca="brief-now">现在生成</button></p></article>`;
     const counts = b.sections.map(s => `<span class="ca-chip${s.key === 'awaiting' ? ' warn' : ''}">${esc(s.title)} ${s.items.length}</span>`).join('');
     const firstItems = b.sections.flatMap(s => s.items.slice(0, 1).map(i => i.text)).slice(0, 2);
-    const headline = b.by === 'none' ? esc(b.note || '') : firstItems.length ? '📌 ' + esc(firstItems.join('；')) : '今天没有需要你处理的会议、消息和邮件。';
+    const headline = b.by === 'none' ? esc(b.note || '') : firstItems.length ? '📌 ' + esc(firstItems.join('；')) : data.errors?.length ? '本次数据尚未取全，已取到的内容里没有待处理事项。' : '今天没有需要你处理的会议、消息和邮件。';
     const more = b.total > 10 ? `<p class="ca-note">另有 ${b.total - 10} 条在下面「其余」里。</p>` : '';
     const row = i => `<div class="ca-item"><div class="ca-item-text">${esc(i.text)}${i.guess ? '<span class="ca-guess">推测</span>' : ''}${i.due ? `<span class="ca-due">截止 ${esc(i.due)}</span>` : ''}</div>
-        <div class="ca-src">${esc(i.sourceLabel || i.source)}<button type="button" class="ca-link" data-ca="done:${esc(i.source)}" title="点了以后不再出现在简报里">处理了</button></div></div>`;
+        <div class="ca-src"><button type="button" class="ca-link ca-source-link" data-ca="source:${esc(i.source)}" data-source-day="${esc(b.day || data.day)}" title="查看原文和前后消息">${esc(i.sourceLabel || '查看出处')}</button><button type="button" class="ca-link" data-ca="done:${esc(i.source)}" title="点了以后不再出现在简报里">处理了</button></div></div>`;
     const top = b.sections.map(s => { const items = s.items.filter(i => i.top); return items.length ? `<div class="ca-sec">${esc(s.title)}（${s.items.length}）</div>${items.map(row).join('')}` : ''; }).join('');
     const rest = b.sections.flatMap(s => s.items.filter(i => !i.top).map(i => ({ ...i, title: s.title })));
     const restHtml = rest.length ? `<details class="ca-rest"><summary>其余 ${rest.length} 条</summary>${rest.map(i => `<div class="ca-sec small">${esc(i.title)}</div>${row(i)}`).join('')}</details>` : '';
@@ -161,7 +162,43 @@ function createCompanyAssistantPage({ document, window, ipcRenderer, openSession
     if (!list.length) return '';
     const NAMES = { brief: '简报', 'meeting-prep': '会前准备', 'awaiting-reply': '等你回复', 'commitment-due': '答应的事', overbooked: '会议太满', 'day-summary': '下班小结', keyword: '关注词' };
     return `<details class="ca-notices"><summary>今天的提醒 ${list.length} 条 · 最新：${esc(list[0].title)}</summary>
-      ${list.map(n => `<div class="ca-notice" data-notice-id="${esc(n.id)}"><span class="ca-chip">${NAMES[n.kind] || n.kind}</span><b>${esc(n.title)}</b><span class="ca-time">${when(n.at)}</span><div class="ca-notice-text">${esc(n.text).replace(/\n/g, '<br>')}</div></div>`).join('')}</details>`;
+      ${list.map(n => `<div class="ca-notice" data-notice-id="${esc(n.id)}"><span class="ca-chip">${NAMES[n.kind] || n.kind}</span><b>${esc(n.title)}</b><span class="ca-time">${when(n.at)}</span><div class="ca-notice-text">${esc(n.text).replace(/\n/g, '<br>')}</div>${n.detail?.source ? `<button type="button" class="ca-link" data-ca="source:${esc(n.detail.source)}">查看出处</button>` : ''}</div>`).join('')}</details>`;
+  }
+
+  function coverageNote() {
+    const s = data.scope, errors = data.errors || [], names = data.nameResolution;
+    if (!s && !errors.length) return '';
+    const counts = s ? `${s.stale ? '上次数据' : '最近 ' + s.lookbackHours + ' 小时'} · ${s.stale ? s.conversations?.length || 0 : s.fetched} 个会话 · ${s.messages} 条消息` : '采集情况';
+    const issues = [s?.partial ? `${s.partial} 个会话未取全` : '', errors.length ? `${errors.length} 项查询异常` : '', names?.unresolved ? `${names.unresolved} 个发言人姓名未确认` : ''].filter(Boolean);
+    const rows = (s?.conversations || []).map(c => `<li><b>${esc(c.name)}</b> · ${c.status === 'complete' ? '读取完成' : '部分结果'} · ${esc(c.reasonLabel || '')}${c.oldestAt ? ' · 最早 ' + when(c.oldestAt) : ''}${c.newestAt ? '，最新 ' + when(c.newestAt) : ''}${c.unknownTime ? ` · ${c.unknownTime} 条缺少时间` : ''}</li>`).join('');
+    return `<details class="ca-coverage"><summary>${esc(counts)}${issues.length ? ' · ' + esc(issues.join('，')) : ''}</summary>${s?.stale ? `<p class="ca-note bad">最近会话查询失败。${s.capturedAt ? '以下消息取自 ' + esc(new Date(s.capturedAt).toLocaleString('zh-CN', { hour12: false })) + '，可能已过期。' : '尚无可复用的当前账号聊天记录。'}</p>` : ''}<p class="ca-note">范围是 CLI 列出的最近 ${s?.listCap || 50} 个会话${s?.limited ? '中你设置的前 ' + s.maxConversations + ' 个' : ''}；专用手机群不参与简报。查询失败时保留已取到的内容。</p>${errors.map(e => `<p class="ca-note bad">${esc(e.label)}：${esc(e.text)}</p>`).join('')}${rows ? `<ul>${rows}</ul>` : ''}</details>`;
+  }
+
+  async function openSource(source, day) {
+    const panel = page.querySelector('[data-slot="panel"]');
+    panel.dataset.kind = 'source'; panel.dataset.source = source; panel.hidden = false;
+    panel.innerHTML = '<div class="ca-source"><div class="ca-source-head"><h2>查看出处</h2><button class="ca-btn" data-ca="close-panel">关闭</button></div><p>正在读取本机原文…</p></div>';
+    try {
+      const result = await call('source', { source, day: day || data.day });
+      if (panel.dataset.kind !== 'source' || panel.dataset.source !== source) return;
+      const fullWhen = at => at ? new Date(at).toLocaleString('zh-CN', { hour12: false }) : '时间未提供';
+      let body;
+      if (result.entry.kind === 'message') {
+        body = result.context.map(m => `<article class="ca-source-message${m.sourceId === source ? ' selected' : ''}">
+          <div class="ca-source-meta"><b>${esc(m.sender || m.account)}</b><span>${esc(m.account)}</span><time>${esc(fullWhen(m.at))}</time>${m.sourceId === source ? '<span class="ca-chip">这条出处</span>' : ''}</div>
+          ${m.nameStatus && m.nameStatus !== 'resolved' && !m.mine ? '<p class="ca-note">姓名尚未确认，账号已保留。</p>' : ''}
+          ${m.contentComplete === false ? '<p class="ca-note bad">这是旧版留下的截断内容，刷新数据后会重新补取。</p>' : ''}
+          <pre class="ca-source-text">${esc(m.text || m.preview || '消息正文为空')}</pre>
+          ${!m.text && m.content ? `<details><summary>原始消息内容</summary><pre class="ca-source-text">${esc(typeof m.content === 'string' ? m.content : JSON.stringify(m.content, null, 2))}</pre></details>` : ''}</article>`).join('');
+      } else {
+        const m = result.entry.item;
+        body = `<h3>${esc(m.subject || result.entry.label)}</h3><p>${esc(m.from || '')} ${esc(fullWhen(m.start || m.at))}${m.end ? ' — ' + esc(fullWhen(m.end)) : ''}</p><p>${esc(m.location || '')}</p>${m.preview ? `<p class="ca-note">以下为邮件预览，可让助理进一步查询完整邮件。</p><pre class="ca-source-text">${esc(m.preview)}</pre>` : ''}`;
+      }
+      panel.innerHTML = `<div class="ca-source"><div class="ca-source-head"><h2>查看出处</h2><button class="ca-btn" data-ca="close-panel">关闭</button></div><p class="ca-note">${esc(result.entry.label)} · 采集于 ${esc(fullWhen(result.capturedAt))}</p>${result.coverage?.status && result.coverage.status !== 'complete' ? `<p class="ca-note bad">该会话只取到部分消息：${esc(result.coverage.reasonLabel)}</p>` : ''}${body}<p class="ca-note">${result.entry.kind === 'message' ? '显示本机已获取的原文与前后各两条消息。' : '显示本机已获取的这条记录。'}</p></div>`;
+      panel.scrollTop = 0; panel.querySelector('[data-ca="close-panel"]').focus();
+    } catch (error) {
+      if (panel.dataset.kind === 'source' && panel.dataset.source === source) panel.innerHTML = `<div class="ca-source"><div class="ca-source-head"><h2>查看出处</h2><button class="ca-btn" data-ca="close-panel">关闭</button></div><p>${esc(error.message)}</p></div>`;
+    }
   }
 
   function chatList() {
@@ -188,6 +225,7 @@ function createCompanyAssistantPage({ document, window, ipcRenderer, openSession
       el.querySelectorAll('details').forEach((d, i) => { if (opened[i]) d.open = true; });
     };
     setHtml('setup', setupCard());
+    setHtml('coverage', coverageNote());
     setHtml('brief', briefCard());
     setHtml('notices', noticesStrip());
     const scroll = page.querySelector('.ca-scroll');
@@ -252,6 +290,7 @@ function createCompanyAssistantPage({ document, window, ipcRenderer, openSession
     if (verb === 'refresh') { button.disabled = true; data = await call('refresh'); render(); if (data.errors?.length) showMessage?.('有 ' + data.errors.length + ' 项没取到：' + data.errors.map(e => e.label).join('、')); return; }
     if (verb === 'brief-now') { button.disabled = true; briefOpen = true; data = await call('brief-now'); render(); return; }
     if (verb === 'done') { await call('mark-done', { source: arg }); await load(); return; }
+    if (verb === 'source') return openSource(arg, button.dataset.sourceDay);
     if (verb === 'retry') { await call('retry-chat', { id: arg }); await load(); return; }
     if (verb === 'login') { button.disabled = true; const panel = page.querySelector('[data-slot="panel"]'); panel.dataset.kind = 'login'; await call('login'); await load(); return; }
     if (verb === 'close-panel') { const panel = page.querySelector('[data-slot="panel"]'); panel.hidden = true; panel.innerHTML = ''; panel.dataset.kind = 'closed'; return; }

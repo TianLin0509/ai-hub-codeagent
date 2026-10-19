@@ -133,3 +133,16 @@
 .ca-settings .ca-row.end{position:sticky;bottom:0;z-index:2;background:#fff;margin:0 -24px;padding:12px 24px 16px;border-top:1px solid #eef0f4;border-radius:0 0 12px 12px}
 .ca-settings .ca-src-row{min-height:30px}
 .ca-settings .ca-steps{margin:0;padding-left:20px}
+.ca-source-link{text-align:left;white-space:normal;overflow-wrap:anywhere}
+.ca-coverage{margin:8px 0 14px;font-size:12.5px;color:#64748b;line-height:1.7}
+.ca-coverage summary{cursor:pointer}
+.ca-coverage ul{padding-left:20px}
+.ca-panel[data-kind="source"]{position:absolute;left:0;right:0;bottom:0;top:var(--ca-head-h,57px);z-index:6;max-width:none;width:auto;margin:0;border:0;border-radius:0;padding:18px 28px 24px;background:#f3f4f6;overflow-y:auto;overscroll-behavior:contain}
+.ca-source{max-width:900px;margin:0 auto;padding:20px 24px;background:#fff;border:1px solid #e3e7ee;border-radius:12px}
+.ca-source-head{display:flex;align-items:center;justify-content:space-between;gap:16px;position:sticky;top:-18px;background:#fff;padding:8px 0;z-index:1}
+.ca-source-head h2{margin:0;font-size:18px}
+.ca-source-message{padding:14px 0;border-top:1px solid #eef0f4}
+.ca-source-message.selected{border-left:3px solid #3478f6;padding-left:16px}
+.ca-source-meta{display:flex;flex-wrap:wrap;align-items:center;gap:8px 14px;font-size:12.5px;color:#64748b;overflow-wrap:anywhere}
+.ca-source-meta b{font-size:14px;color:#1b2942}
+.ca-source-text{white-space:pre-wrap;overflow-wrap:anywhere;font:inherit;font-size:14px;line-height:1.8;margin:10px 0;color:#1b2942}

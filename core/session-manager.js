@@ -440,6 +440,11 @@ function buildClaudePtyLaunch(id, kind, opts, cwd, env, cv) {
 // --strict-mcp-config 也挡不住用户级 MCP，用户拍板「只靠说明约束、公司 MCP 允许使用」，不再传这些不起作用的参数。
 // 公司版助理会话（purpose=company-assistant，2026-10-16）同样处理：不挂 Hub 的 MCP，用默认模型。
 // 公司版论坛的摘要会话（purpose=company-forum，2026-10-18）同样处理。
+// 这三类自动会话只读账号自己的配置（--setting-sources user，2026-10-20 用户拍板）：CodeAgent 每次启动会把实际用的模型回写到
+// 工作目录的 .cac/settings.local.json，个人号和号池号的通道会话共用 C:\AirView\src，号 1 一开会话那里就写成 deepseek，
+// 个人号读到它（优先级高于账号自己的 settings.json，--model 也压不过）就报「模型不存在」，再把 deepseek 回写进 ~/.cac。
+// 公司真机 Q-1020-01：不带时个人号在该目录 2/2 报错；带上后 1/1 正常用 GLM，项目级与账号配置都不再被回写，号 1 照常用 DeepSeek。
+// 用户自己开的会话不加，可能依赖项目级配置。
 function codeAgentReadOnly(opts) { return !!opts && ['company-bridge', 'company-assistant', 'company-forum'].includes(opts.purpose); }
 // AI特战队通道里家里指定的模型（2026-10-18，core/codeagent-model-route.js）：只认通道会话（purpose=company-bridge），
 // 不走 --model 也不走 /model 菜单，靠号的配置目录 settings.json 定模型（号池同步配置时写；个人账号只在默认就是它时才用）。
@@ -471,6 +476,7 @@ function buildCodeAgentPtyLaunch(id, kind, opts, cwd, env, config, auth = null) 
   const mcp = buildClaudeMeetingMcpArgs({ cwd, hubDataDir, mcpConfigFile: bridge && !extraOnly ? undefined : opts.mcpConfigFile,
     mcpProfile: bridge ? 'none' : (opts.mcpProfile || 'full') });
   const args = ['--disable-update', '--skip-safe-check'];
+  if (bridge) args.push('--setting-sources', 'user');
   const inheritModel = !shouldPickCodeAgentModel(opts);
   if (!inheritModel) args.push('--model', normalizeCodeAgentModel(opts.model));
   const requestedModel = inheritModel ? null : normalizeCodeAgentModel(opts.model);
@@ -510,6 +516,7 @@ function buildCodeAgentPtyLaunch(id, kind, opts, cwd, env, config, auth = null) 
     event: 'launch', session: String(id || '').slice(0, 8), account: account.replace(/\s+/g, ''), kind,
     ...(opts.purpose ? { purpose: opts.purpose } : {}),
     requested: inheritModel ? '(inherit)' : opts.model || '(default)', model: requestedModel || '(inherit)', resume: identity.length ? identity[0] : '',
+    ...(bridge ? { settingSources: 'user' } : {}),
     ...(auth ? { auth: auth.source, inheritedAuthIgnored: auth.ignoredForNewSessions } : {}),
     ...(codeAgentRouteModel(opts) ? { route: codeAgentRouteModel(opts) } : {}),
   });
