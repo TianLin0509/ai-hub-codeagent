@@ -1990,6 +1990,7 @@ function paintAppToolbarForSession(sessionId, session, cached) {
   paintTerminalRuntimeStatus(statusDot, session);
 
   crumb.append(workspaceBtn, crumbSep, titleSpan, statusDot);
+  paintCrumbBridge(sessionId);
 
   const closeBtn = document.createElement('button');
   closeBtn.className = 'btn-close-session';
@@ -2017,6 +2018,29 @@ function paintAppToolbarForSession(sessionId, session, cached) {
   headerActions.append(filesBtn, closeBtn);
   window.__assistantSync?.(session);
 }
+
+// 家里 ⇄ 公司通道的回合状态（「⇄ 2 轮」「⇄ 已答」「⇄ 没答上」「⇄ 处理中 · 4 分」）：2026-10-20 用户要求会话栏去杂，
+// 从会话栏挪到会话头部（状态点后面），悬停看编号、这一轮到哪了与结论；线程记录刷新（bridge-threads-updated）时就地更新。
+function paintCrumbBridge(sessionId) {
+  if (!toolbarCrumbEl || toolbarCrumbEl.dataset.signature !== 'session:' + sessionId) return;
+  let badge = null;
+  try { badge = window._bridgeThreads?.badge(sessionId) || null; } catch { badge = null; }
+  let chip = toolbarCrumbEl.querySelector('.crumb-bridge');
+  if (!badge) { chip?.remove(); return; }
+  if (!chip) {
+    chip = document.createElement('span');
+    chip.className = 'bt-badge crumb-bridge';
+    toolbarCrumbEl.appendChild(chip);
+  }
+  chip.dataset.state = badge.state || '';
+  chip.dataset.role = badge.role || '';
+  chip.textContent = badge.chip;
+  chip.title = badge.sub + (badge.pin ? ' · ' + badge.pin : '');
+}
+document.addEventListener('bridge-threads-updated', () => {
+  const id = (toolbarCrumbEl?.dataset.signature || '').replace(/^session:/, '');
+  if (id && toolbarCrumbEl.dataset.signature.startsWith('session:')) paintCrumbBridge(id);
+});
 
 function currentAppToolbarView() {
   for (const [id, label] of [['cloud-page', '云端'], ['assistant-page', '助理'], ['wireless-page', '无线'], ['account-page', '账号'], ['hub-workspace', '资源与回顾'], ['memo-panel', '速记']]) {

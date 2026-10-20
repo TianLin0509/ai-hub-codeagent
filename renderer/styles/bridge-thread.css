@@ -100,4 +100,7 @@
 .bt-badge[data-state="queued"] { background: #fdf3e7; color: #b45309; }
 .bt-badge[data-state="failed"] { background: #fdecea; color: #c2362b; }
 .bt-badge[data-role="answerer"] { background: #fdf4e8; color: #b45309; }
+/* 会话头部（工具栏面包屑）的回合状态：2026-10-20 从会话栏挪过来；没答上一律标红（答方的暖色不盖过它）。 */
+.crumb-bridge { margin-left: 6px; font-size: 11px; line-height: 18px; cursor: default; }
+.crumb-bridge[data-state="failed"] { background: #fdecea; color: #c2362b; }
 .bt-badge-sub { display: block; font-size: 11.5px; color: #6c6c72; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

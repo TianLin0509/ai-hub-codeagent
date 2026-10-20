@@ -27,11 +27,12 @@ const isPrimary = model => /^glm/i.test(String(model || ''));
 // 个人账号 settings.json 写了没权限的 deepseek-v4-flash-0731，每个会话一开就报「模型 … 不存在或配置有误」）——
 // 纠正后的默认模型为空、而权限清单只有一个模型时标出来（这时「该改成什么」是确定的），带上写的值，号表和直查据此提示。
 // 只判定和显示，不改写 settings.json（修正只走经授权的远程维护 set-personal-model，见 codeagent-personal-model.js）。
-function personalModels({ dataDir, personalDir, fsModule = fs }) {
+// single：自动会话的挑号和选型（会在菜单里选中模型）用，见 codeagent-pool.js strictDefaultModel 的例外。
+function personalModels({ dataDir, personalDir, fsModule = fs, single = false }) {
   if (!personalDir) return { models: [], defaultModel: '', written: '', configMismatch: null };
   const known = pool.accountModels(personalDir, fsModule, dataDir ? pool.personalModelsFile(dataDir) : null);
   const written = pool.readSettingsModel(personalDir, fsModule);
-  const defaultModel = pool.personalDefaultModel(written, known);
+  const defaultModel = pool.personalDefaultModel(written, known, { single });
   const models = (known.models || []).slice();
   // 收紧（审核 2026-10-19）：只有「写的值不在清单里（分档名按 -Auto 算在内）」且「这个号对写的值有还没清除的模型配置避让记录」
   // 才算不符——合法的内部别名（如 MiniMax-M2.7-CodeAgentCLI，CLI 实际按它跑）没报过错就不标红。清单只有一个模型时给出建议改成它。
@@ -57,7 +58,8 @@ function personalAccount({ dataDir, personalDir, activeSessions = 0, now = Date.
   if (!personalDir) return null;
   const creds = pool.readCredentials(personalDir, fsModule);
   if (pool.accountState(creds, now) !== 'ready') return null;
-  const { models, defaultModel, written, configMismatch } = personalModels({ dataDir, personalDir, fsModule });
+  const { models, defaultModel, written, configMismatch } = personalModels({ dataDir, personalDir, fsModule, single: true });
+  // configModel 仍取写的值（2026-10-20）：自动会话在菜单里选不上时按它跑；真按它报过错的模型配置避让照样生效，直到写的值改对。
   return { key: 'personal', pool: false, models, defaultModel, configModel: written || defaultModel, activeSessions: Number(activeSessions) || 0,
     lastAssignedAt: dataDir ? pool.personalLastAssignedAt(dataDir, fsModule) : 0, ...(configMismatch ? { configMismatch } : {}) };
 }
@@ -74,7 +76,7 @@ function routeAccounts({ dataDir, personalDir = '', activeCounts = {}, personalA
       // 切号开关关着（账号即模型）：默认模型和个人号一样严格，写了且在清单里才算已知；configModel 取号目录里写的值。
       if (!routeSwitchEnabled()) {
         const written = pool.readSettingsModel(a.dir, fsModule);
-        const strict = pool.strictDefaultModel(written, a.models || []);
+        const strict = pool.strictDefaultModel(written, a.models || [], { authoritative: !!a.modelsAuthoritative });
         out.push({ key: a.id, pool: true, models: a.models || [], defaultModel: strict.model, configModel: written || strict.model,
           activeSessions: a.activeSessions || 0, lastAssignedAt: a.lastAssignedAt || 0, routeSwitched: !!a.routeSwitched,
           ...(strict.note ? { defaultNote: pool.describeDefaultNote(strict.note, written) } : {}) });

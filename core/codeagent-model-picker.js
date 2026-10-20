@@ -352,7 +352,9 @@ async function waitForEcho(manager, sid, mark, timeoutMs, screen) {
 // allowedModels：这个账号的模型权限清单（调用方只在清单权威时传）；目标不在清单里就不打开菜单，直接拒绝。
 // configDir：CodeAgent 这个会话实际用的配置目录（回车会写它的 settings.json）；先规范化，快照、写回、核对都用同一个。
 // guardMs：回车后看住默认模型多久；onDefaultChange(change)：每次发现被改、改回时回调（调用方记日志）。
-async function pickModel({ manager, sid, kind, modelId, configDir, allowedModels = null, sendToPty, screenTimeoutMs = 8000, guardMs = 3500, onDefaultChange = null, env = process.env }) {
+// readyFirstMs：先等 CLI 画出普通输入框并稳定下来再敲 /model（自动会话启动时用；2026-10-20 发布闸门 no-choice：
+// 启动后马上敲，/model 的回车有时没被执行，输入行停在「❯ /model」，第一条题目发不出去）。
+async function pickModel({ manager, sid, kind, modelId, configDir, allowedModels = null, sendToPty, screenTimeoutMs = 8000, guardMs = 3500, onDefaultChange = null, env = process.env, readyFirstMs = 0 }) {
   if (!modelAllowed(modelId, allowedModels)) {
     return { ok: false, notAllowed: true, inputReady: true,
       message: `${modelId} 不在这个账号的模型权限清单里（可选：${allowedModels.join('、')}），没有打开模型菜单` };
@@ -366,10 +368,27 @@ async function pickModel({ manager, sid, kind, modelId, configDir, allowedModels
   const fail = async message => ({ ok: false, message, screen: await screen.lines().catch(() => []) });
   async function choose() {
     // 已有菜单时不要再把 /model 填进搜索框。明确的模型切换可接手当前菜单。
-    const existingMenu = modelDialogVisible(await screen.lines());
+    let existingMenu = modelDialogVisible(await screen.lines());
+    if (!existingMenu && readyFirstMs > 0) {
+      // 认不出输入框（旧版 CodeAgent 画面不同，见 screenHasContent 的说明）等到点也照常往下走，和不等时一样。
+      const seen = await waitFor(screen, lines => modelDialogVisible(lines) || promptInputReady(lines), readyFirstMs);
+      if (seen.value) await waitForInput(screen, 3000);
+      existingMenu = modelDialogVisible(await screen.lines());
+    }
     attempted = true;
     if (!existingMenu) {
-      const sent = await sendToPty(sid, '/model', kind, { codeagentModelPick: true });
+      let sent = await sendToPty(sid, '/model', kind, { codeagentModelPick: true });
+      // 回车只接受了补全、命令没执行（2026-10-20 发布闸门与本机 e2e 实录：输入行停在「❯ /model」，菜单没开）：
+      // 菜单确实没开、输入行就是「/model」时再按一次回车。菜单开着时不补（会选中高亮项）。
+      if (sent && sent.sendStatus === 'stuck') {
+        const lines = await screen.lines();
+        const promptLine = lines[lines.findLastIndex(line => /^[\s─]*[❯›>]\s*/.test(line))] || '';
+        if (modelDialogVisible(lines) || await waitFor(screen, modelDialogVisible, 1500).then(r => r.value)) sent = { ...sent, sendStatus: 'ok' };
+        else if (/^[\s─]*[❯›>]\s*\/model\s*$/.test(promptLine)) {
+          manager.writeToSession(sid, '\r');
+          if ((await waitFor(screen, modelDialogVisible, screenTimeoutMs)).value) sent = { ...sent, sendStatus: 'ok' };
+        }
+      }
       if (!sent || sent.ok === false || sent.notSent || sent.sendStatus && sent.sendStatus !== 'ok') {
         if (sent?.notSent) attempted = false;
         return fail((sent && sent.message) || 'CodeAgent 没有确认打开模型菜单');
@@ -423,7 +442,12 @@ async function pickModel({ manager, sid, kind, modelId, configDir, allowedModels
     // 发过 /model 即须负责退出，不能等“解析成功”后才承担清理责任。
     try {
       if (attempted && !promptInputReady(await screen.lines())) manager.writeToSession(sid, '\x1b');
-      const ready = await waitForInput(screen);
+      let ready = await waitForInput(screen);
+      // Esc 只关掉补全列表时，「/model」还留在输入行里（2026-10-20 发布闸门实录）：没有菜单时退格清掉，再确认一次。
+      if (!ready.value && attempted && !modelDialogVisible(await screen.lines())) {
+        for (let i = 0; i < 12; i += 1) { manager.writeToSession(sid, '\x7f'); await sleep(30); }
+        ready = await waitForInput(screen);
+      }
       result = { ...result, inputReady: !!ready.value };
       if (!ready.value) result = { ...result, ok: false, message: `${result?.message || '模型操作尚未完成'}；尚未确认恢复普通输入框` };
     } catch (error) {

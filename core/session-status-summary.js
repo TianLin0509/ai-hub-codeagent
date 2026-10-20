@@ -146,6 +146,8 @@ function composerContextRing(session) {
 }
 
 function composerModelChip(session) {
+  // CodeAgent 一个账号固定一个模型（2026-10-20 用户）：输入框下方不放模型 chip，要换在后台 CLI 里自己输 /model。
+  if (baseKind(session) === 'codeagent') return { visible: false, label: '', id: '', pending: '' };
   const model = session && typeof session.currentModel === 'object' ? session.currentModel : null;
   const id = model ? String(model.id || '').trim() : '';
   const displayName = model ? String(model.displayName || '').trim() : '';

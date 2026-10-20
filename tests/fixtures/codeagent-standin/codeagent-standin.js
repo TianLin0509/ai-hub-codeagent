@@ -25,7 +25,8 @@ for (let i = 0; i < input.length; i += 1) {
   if (dropSystemPrompt && input[i] === '--append-system-prompt-file') { i += 1; continue; }
   if (ignoreModel && input[i] === '--model') { i += 1; continue; }
   // The company models do not exist for Claude; run the cheapest Claude model instead.
-  if (input[i] === '--model' && /^(?:GLM|MiniMax)/i.test(input[i + 1] || '')) {
+  // DeepSeek too (2026-10-20: automatic sessions now launch with the account's own model, e.g. --model DeepSeek-V4-Flash-0731).
+  if (input[i] === '--model' && /^(?:GLM|MiniMax|DeepSeek)/i.test(input[i + 1] || '')) {
     args.push('--model', process.env.CODEAGENT_STANDIN_MODEL || 'haiku'); i += 1; continue;
   }
   args.push(input[i]);

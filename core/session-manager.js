@@ -435,7 +435,7 @@ function buildClaudePtyLaunch(id, kind, opts, cwd, env, cv) {
 //   - 它不认 --settings：群聊插件隔离、fast、CLI 主题这些靠 overlay 的设置都不传；hook 写在配置目录。
 //   - 必须带 --disable-update（否则弹阻塞的升级框）与 --skip-safe-check（信任框）。
 //   - 没有 Claude 的模型目录与 fast 档；思考档只有 low/medium/high/max。
-// 家里联动替家里办事的会话（purpose=company-bridge）：不挂 Hub 自己的 MCP，也不走 /model 菜单（用 CodeAgent 的默认模型）。
+// 家里联动替家里办事的会话（purpose=company-bridge）：不挂 Hub 自己的 MCP；模型在启动后经 /model 菜单选成这个号该用的（2026-10-20 起，见 _createSession）。
 // 不改动公司电脑只靠说明约束：2026-10-15 公司真机实测 CodeAgent 1.2615 收到 --disallowedTools 照样放行 Write，
 // --strict-mcp-config 也挡不住用户级 MCP，用户拍板「只靠说明约束、公司 MCP 允许使用」，不再传这些不起作用的参数。
 // 公司版助理会话（purpose=company-assistant，2026-10-16）同样处理：不挂 Hub 的 MCP，用默认模型。
@@ -447,7 +447,7 @@ function buildClaudePtyLaunch(id, kind, opts, cwd, env, cv) {
 // 用户自己开的会话不加，可能依赖项目级配置。
 function codeAgentReadOnly(opts) { return !!opts && ['company-bridge', 'company-assistant', 'company-forum'].includes(opts.purpose); }
 // AI特战队通道里家里指定的模型（2026-10-18，core/codeagent-model-route.js）：只认通道会话（purpose=company-bridge），
-// 不走 --model 也不走 /model 菜单，靠号的配置目录 settings.json 定模型（号池同步配置时写；个人账号只在默认就是它时才用）。
+// 靠号的配置目录 settings.json 定模型（号池同步配置时写；个人账号只在默认就是它时才用），开起来后再在 /model 菜单里选中它（2026-10-20）。
 function codeAgentRouteModel(opts) {
   if (!opts || opts.purpose !== 'company-bridge' || typeof opts.codeagentRouteModel !== 'string') return '';
   const id = opts.codeagentRouteModel.trim();
@@ -455,17 +455,20 @@ function codeAgentRouteModel(opts) {
 }
 // CodeAgent 会话第一轮回答前的「预计模型」（只作显示名）：恢复的会话 → 上一轮回答里的实际模型；
 // 号池号 → 这次同步配置定下的模型；个人账号 → 纠正后的默认模型（core/codeagent-model-route.js personalModels）。
-function codeAgentExpectedModel(opts, { pool = null, configDir = '' } = {}) {
+// single：自动会话选型用，探测过的清单只有一个模型时就是它（见 codeagent-pool.js strictDefaultModel 的例外）。
+function codeAgentExpectedModel(opts, { pool = null, configDir = '', single = false } = {}) {
   const models = require('./codeagent-models');
   const actual = opts && typeof opts.codeagentActualModel === 'string' ? opts.codeagentActualModel.trim() : '';
   if (actual && models.isSafeModelId(actual)) return actual;
   if (pool) return pool.model || '';
-  try { return require('./codeagent-model-route').personalModels({ dataDir: getHubDataDir(), personalDir: configDir }).defaultModel || ''; }
+  try { return require('./codeagent-model-route').personalModels({ dataDir: getHubDataDir(), personalDir: configDir, single }).defaultModel || ''; }
   catch { return ''; }
 }
 function shouldPickCodeAgentModel(opts) {
   // model 也来自分支、历史恢复和场景元数据；只有本次操作的明确意图才能打开菜单。
-  return !!(opts && opts.model && opts.codeagentModelPick === true && !codeAgentReadOnly(opts));
+  if (!opts || !opts.model || opts.codeagentModelPick !== true) return false;
+  // 自动会话只认 _createSession 按号定下的模型（codeagentAccountModel），调用方带来的模型名和选型标记不认。
+  return !codeAgentReadOnly(opts) || opts.codeagentAccountModel === opts.model;
 }
 function buildCodeAgentPtyLaunch(id, kind, opts, cwd, env, config, auth = null) {
   const { normalizeCodeAgentModel, EFFORTS, commandHead } = require('./codeagent-config');
@@ -1455,7 +1458,7 @@ class SessionManager extends EventEmitter {
     const routeSwitch = require('./codeagent-model-route').routeSwitchEnabled();
     if (routeModel && !routeSwitch && !opts.codeagentPoolAccount) {
       // 和号表同一口径：号自己写了、且在清单里的才算默认模型（pool.strictDefaultModel），不按清单猜。
-      const current = pool.strictDefaultModel(pool.readSettingsModel(account.dir), account.models).model;
+      const current = pool.strictDefaultModel(pool.readSettingsModel(account.dir), account.models, { authoritative: !!account.modelsAuthoritative }).model;
       if (current.toLowerCase() !== routeModel.toLowerCase()) throw new Error(`${who(account)} 的默认模型是 ${current || '未知'}，不是 ${routeModel}；不改号的默认模型，未启动会话`);
     } else if (routeModel && routeSwitch) {
       if (!account.models.some(m => m.toLowerCase() === routeModel.toLowerCase())) throw new Error(`${who(account)} 没有 ${routeModel} 的权限，未启动会话`);
@@ -1579,6 +1582,8 @@ class SessionManager extends EventEmitter {
     require('./auto-dispatch-rules').applySessionEnv(sessionEnv, isCodeAgent ? opts.purpose : null);
     let codexProfile = null;
     let codeagentConfig = isCodeAgent ? require('./codeagent-config').resolveCodeAgentConfig(process.env) : null;
+    // 自动会话的模型由号定（2026-10-19 账号即模型）：调用方带来的模型名和选型标记一律不认，挑号也不按它；选哪个模型见下方。
+    if (isCodeAgent && codeAgentReadOnly(opts)) opts = { ...opts, model: undefined, codeagentModelPick: false, codeagentAccountModel: undefined };
     // 号池（core/codeagent-pool.js）：新建时挑一个号，恢复/分支时回到原来那个号；换的只是配置目录。
     let codeagentPool = null;
     if (isCodeAgent && (opts.codeagentAccount === 'pool' || opts.codeagentPoolAccount)) {
@@ -1598,6 +1603,18 @@ class SessionManager extends EventEmitter {
     // AI特战队通道在个人账号上新开会话：记下分配时间，和号池各号一起轮转（core/codeagent-model-route.js pickAnyRoute）。
     if (isCodeAgent && !codeagentPool && opts.purpose === 'company-bridge' && freshLaunch) {
       try { require('./codeagent-pool').markPersonalAssigned(getHubDataDir()); } catch (error) { console.warn('[codeagent-pool] 记个人账号分配时间：' + error.message); }
+    }
+    // 自动会话按真人在启动中心选好模型那样开（2026-10-20 用户：「直接模拟真人用户从启动中心点开创建」）：开起来后在 /model 菜单里
+    // 选中这个号该用的模型（指定的模型 → 号池号同步定下的模型 → 个人账号纠正后的默认模型），第一条消息等选完再发。
+    // 公司真机 Q-1020-14：只带 --setting-sources user 时，个人号启动 12 秒后仍把默认模型写成 deepseek 并报「模型不存在」；交互模式下只有菜单选择确定管用。
+    if (isCodeAgent && codeAgentReadOnly(opts)) {
+      // 个人账号一律选它纠正后的默认模型：新开时它就是指定模型（上面已核对），恢复时按此刻的默认照常起，不选回当初的模型。
+      // 号的权限清单探测过且只有一个模型时就选它，不管 settings.json 写的什么（2026-10-20 公司真机：CodeAgent 启动时把默认模型写回 deepseek）。
+      const pool = require('./codeagent-pool');
+      const target = codeagentPool ? codeAgentRouteModel(opts) || codeagentPool.model
+          || pool.strictDefaultModel(pool.readSettingsModel(codeagentPool.account.dir), codeagentPool.account.models, { authoritative: !!codeagentPool.account.modelsAuthoritative }).model || ''
+        : codeAgentExpectedModel({}, { configDir: codeagentConfig.configDir, single: true });
+      opts = { ...opts, model: target || undefined, codeagentModelPick: !!target, codeagentAccountModel: target || undefined };
     }
 
     if (isClaude) {
@@ -2071,7 +2088,8 @@ class SessionManager extends EventEmitter {
       // 恢复的会话用上一轮实际模型；号池号用这次同步配置定下的模型；个人账号用纠正后的默认模型。都不知道才写占位。
       const expected = !routeModel && !shouldPickCodeAgentModel(opts)
         ? codeAgentExpectedModel(opts, { pool: codeagentPool, configDir: codeagentConfig.configDir }) : '';
-      currentModel = routeModel ? { id: routeModel, displayName: require('./codeagent-models').modelLabel(routeModel) }
+      currentModel = shouldPickCodeAgentModel(opts) ? { id: mid, displayName: require('./codeagent-models').modelLabel(mid) }
+        : routeModel ? { id: routeModel, displayName: require('./codeagent-models').modelLabel(routeModel) }
         : !shouldPickCodeAgentModel(opts)
         ? { id: '', displayName: expected ? require('./codeagent-models').modelLabel(expected) : require('./codeagent-models').PLACEHOLDER_LABEL }
         : { id: mid, displayName: require('./codeagent-models').modelLabel(mid) };

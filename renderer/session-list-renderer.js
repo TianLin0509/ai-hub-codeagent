@@ -142,6 +142,17 @@ function createSessionListRenderer(options = {}) {
   const bridgeBadge = typeof options.bridgeBadge === 'function' ? options.bridgeBadge
     : id => { try { return (typeof window !== 'undefined' && window._bridgeThreads?.badge(id)) || null; } catch { return null; } };
   doc.addEventListener?.('bridge-threads-updated', () => { try { renderSessionList(); } catch (error) { console.warn('[session-list] bridge refresh failed:', error && error.message); } });
+  // CodeAgent 会话的账号字母（renderer/session-account-badge.js）：账号表取到或登录变化后重画会话栏。
+  const accountBadge = typeof options.accountBadge === 'function' ? options.accountBadge : (() => {
+    const ipc = options.ipcRenderer || (typeof process !== 'undefined' && process.type === 'renderer' ? require('electron').ipcRenderer : null);
+    if (!ipc || typeof ipc.invoke !== 'function') return () => null;
+    const badges = require('./session-account-badge').createAccountBadges({
+      invoke: (channel, payload) => ipc.invoke(channel, payload),
+      subscribe: typeof ipc.on === 'function' ? fn => ipc.on('codeagent-pool:changed', (_event, change) => fn(change)) : null,
+      onChange: () => { try { renderSessionList(); } catch (error) { console.warn('[session-list] account refresh failed:', error && error.message); } },
+    });
+    return s => { try { return badges.badge(s); } catch { return null; } };
+  })();
   const publishSessionViews=createSessionViewPublisher(packet=>{
     const ipc=options.ipcRenderer || (typeof process!=='undefined'&&process.type==='renderer'?require('electron').ipcRenderer:null);
     ipc?.send?.('assistant:session-view',packet);
@@ -1028,8 +1039,9 @@ sessionListEl.addEventListener('keydown', event => {
       ? `${['idle-timeout', 'company-bridge-idle'].includes(s.suspendReason) ? '自动休眠' : '休眠中'}${showUnread ? `，有 ${unreadCount} 条未读` : ''}，点击唤醒`
       : '';
     const displayTitle = sessionDisplayTitle(s);
+    const account = accountBadge(s);
     const accessibleSummary = [displayTitle,
-      s.codeagentPoolAccount ? `号池账号 ${s.codeagentPoolLabel || ''}` : '',
+      account ? account.title : '',
       s.currentModel ? (s.currentModel.displayName || s.currentModel.id) : '',
       ctxPct != null ? `Ctx ${ctxPct}%` : '',
       anyWarning,
@@ -1040,15 +1052,15 @@ sessionListEl.addEventListener('keydown', event => {
         : (showUnread ? (s.replyReadyText || s.lastOutputPreview || '有完成结果尚未查看') : '')),
     ].filter(Boolean).join(' · ');
     div.setAttribute('aria-label', accessibleSummary);
-    // 号池会话：标题前一个「池」字（放在标题格里，不占卡片的列），悬停看用的是哪个号（core/codeagent-pool.js）。
-    const poolHtml = s.codeagentPoolAccount
-      ? `<span class="sl-pool" title="${escapeHtml('号池账号 · ' + (s.codeagentPoolLabel || s.codeagentPoolAccount))}">池</span>` : '';
-    // 家里 ⇄ 公司通道（2026-10-16）：标题前一枚「⇄」标签（行高固定一行，放标题前才不会被省略号截掉）；
-    // 在途时标签里就是当前那一步和耗时，悬停看编号与全程。
+    // CodeAgent 会话：标题前一个账号字母（2026-10-20 用户：不再用「池」区分号池，个人号和号池号统一显示工号首字母），
+    // 放在标题格里不占列，悬停看代称（个人账号 / 号池 · 号 N）。拿不到字母时不显示。
+    const accountHtml = account ? `<span class="sl-acct" title="${escapeHtml(account.title)}">${escapeHtml(account.letter)}</span>` : '';
+    // 家里 ⇄ 公司通道：回合状态（已答 / 没答上 / N 轮 / 处理中）不进会话栏（2026-10-20 用户：会话栏要尽可能干净），
+    // 挪到会话头部（renderer.js paintCrumbBridge）；会话栏只留「重启打断」这类要用户动手的异常。详细信息模式的第二行照旧。
     const bridge = bridgeBadge(s.id);
-    const bridgeHtml = bridge ? `<span class="bt-badge" data-state="${escapeHtml(bridge.state)}" data-role="${escapeHtml(bridge.role || '')}" title="${escapeHtml(bridge.sub)}">${escapeHtml(bridge.chip)}</span>` : '';
+    const bridgeHtml = bridge && bridge.role === 'restart' ? `<span class="bt-badge" data-state="${escapeHtml(bridge.state)}" data-role="${escapeHtml(bridge.role || '')}" title="${escapeHtml(bridge.sub)}">${escapeHtml(bridge.chip)}</span>` : '';
     div.innerHTML = _sessionKindHtml(s.kind, modelTxt, isDormant && !isResumePending && !issue ? 'dorm' : dotCls, dormantStateTip || runtimeTruthSummary(runtimeTruth), require('../core/codeagent-models').iconModelId(s))
-      + '<span class="sl-title">' + _warningHtml(anyWarning) + poolHtml + bridgeHtml + escapeHtml(displayTitle) + '</span>'
+      + '<span class="sl-title">' + _warningHtml(anyWarning) + accountHtml + bridgeHtml + escapeHtml(displayTitle) + '</span>'
       + timeHtml(s, showUnread ? Math.max(1, unreadCount) : 0);
     if (child) div.className += ' child';
     if (detailsEnabled) {

@@ -671,6 +671,14 @@ function registerSessionIpc(ipcMain, deps) {
     try { const status = codeagentPoolStatus(); autoProbeMissing(status); return { ...status, probing: [...codeagentProbing] }; }
     catch (error) { return { ok: false, error: error.message }; }
   });
+  // 会话栏的账号字母与代称（core/codeagent-account-badge.js）：只读凭证元数据，不触发获取模型权限。
+  ipcMain.handle('codeagent-pool:badges', () => {
+    try {
+      const { getHubDataDir } = require('../../core/data-dir');
+      const personalDir = require('../../core/codeagent-config').resolveCodeAgentConfig(process.env).configDir;
+      return { ok: true, ...require('../../core/codeagent-account-badge').accountBadges({ dataDir: getHubDataDir(), personalDir }) };
+    } catch (error) { return { ok: false, error: error.message }; }
+  });
   ipcMain.handle('codeagent-pool:add', (_event, payload) => {
     try {
       const { getHubDataDir } = require('../../core/data-dir');
@@ -765,8 +773,9 @@ function registerSessionIpc(ipcMain, deps) {
     const { getHubDataDir } = require('../../core/data-dir');
     const dataDir = getHubDataDir();
     const guard = require('../../core/codeagent-default-model-guard');
-    // 自动会话（通道、公司助理、论坛）一律用号自己的默认模型，绝不驱动菜单（2026-10-19 账号即模型）。
-    if (['company-bridge', 'company-assistant', 'company-forum'].includes(session.purpose)) {
+    // 自动会话（通道、公司助理、论坛）只在启动和原地重拉时由 Hub 选成这个号该用的模型（2026-10-20 用户：照真人从启动中心新建），
+    // 会话中途不切换（2026-10-19 账号即模型）。
+    if (['company-bridge', 'company-assistant', 'company-forum'].includes(session.purpose) && reason !== 'launch' && reason !== 'relaunch') {
       codeagentModels.appendModelLog(dataDir, { event: 'pick', session: String(sessionId).slice(0, 8), reason, model: modelId, ok: false, error: 'automatic-session' });
       return { ok: false, inputReady: true, message: '自动会话用账号自己的默认模型，不切换模型' };
     }
@@ -783,6 +792,8 @@ function registerSessionIpc(ipcMain, deps) {
     try {
       result = await codeagentPicker.pickModel({ manager: sessionManager, sid: sessionId, kind: session.kind, modelId,
         configDir, allowedModels: permitted.authoritative ? permitted.models : null,
+        // 启动和原地重拉：等 CLI 画出普通输入框再敲 /model（太早敲回车会丢，见 pickModel 的 readyFirstMs）
+        readyFirstMs: reason === 'launch' || reason === 'relaunch' ? 45000 : 0,
         onDefaultChange: change => guard.recordChange(dataDir, { account, session: String(sessionId).slice(0, 8), before: change.restoredTo || '', after: change.written || '',
           source: `codeagent-menu-enter:${reason}`, extra: { file: change.file, restoredTo: change.restoredTo || '(空)', restoreOk: change.ok, ...(change.error ? { restoreError: change.error } : {}) } }, { persist: false }),
         sendToPty: require('../../core/group-chat-watcher').sendToPty });
@@ -804,6 +815,10 @@ function registerSessionIpc(ipcMain, deps) {
         require('fs').mkdirSync(require('path').dirname(file), { recursive: true });
         require('fs').writeFileSync(file, `${new Date().toISOString()} ${reason} ${modelId}：${result.message}\n\n${result.screen.join('\n')}\n`, 'utf8');
       } catch { /* 只是排查用的附件 */ }
+    }
+    // 自动会话没人守着：菜单没选上但普通输入框已恢复时，照旧按 CLI 当前模型把活发出去（和改动前一样），失败只记在上面的 pick 日志里，不卡住这一轮。
+    if (!result.ok && result.inputReady && ['company-bridge', 'company-assistant', 'company-forum'].includes(session.purpose)) {
+      return { ...result, ok: true, fallback: 'cli-default-model' };
     }
     if (result.ok) {
       const updated = sessionManager.updateSessionMeta(sessionId, { currentModel: { id: modelId, displayName: codeagentModels.modelLabel(modelId) }, codeagentRequestedModel: undefined, codeagentModelPick: false,

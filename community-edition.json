@@ -37,8 +37,8 @@
   "releaseNotes": [
     "AI特战队功能增强；公司联动新增「读文件」：配对后可按目录白名单只读查看公司电脑上的文本文件（日志、表格、文档），密钥类内容自动隐去，每次操作留痕，开关默认打开，可随时关掉"
   ],
-  "version": "2.1.19",
-  "upstreamVersion": "1.6.554",
-  "upstreamCommit": "c465af8a8ff2be79118fc7f5e1ab990fda682bb2",
+  "version": "2.1.20",
+  "upstreamVersion": "1.6.557",
+  "upstreamCommit": "ab8de7ce836479da628cfdefa7a782ea87accc86",
   "upstreamDirty": false
 }
