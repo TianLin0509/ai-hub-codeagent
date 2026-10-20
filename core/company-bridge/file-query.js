@@ -7,8 +7,9 @@
 //
 // 能读的范围（fileRoots）：设置里的「仿真结果目录」+「代码位置」+「额外可读目录」，去重后最多 20 个。
 //   一律用 realpath 后的真实路径判断是否落在某个根里面（挡 ../ 和符号链接绕出去）；根目录自己也读不到时如实回报。
-// 只读文本：后缀白名单（txt/md/log/csv/json + 常见代码与配置）；密钥类后缀（.key/.pem/.pfx…）直接拒绝；
-//   二进制（含 NUL 字节）拒绝；凭据按公司账号实值 + 常见的 key=value / 私钥块样式隐去，正文其余部分原样带回。
+// 文本一律可读（2026-10-20 用户：不要后缀白名单，文件都该能读）：不再挑后缀，只留三类拒绝——
+//   凭据文件名（.netrc/.npmrc/id_rsa…）、密钥证书后缀（.key/.pem/.pfx…）、二进制与打包产物后缀（.pth/.pyc/.xlsx…）；
+//   二进制（含 NUL 字节）再兜一层拒绝；凭据按公司账号实值 + 常见的 key=value / 私钥块样式隐去，正文其余部分原样带回。
 // 每次动作写审计日志 logs/company-files.log，界面给一条不打断的轻提示；开关是设置里的 allowRemoteFiles。
 const fs = require('node:fs');
 const path = require('node:path');
@@ -34,18 +35,20 @@ const INTERVALS = { read: 5000, list: 10000, search: 20000 };
 const SKIP_DIRS = new Set(['node_modules', '.git', '.svn', '.hg', '__pycache__', '.venv', 'venv', '.idea', '.vscode',
   '$recycle.bin', 'system volume information', 'appdata', 'windows', '$windows.~ws', '$windows.~bt']);
 
-// 文本后缀白名单（第一期：txt、md、log、csv 和代码；Word / Excel / PDF 的取字放第二期）
-const TEXT_EXT = new Set(['.txt', '.text', '.md', '.markdown', '.log', '.csv', '.tsv', '.json', '.jsonl', '.ndjson', '.xml', '.yaml', '.yml',
-  '.ini', '.conf', '.cfg', '.properties', '.toml', '.sql', '.tex', '.rst', '.srt', '.vtt',
-  '.js', '.mjs', '.cjs', '.ts', '.tsx', '.jsx', '.vue', '.py', '.m', '.c', '.cc', '.cpp', '.cxx', '.h', '.hpp', '.hh', '.java', '.cs', '.go', '.rs',
-  '.sh', '.bash', '.zsh', '.ps1', '.psm1', '.bat', '.cmd', '.mk', '.cmake', '.gradle', '.r', '.jl', '.vb', '.pl', '.lua', '.php', '.rb', '.swift', '.kt',
-  '.html', '.htm', '.css', '.scss', '.less', '.diff', '.patch', '.pem.txt']);
 // 一律不给读的后缀：密钥 / 证书单列一类，报错时能说清楚是哪种
 const DENY_SECRET_EXT = new Set(['.key', '.pem', '.pfx', '.p12', '.jks', '.keystore', '.kdbx', '.ppk', '.der', '.crt', '.cer', '.asc', '.gpg', '.pgp']);
-const DENY_EXT = new Set([...DENY_SECRET_EXT, '.sqlite', '.db', '.exe', '.dll', '.so', '.dylib', '.zip', '.7z', '.rar', '.gz', '.tar', '.bin', '.iso']);
+// 二进制 / 打包产物：通道只传文本，给了也解不出来，按后缀先挡掉（漏网的靠 NUL 字节那一层）
+const BINARY_EXT = new Set(['.exe', '.dll', '.so', '.dylib', '.o', '.obj', '.a', '.lib', '.class', '.jar', '.war', '.ear', '.whl', '.egg', '.node', '.wasm',
+  '.pyc', '.pyo', '.pyd', '.pth', '.pt', '.ckpt', '.safetensors', '.onnx', '.npy', '.npz', '.h5', '.mat',
+  '.sqlite', '.db', '.bin', '.pak', '.iso', '.zip', '.7z', '.rar', '.gz', '.tar', '.xz', '.bz2',
+  '.png', '.jpg', '.jpeg', '.gif', '.bmp', '.ico', '.tif', '.tiff', '.webp',
+  '.mp3', '.wav', '.flac', '.mp4', '.avi', '.mov', '.wmv', '.mkv',
+  '.ttf', '.otf', '.woff', '.woff2', '.eot',
+  '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx', '.pdf']);
+const DENY_EXT = new Set([...DENY_SECRET_EXT, ...BINARY_EXT]);
 // 一律不给读的文件名（各家 CLI 的凭据）
 const DENY_NAME = new Set(['.netrc', '_netrc', '.npmrc', '.pypirc', 'id_rsa', 'id_dsa', 'id_ecdsa', 'id_ed25519', 'credentials', 'credentials.json',
-  '.git-credentials', 'auth.json', '.htpasswd', 'shadow', '.env.local', '.env.production']);
+  '.git-credentials', 'auth.json', '.htpasswd', 'shadow', '.env', '.env.local', '.env.production', '.env.development', '.credentials.json']);
 
 const round1 = n => Math.round(Number(n) * 10) / 10;
 const mb = b => Math.round((Number(b) || 0) / 1048576);
@@ -111,16 +114,17 @@ function resolveIn(roots, wanted, { mustExist = true } = {}) {
   return { root: hit.raw, rootReal: hit.real, full: real, rel: path.relative(hit.real, real).split(path.sep).join('/') || '.', st: null };
 }
 
-// ---- 后缀 / 名字闸门 ----
+// ---- 后缀 / 名字闸门：默认放行，只拒绝凭据、密钥、二进制这三类 ----
 function readableName(name) {
   const lower = String(name).toLowerCase();
   if (DENY_NAME.has(lower)) return { ok: false, why: '这类文件（凭据 / 密钥）不给读' };
   const ext = path.extname(lower);
   if (DENY_SECRET_EXT.has(ext)) return { ok: false, why: `这类文件（${ext}，密钥 / 证书）不给读` };
-  if (DENY_EXT.has(ext)) return { ok: false, why: `这类文件（${ext}）不给读` };
-  if (!TEXT_EXT.has(ext)) return { ok: false, why: `第一期只读文本（txt / md / log / csv / 代码），${ext || '没有后缀'}先不支持` };
+  if (BINARY_EXT.has(ext)) return { ok: false, why: `这类文件（${ext}）是二进制或打包产物，通道只传文本，读不了` };
   return { ok: true };
 }
+// 按后缀能不能当文本传（给子树统计标 text 用，和 readableName 同源）
+const textByExt = ext => !DENY_EXT.has(String(ext).toLowerCase());
 
 // ---- 文本解码：优先 UTF-8，出现替换字符就退回 GBK（中文 Windows 上的 txt 常见）----
 function decodeText(buf) {
@@ -247,7 +251,7 @@ async function subtreeSize(dir, { budgetMs = SCAN_BUDGET_MS, maxEntries = SCAN_M
     }
   }
   const top = [...byExt.values()].sort((a, b) => b.bytes - a.bytes).slice(0, 12)
-    .map(x => ({ ext: x.ext, files: x.files, sizeKB: Math.round(x.bytes / 1024), text: TEXT_EXT.has(x.ext) || undefined }));
+    .map(x => ({ ext: x.ext, files: x.files, sizeKB: Math.round(x.bytes / 1024), text: textByExt(x.ext === '（无后缀）' ? '' : x.ext) || undefined }));
   return { files, sizeKB: Math.round(bytes / 1024), top, scanned: entries, truncated, scanMs: Date.now() - t0 };
 }
 
@@ -459,6 +463,6 @@ function summarize(r) {
 module.exports = {
   ACTIONS, LABEL, parseParams, fileRoots, resolveIn, readableName, decodeText, readWindow, listDir, subtreeSize, search, run,
   makeFileRedactor, fit, summarize, summarizeAction: summarize, STEP_LABELS,
-  MIN_INTERVAL_MS, INTERVALS, MAX_LIST, MAX_MATCHES, MAX_READ_LINES, MAX_READ_CHARS, MAX_DEPTH, TEXT_EXT, DENY_EXT, MAX_ROOTS, MAX_FILE_BYTES, SKIP_DIRS,
+  MIN_INTERVAL_MS, INTERVALS, MAX_LIST, MAX_MATCHES, MAX_READ_LINES, MAX_READ_CHARS, MAX_DEPTH, DENY_EXT, BINARY_EXT, textByExt, MAX_ROOTS, MAX_FILE_BYTES, SKIP_DIRS,
   DENY_NAME, SCAN_BUDGET_MS, SCAN_MAX_ENTRIES,
 };

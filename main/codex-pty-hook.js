@@ -29,7 +29,10 @@ function createCodexPtyHookHandler({
     if (parsed.agentId) return { ignored: 'subagent' };
     const incomingSid = String(parsed.claudeSessionId || '');
     const boundSid = String(session.codexSid || '');
-    const rolloutPath = typeof parsed.transcriptPath === 'string' && parsed.transcriptPath ? parsed.transcriptPath : null;
+    // One spelling: a \\?\ path flipping against the stored C:\ path re-bound
+    // the session on every tool call and rebuilt the card view mid-scroll.
+    const rolloutPath = typeof parsed.transcriptPath === 'string' && parsed.transcriptPath
+      ? require('../core/plain-windows-path').plainWindowsPath(parsed.transcriptPath) : null;
     if (rolloutPath) {
       let meta = null;
       try { meta = readCodexRolloutMeta(rolloutPath); } catch {}

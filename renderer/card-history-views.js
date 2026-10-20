@@ -1,7 +1,9 @@
 'use strict';
 
+// \\?\C:\x and C:\x name the same file; neither spelling may detach the cards.
 const identity = session => JSON.stringify([session?.id, session?.kind, session?.runtimeBackend,
-  session?.codexSid, session?.ccSessionId, session?.transcriptPath]);
+  session?.codexSid, session?.ccSessionId,
+  require('../core/plain-windows-path').plainWindowsPath(session?.transcriptPath)]);
 
 // A new session receives its native ID/path after the first local message is
 // already visible. Filling an unknown field binds that same conversation; it

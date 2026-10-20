@@ -35,10 +35,12 @@
     "releasePage": "https://github.com/TianLin0509/ai-hub-codeagent/releases"
   },
   "releaseNotes": [
-    "AI特战队功能增强；公司联动新增「读文件」：配对后可按目录白名单只读查看公司电脑上的文本文件（日志、表格、文档），密钥类内容自动隐去，每次操作留痕，开关默认打开，可随时关掉"
+    "公司联动「读文件」不再挑后缀：工程配置（.runcfg、.cmp、.pro、.vcxproj 等）和没有后缀的 README 都能读；密钥、凭据文件和二进制照旧不给读，口令自动隐去",
+    "AI特战队的自动会话开起来后在模型菜单里选中这个账号的模型，个人账号和 GLM 号不再报「模型不存在」",
+    "一个账号固定一个模型：启动中心和输入框下方不再有 CodeAgent 模型选项，要换模型在后台输入 /model；左侧会话栏改为显示账号首字母"
   ],
-  "version": "2.1.20",
-  "upstreamVersion": "1.6.557",
-  "upstreamCommit": "ab8de7ce836479da628cfdefa7a782ea87accc86",
+  "version": "2.1.21",
+  "upstreamVersion": "1.6.559",
+  "upstreamCommit": "b42bc1922fb40a63c324575d578b8834f4ba98e6",
   "upstreamDirty": false
 }

@@ -2366,7 +2366,7 @@ class TranscriptTap extends EventEmitter {
 // ---------------------------------------------------------------------------
 function normalizePathForCompare(p) {
   if (!p || typeof p !== 'string') return '';
-  let n = p.replace(/\\/g, '/');
+  let n = require('./plain-windows-path').plainWindowsPath(p).replace(/\\/g, '/');
   if (n.length > 3 && n.endsWith('/')) n = n.slice(0, -1);
   if (process.platform === 'win32') n = n.toLowerCase();
   return n;
