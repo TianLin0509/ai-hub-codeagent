@@ -9,6 +9,7 @@ const {
   formatBranchSessionTitle,
   isGenericAutoSessionTitle: isGenericAutoSessionTitleForKinds,
 } = require('../core/session-title-guards.js');
+const { continuationTitle, parseReferenceLines } = require('../core/session-reference.js');
 
 // 自动起标题走 DeepSeek 官方 API 的 V4.1 Flash。
 const AUTO_TITLE_DEEPSEEK_MODEL = 'deepseek-flash';
@@ -198,6 +199,14 @@ function createAutoTitleManager(deps) {
     }
   }
 
+  function referenceContinuationTitle(text, hubSessionId) {
+    const first = parseReferenceLines(text)[0];
+    if (!first || !first.leading) return '';
+    let others = [];
+    try { others = (sessionManager.getAllSessions?.() || []).filter(x => x && x.id !== hubSessionId).map(x => x.title); } catch { others = []; }
+    return continuationTitle(first.name, others);
+  }
+
   function maybeAutoTitleSessionFromPrompt(ev) {
     const { hubSessionId } = ev || {};
     // 标题只取用户自己的话。Hub 附带块（规则、工作区规则、记忆索引）2026-10-13 起放在正文前面，
@@ -220,9 +229,13 @@ function createAutoTitleManager(deps) {
             || (!latest.branchAutoTitlePending && !isGenericAutoSessionTitle(latest.title))) return;
         const originalTitle = latest.title;
         const originalKind = latest.kind;
-        let title = '';
-        try { title = await generateSessionTitleFromPrompt(text); } catch (e) {
-          console.warn('[auto-title] AI title failed:', e && e.message);
+        // 用【引用会话】新开的会话（2026-10-20）：不让模型照着引用行把旧标题抄一遍，直接起「旧标题（续）」，已有（续）就递增。
+        const continued = referenceContinuationTitle(text, hubSessionId);
+        let title = continued;
+        if (!title) {
+          try { title = await generateSessionTitleFromPrompt(text); } catch (e) {
+            console.warn('[auto-title] AI title failed:', e && e.message);
+          }
         }
         // The network request yields: a user rename/close must win meanwhile.
         const current = sessionManager.getSession(hubSessionId);

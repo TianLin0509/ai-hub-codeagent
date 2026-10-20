@@ -6,6 +6,8 @@
 // 解锁时没有输入框、没有提示，菜单里只是多了这一项。
 (() => {
   const { ipcRenderer } = require('electron');
+  // 配对号牌（2026-10-20）：任务列表写「家里 <会话名 #短码> · <家里模型>」和「本会话由 <号> · <模型> 作答」。
+  const pairing = require('../core/company-bridge/pairing-plate');
   let dialog = null, data = null, editing = false, pool = null, poolTimer = null, imagePanel = null;
   let tab = (() => { try { return localStorage.getItem('hub.homeLink.tab') === 'pool' ? 'pool' : 'link'; } catch { return 'link'; } })();
   const esc = v => String(v ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -81,6 +83,8 @@
     const num = (key, list, unit) => `<select data-hl-f="${key}">${opt([...new Set([...list, Number(s[key])])].sort((a, b) => a - b).map(x => ({ id: String(x), label: x + unit })), String(s[key]))}</select>`;
     const p = data.parallel;
     const now = p ? `现在${p.peak ? '是工作日忙时' : '是闲时'}，最多同时 ${p.cap} 个（${p.working} 个在跑，受${p.limitedBy}限制）` : '';
+    // 每个会话按多少内存算：实测在运行的 CodeAgent 会话均值，没有样本时用默认值（core/company-bridge/session-care.js）
+    const memNote = p && p.sessionMemNote ? p.sessionMemNote : '按每个会话的实测占用估算（没有样本时按 3.8 GB）';
     return `<label>同时处理</label><div><div class="hl-row">
         工作日忙时 ${num('maxParallel', [1, 2, 3, 4, 5, 6, 8], ' 个')}
         · 其余时间 ${num('maxParallelIdle', [2, 3, 4, 6, 8, 10, 12], ' 个')}
@@ -88,7 +92,7 @@
         · 内存保底 ${num('memFloorPct', [5, 10, 15, 20, 25, 30], '%')}</div>
         <div class="hl-row">忙时时段 <input data-hl-f="busyHours" value="${esc(s.busyHours)}" style="width:220px" title="格式如 08:30-12:00,13:30-17:30；周末全天算闲时">
         · 新会话<select data-hl-f="usePool"><option value="1"${s.usePool ? ' selected' : ''}>优先用号池</option><option value="0"${s.usePool ? '' : ' selected'}>只用个人账号</option></select></div>
-        <div class="hl-muted">实际上限取三者最小：时段上限、可用账号数 × 每号上限、再开一个会话后可用内存不低于保底（每个 CodeAgent 会话约 1.3 GB）。${esc(now)}</div></div>`;
+        <div class="hl-muted">实际上限取三者最小：时段上限、可用账号数 × 每号上限、再开一个会话后可用内存不低于保底；内存${esc(memNote)}。${esc(now)}</div></div>`;
   }
   function settingsView() {
     const s = data.settings;
@@ -131,7 +135,7 @@
       const rounds = t.rounds.map(r => `<div><b>第 ${r.round} 轮</b>${r.error ? ` <span class="hl-pill bad">${esc(r.error)}</span>` : ''}<pre>${esc(r.question)}</pre>${r.reply ? `<div class="hl-muted">回执（${clock(r.replyAt)}）</div><pre>${esc(r.reply)}</pre>` : ''}</div>`).join('');
       return `<div class="hl-item"><div class="hl-row"><span class="hl-pill ${tone}">${label}</span><b>${esc(t.id)}</b><span>${esc(t.title)}</span>
         <span style="flex:1"></span>${t.sessionId ? `<button class="hl-link" data-hl="open:${esc(t.sessionId)}">${t.session?.open ? '打开会话' : '找回会话'}</button>` : ''}${t.state === 'failed' ? `<button class="hl-link" data-hl="retry:${esc(t.id)}">重试</button>` : ''}</div>
-        <div class="hl-muted">收到 ${clock(t.createdAt)} · ${t.rounds.length} 轮${t.model ? ' · 指定模型 ' + esc(t.model) : ''}${t.from?.title ? ' · 来自会话「' + esc(t.from.title) + '」' : ''}</div>
+        <div class="hl-muted">收到 ${clock(t.createdAt)} · ${t.rounds.length} 轮${t.model ? ' · 指定模型 ' + esc(t.model) : ''}${pairing.homePairText(t.from) ? ' · ' + esc(pairing.homePairText(t.from)) : t.from?.title ? ' · 来自会话「' + esc(t.from.title) + '」' : ''}${pairing.answeredByText(t) ? ' · ' + esc(pairing.answeredByText(t)) : ''}</div>
         <details><summary class="hl-muted">看问答</summary>${rounds}</details></div>`;
     }).join('');
   }

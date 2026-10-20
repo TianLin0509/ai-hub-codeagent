@@ -34,10 +34,8 @@ function renderImageAttachments(attachments, { escapeHtml: esc, cwd } = {}) {
     return '<button type="button" class="conversation-image-thumb" data-action="card-open-image"'
       + ' data-image-index="' + i + '" title="' + esc(title) + '" aria-label="查看图片：' + esc(info.name) + '"'
       + (info.src ? '' : ' disabled') + '>'
-      + (info.src ? '<img class="conversation-image" loading="lazy" decoding="async" src="' + esc(info.src)
-        + '" alt="' + esc(info.name) + '">' : '')
       + '<span class="conversation-image-error"' + (info.src ? ' hidden' : '') + '>'
-      + esc(info.error || '图片暂不可用') + '</span><span class="conversation-image-name">' + esc(info.name) + '</span></button>';
+      + esc(info.error || '图片暂不可用') + '</span><span class="conversation-image-name">' + esc(title) + '</span></button>';
   };
   return '<div class="conversation-attachments" aria-label="附件 · ' + attachments.length + ' 张图片">'
     + '<div class="conversation-image-list">' + attachments.slice(0, 4).map(render).join('') + '</div>'
@@ -136,10 +134,15 @@ function createCardDetailControls({ document: doc, window: win, clipboard, resol
     const reportError = errorReporter(button);
     try {
       const card = button.closest('.turn-card'), turn = resolveTurn(card);
-      if (!turn) throw new Error('图片所属消息已不在当前视图，请重新载入');
-      const index = Number(button.dataset.imageIndex), a = turn.attachments?.[index];
+      const embedded = button.dataset.imageSrc;
+      if (embedded && !/^data:image\/(?:png|jpe?g|gif|webp|bmp|avif|svg\+xml)[;,]/i.test(embedded)) {
+        throw new Error('图片引用无法解析');
+      }
+      if (!turn && !embedded) throw new Error('图片所属消息已不在当前视图，请重新载入');
+      const index = Number(button.dataset.imageIndex) || 0;
+      const a = embedded ? { url: embedded, name: button.textContent } : turn.attachments?.[index];
       if (!a) throw new Error('没有找到对应附件');
-      const info = attachmentInfo(a, index, turn.attachmentCwd);
+      const info = attachmentInfo(a, index, turn?.attachmentCwd);
       if (!info.src) throw new Error(info.error);
       if (a.path && typeof openAttachment === 'function') {
         const result = await openAttachment(info.target, { cwd: turn.attachmentCwd, requireExistsForRel: false, fullscreen: true, throwOnError: true });

@@ -11,6 +11,7 @@ const {
   normalizeToolActivity,
 } = require('../core/turn-presentation.js');
 const { renderImageAttachments, createCardDetailControls } = require('./card-detail-controls.js');
+const { parseCardMarkdown } = require('./card-markdown.js');
 const { chatAvatarSrc, USER_AVATAR_SRC } = require('./chat-avatar');
 const { isCodeAgentKind } = require('../core/ai-kinds');
 
@@ -125,7 +126,7 @@ function createTurnCardRenderer(options = {}) {
   function renderMarkdownPreservingLocalPaths(text) {
     const mathGuard = guardMarkdownMath(normalizeMarkdownPathBreaks(text));
     const guard = guardMarkdownLocalPaths(mathGuard.text);
-    const rawHtml = marked.parse(guard.text, { breaks: true, gfm: true });
+    const rawHtml = parseCardMarkdown(marked, guard.text);
     const sanitized = DOMPurify.sanitize(rawHtml, { ADD_ATTR: ['target', 'data-lang'] });
     const withPaths = restoreMarkdownLocalPaths(sanitized, guard);
     return restoreMarkdownMath(withPaths, mathGuard);

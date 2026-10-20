@@ -577,8 +577,26 @@ function createWorkbenchOperationsService(options = {}) {
     return scanRequest.promise;
   }
 
+  // 同一仓库的并发请求共用一次 rev-parse：一次审十几个文件时各起一个 git，机器忙时其中一个超时就被误报成 invalid_repo_root。
+  // 成功结果只留 2 秒，仓库被删或挪走很快就能察觉。
+  const repoRootMemo = new Map();
+  function resolveRepoRootShared(repoRoot) {
+    const key = normalizePathKey(String(repoRoot || ''));
+    const hit = repoRootMemo.get(key);
+    if (hit && (hit.pending || now() - hit.at < 2_000)) return hit.promise;
+    const entry = { at: 0, pending: true, promise: null };
+    entry.promise = resolveRepoRoot(repoRoot).then(value => {
+      entry.pending = false;
+      entry.at = now();
+      if (!value) repoRootMemo.delete(key);
+      return value;
+    });
+    repoRootMemo.set(key, entry);
+    return entry.promise;
+  }
+
   async function requireRepo(repoRoot) {
-    const resolved = await resolveRepoRoot(repoRoot);
+    const resolved = await resolveRepoRootShared(repoRoot);
     if (!resolved || normalizePathKey(resolved) !== normalizePathKey(repoRoot)) throw new Error('invalid_repo_root');
     return resolved;
   }

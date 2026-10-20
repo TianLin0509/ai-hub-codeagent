@@ -103,4 +103,8 @@
 /* 会话头部（工具栏面包屑）的回合状态：2026-10-20 从会话栏挪过来；没答上一律标红（答方的暖色不盖过它）。 */
 .crumb-bridge { margin-left: 6px; font-size: 11px; line-height: 18px; cursor: default; }
 .crumb-bridge[data-state="failed"] { background: #fdecea; color: #c2362b; }
+/* 配对号牌（2026-10-20）：会话头部 ⇄ 后面一行小字写对端是谁（家里：→ 公司 号 · 模型 · 会话号牌；公司：家里会话 · 模型 · 谁作答），太长截断，悬停看全部在途编号。 */
+.crumb-bridge-peer { margin-left: 6px; font-size: 11.5px; line-height: 18px; color: #4a5160; max-width: 520px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: default; flex: 0 1 auto; min-width: 0; }
+.bt-banner-by { margin-left: 0; }
+.bt-chip.bt-plate { max-width: 360px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .bt-badge-sub { display: block; font-size: 11.5px; color: #6c6c72; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

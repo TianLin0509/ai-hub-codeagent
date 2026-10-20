@@ -1396,7 +1396,9 @@ class SessionManager extends EventEmitter {
     if (isCodexCliKind(base)) {
       return { ...opts, codexPinnedMcpEntries: [...(opts.codexPinnedMcpEntries || []).filter(e => e && e.name !== entry.name), entry] };
     }
-    if (base === 'claude' || isCodeAgentKind(base)) {
+    // 跑在 Claude Code 上的 DeepSeek（deepseek-claude、旧的 deepseek-legacy）同样认 --mcp-config（2026-10-20 补漏）。
+    const claudeCli = base === 'claude' || base === 'deepseek-legacy' || deepseekClaude.isDeepSeekClaudeKind(base);
+    if (claudeCli || isCodeAgentKind(base)) {
       let config = { mcpServers: {} };
       if (typeof opts.mcpConfigFile === 'string' && opts.mcpConfigFile) {
         try { const parsed = JSON.parse(fs.readFileSync(opts.mcpConfigFile, 'utf8')); if (parsed && typeof parsed === 'object') config = { ...parsed, mcpServers: { ...(parsed.mcpServers || {}) } }; } catch {}
@@ -1404,7 +1406,7 @@ class SessionManager extends EventEmitter {
       config.mcpServers[entry.name] = { command: entry.command, args: entry.args || [], env: entry.env || {} };
       const dir = path.join(getHubDataDir(), 'extra-mcp');
       fs.mkdirSync(dir, { recursive: true });
-      const file = path.join(dir, `${base === 'claude' ? 'claude' : 'codeagent'}-${opts.id}.json`);
+      const file = path.join(dir, `${base === 'claude' ? 'claude' : claudeCli ? base : 'codeagent'}-${opts.id}.json`);
       fs.writeFileSync(file + '.tmp', JSON.stringify(config), { mode: 0o600 });
       fs.renameSync(file + '.tmp', file);
       return { ...opts, mcpConfigFile: file };
@@ -1577,6 +1579,9 @@ class SessionManager extends EventEmitter {
     else title = `PowerShell ${++this.psCounter}`;
 
     const sessionEnv = { ...process.env };
+    // 公司联动的会话通行证（HUB_BRIDGE_*）只由 Hub 按会话注入（opts.extraEnv，见 _withExtraMcp）：
+    // Hub 自己的进程环境里若带着（例如从某个会话里启动了测试 Hub），不能原样传给每个新会话，否则新会话会顶着别人的身份（2026-10-20）。
+    for (const key of Object.keys(sessionEnv)) if (/^HUB_BRIDGE_/i.test(key)) delete sessionEnv[key];
     applyInteractiveTerminalEnv(sessionEnv, { truecolor: isPtyAgent && (isClaude || isDeepSeekClaude || isCodexRuntime || isCodeAgent) });
     // 自动派活的 CodeAgent 会话：给 ask-gate hook 的标记（拒绝提问工具，core/auto-dispatch-rules.js）；其余会话去掉继承来的标记。
     require('./auto-dispatch-rules').applySessionEnv(sessionEnv, isCodeAgent ? opts.purpose : null);

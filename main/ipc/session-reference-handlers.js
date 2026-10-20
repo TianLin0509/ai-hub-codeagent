@@ -183,6 +183,8 @@ function registerSessionReferenceIpc(ipcMain, deps = {}) {
           + '若会话索引正在建立，请稍后再试',
       };
     }
+    // 记下「这份聊天记录是哪个会话的」：引用行发出后，交接跟人走据此认出旧会话（main/reference-handoff.js）。
+    try { deps.onResolved?.(found.path, id); } catch {}
     return { ok: true, path: found.path, title: found.title || '', fresh };
   });
 }

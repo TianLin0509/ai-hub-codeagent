@@ -5,7 +5,8 @@
 // 会话里实际已经收到 6 份同样的回执，第 2 轮也早发出去了。根因在发送入口对 content-mismatch 的口径
 // （受保护链路 core/pty-prompt-submit.js / prompt-submission-receipts.js，先不改），这里在投递方兜底：
 //   1. content-mismatch = 内容已进会话（只差空白），按已送达处理、标「有出入」，不再重投；
-//   2. 重投前先看目标会话的原生记录里有没有这条回执（按回执第一行全文：真回执「…第 N 轮】」与「…· 没答上】」分开认），有就直接标已送达；
+//   2. 重投前先看目标会话的原生记录里有没有这条回执（真回执与「没答上」分开认），有就直接标已送达；
+//      2026-10-20 起按「编号 + 轮次 + 是否没答上」归一化认，不再要求首行全文一致（见下面 receiptKey）；
 //   3. 同一线程已经从这个会话发出了更晚的一轮、且是在这一轮回执到达之后发的：更早的轮次标已送达（Agent 显然已经看到并接着问了）；
 //   4. 结果不明确的失败最多重投 3 次，之后停止，列表里标「可能已送达，未能确认」（补收可在本机重投）；明确没发的按 1→2→5→10 分钟退避一直重试。
 // 家里收公司回执（home.js）与公司收家里回复（ask-home.js）共用。
@@ -43,9 +44,37 @@ function transcriptFile(meta) {
 // 原生记录里有没有一条「用户发来的消息」含这段文字（Agent 自己的回答里引用了标记不算）：true / false / null（没有记录可查）。
 // Claude / CodeAgent 是 "type":"user"，Codex rollout 是 "role":"user" 或 "type":"user_message"。只看最后 16 MB。
 const USER_LINE = /"type"\s*:\s*"user(?:_message)?"|"role"\s*:\s*"user"/;
+
+// 回执首行的「编号 + 轮次 + 是否没答上」（2026-10-20）。为什么不能按首行全文认：
+//   - 首行格式会变（2026-10-20 起带「· 题：…」），升级前投过的老首行要照样认得；
+//   - Codex 会话里，短于 2048 字的消息走按键粘贴（core/codex-pty-input.js），「·」「——」会被吞成空格
+//     （10-18～10-20 的 rollout 里 78 份短回执全部丢了「·」，155 份走编辑器回填的长回执都在），个别还吞掉开头几个字
+//     （「019-33  第 1 轮  没答上】」）。全文 includes 认不出来，Codex 会话就可能重投。
+// 做法：两边都把 · ・ — ‘ ’ “ ” 换成空格、连续空白并成一个，再按「【公司回执 Q-1019-33 第 1 轮」认；
+// 开头被吞的，认「"」紧跟着这段的后缀（至少留「19-33 第 1 轮」）。之后紧跟「没答上」的只算报错那一份，反之亦然。
+const HEAD_RE = /^【(公司回执|家里回复)\s*([A-Z]-\d{4}-\d{2,})\s*(?:[·・]\s*)?第\s*(\d+)\s*轮\s*(?:[·・]\s*)?(没答上)?/;
+function receiptKey(marker) {
+  const m = HEAD_RE.exec(String(marker || '').trim());
+  return m ? { kind: m[1], id: m[2], round: Number(m[3]), failed: !!m[4] } : null;
+}
+const normalizeReceipt = s => String(s).replace(/[·・—‘’“”]/g, ' ').replace(/\s+/g, ' ');
+function lineHasReceipt(line, key) {
+  if (!key || !String(line).includes(key.id.split('-').pop())) return false;
+  const s = normalizeReceipt(line);
+  const head = `【${key.kind} ${key.id} 第 ${key.round} 轮`;
+  const minTail = head.length - head.indexOf(key.id) - 4; // 至少保留「19-33 第 1 轮」
+  const tailOk = at => { const rest = s.slice(at); return key.failed ? /^ ?没答上/.test(rest) : !/^ ?没答上/.test(rest); };
+  for (let i = s.indexOf(head); i >= 0; i = s.indexOf(head, i + 1)) if (tailOk(i + head.length)) return true;
+  for (let cut = 1; head.length - cut >= minTail; cut++) {
+    const needle = '"' + head.slice(cut).trimStart();
+    for (let i = s.indexOf(needle); i >= 0; i = s.indexOf(needle, i + 1)) if (tailOk(i + needle.length)) return true;
+  }
+  return false;
+}
 function transcriptHasText(meta, needle, fsModule = fs) {
   const file = transcriptFile(meta);
   if (!file || !needle) return null;
+  const key = receiptKey(needle);
   try {
     const size = fsModule.statSync(file).size;
     let text;
@@ -55,7 +84,7 @@ function transcriptHasText(meta, needle, fsModule = fs) {
       try { const buf = Buffer.alloc(MAX_SCAN_BYTES); fsModule.readSync(fd, buf, 0, MAX_SCAN_BYTES, size - MAX_SCAN_BYTES); text = buf.toString('utf8'); }
       finally { fsModule.closeSync(fd); }
     }
-    return text.split('\n').some(line => line.includes(needle) && USER_LINE.test(line));
+    return text.split('\n').some(line => USER_LINE.test(line) && (key ? lineHasReceipt(line, key) : line.includes(needle)));
   } catch { return null; }
 }
 
@@ -91,4 +120,4 @@ const FRESH_DELIVERY = Object.freeze({ delivered: false, nextTryAt: null, delive
 // 发送入口报「只差空白」：内容已进会话。
 const MISMATCH_NOTE = '内容已进会话（和原文只差空白字符，如制表符被换成空格）';
 
-module.exports = { FRESH_DELIVERY, RETRY_STEPS_MS, MAX_DELIVERY_FAILURES, explicitFailure, contentArrivedWithDiff, transcriptFile, transcriptHasText, alreadyDelivered, failure, MISMATCH_NOTE };
+module.exports = { receiptKey, lineHasReceipt, normalizeReceipt, FRESH_DELIVERY, RETRY_STEPS_MS, MAX_DELIVERY_FAILURES, explicitFailure, contentArrivedWithDiff, transcriptFile, transcriptHasText, alreadyDelivered, failure, MISMATCH_NOTE };

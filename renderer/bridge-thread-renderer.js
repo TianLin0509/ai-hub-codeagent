@@ -6,13 +6,15 @@
 //   - 块头的状态、进度线、耗时来自 bridge:status 的线程记录（core/bridge-thread-view.js），没有记录时只用卡片自身。
 // 两个方向都认：家里问公司（家里收回执、公司收提问）和公司问家里（公司收家里回复、家里收求助）。
 // 「问方」会话里块内是双方每一轮；「答方」会话里块内是对方的提问，自己的回答仍是普通卡片。
-const { bridgeMessageKind, bridgeText } = require('../core/bridge-message-kind');
+const { bridgeMessageKind, bridgeText, receiptHeadInfo } = require('../core/bridge-message-kind');
 const view = require('../core/bridge-thread-view');
+const pairing = require('../core/company-bridge/pairing-plate');
 
-const FOOTER_RE = /\n——\n(?:以上是公司 CodeAgent 的回执|公司那边这一轮没有给出回答|以上是家里|家里这一轮没有给出回答)[\s\S]*$/;
+// 结尾说明前的「——」在 Codex 会话里会被吞成空格（delivery-guard.js 有说明），只剩空行也认。
+const FOOTER_RE = /\n[—\s]*\n(?:以上是公司 CodeAgent 的回执|公司那边这一轮没有给出回答|以上是家里|家里这一轮没有给出回答)[\s\S]*$/;
 const HEADER_RE = /^## [^\n]*（编号 [^\n]*）[^\n]*\n/m;
-const AGENT_LABEL = { claude: 'Claude', codex: 'Codex' };
-const agentLabel = kind => AGENT_LABEL[String(kind || '').toLowerCase()] || 'Claude';
+// 家里用的 AI 显示名（2026-10-20 修）：以前只认 claude / codex，DeepSeek、GLM 等都被写成「家里 Claude」。
+const agentLabel = kind => pairing.modelLabel(kind) || 'Claude';
 
 // 正文：去掉 Hub 加的标题行、规则附注和结尾说明。
 function messageBody(text, kind) {
@@ -32,10 +34,12 @@ function describeMessage(text) {
   if (!kind) return null;
   const s = bridgeText(text);
   const base = { thread: kind.thread, round: kind.round, kind: kind.kind };
-  if (kind.kind === 'company-receipt') return { ...base, role: 'asker', peer: 'company', who: 'peer', failed: /^【[^】]*· 没答上】/.test(s) };
+  // 首行新旧格式、Codex 吞掉「·」的写法都认（core/bridge-message-kind.js receiptHeadInfo）。
+  const head = receiptHeadInfo(s);
+  if (kind.kind === 'company-receipt') return { ...base, role: 'asker', peer: 'company', who: 'peer', failed: !!head?.failed, topic: head?.topic || '' };
   if (kind.kind === 'home-reply') {
-    const tag = (s.match(/^【家里回复 [^】]*· 第 \d+ 轮 · ([^】]*)】/) || [])[1] || '';
-    return { ...base, role: 'asker', peer: 'home', who: 'peer', failed: tag === '没答上', agent: /codex/i.test(tag) ? 'codex' : 'claude' };
+    const tag = head?.tag || '';
+    return { ...base, role: 'asker', peer: 'home', who: 'peer', failed: !!head?.failed, agent: /codex/i.test(tag) ? 'codex' : /deepseek/i.test(tag) ? 'deepseek' : /glm|智谱/i.test(tag) ? 'glm' : 'claude' };
   }
   if (kind.kind === 'channel-rewrite') return { ...base, role: 'answerer', peer: 'home', who: 'hub', failed: false };
   const header = (s.match(HEADER_RE) || [''])[0];
@@ -90,15 +94,23 @@ function threadBlock(deps, ctx, rows, now = Date.now(), open = false) {
   const lastRow = rows[rows.length - 1] || null;
   const state = summary ? summary.state : lastRow?.failed ? 'failed' : 'done';
   const roundsCount = Math.max(summary?.rounds || 0, new Set(rows.map(r => r.round)).size);
-  const lastMeta = record?.rounds?.[record.rounds.length - 1]?.meta || null;
-  const account = lastMeta?.poolLabel || lastMeta?.account || '';
+  // 公司用的号（2026-10-20 修）：公司发回前删掉了 poolLabel / account，只留代称 accountAlias；以前取前两个，永远是空的。
+  const lastMeta = [...(record?.rounds || [])].reverse().find(r => r?.meta)?.meta || null;
+  const account = lastMeta?.accountAlias || record?.company?.accountAlias || lastMeta?.poolLabel || lastMeta?.account || '';
   const title = role === 'asker'
-    ? `${threadId} · ${partyName(peer, ctx.agent)}${account ? ' · ' + account : ''}`
+    ? `${threadId} · ${partyName(peer, ctx.agent)}${peer === 'company' && account ? ' · ' + account : ''}`
     : `${peer === 'home' ? '特战任务' : '为' + partyShort(peer) + '办事'} · ${threadId} · ${partyName(peer, ctx.agent)}`;
   const chips = [`<span class="bt-chip">${roundsCount} 轮</span>`];
   if (summary?.lastTotal) chips.push(`<span class="bt-chip">全程 ${esc(deps, summary.lastTotal)}</span>`);
   if (summary?.model) chips.push(`<span class="bt-chip">${esc(deps, summary.model)}</span>`);
   if (role === 'answerer' && summary?.note) chips.push(`<span class="bt-chip">${esc(deps, summary.note)}</span>`);
+  // 配对号牌（2026-10-20）：家里看公司那条会话叫什么；公司看对接的是家里哪个会话、本会话由哪个号哪个模型作答。
+  const plateName = role === 'asker' && peer === 'company' ? (record?.company?.sessionTitle || record?.companyPlate || record?.plate || '') : '';
+  if (plateName) chips.push(`<span class="bt-chip bt-plate" title="公司那边的会话名">会话 ${esc(deps, plateName)}</span>`);
+  const homePair = role === 'answerer' && peer === 'home' ? pairing.homePairText(record?.from) : '';
+  if (homePair) chips.push(`<span class="bt-chip bt-plate">${esc(deps, homePair)}</span>`);
+  const answeredBy = role === 'answerer' && peer === 'home' && record ? pairing.answeredByText(record) : '';
+  if (answeredBy) chips.push(`<span class="bt-chip">${esc(deps, answeredBy)}</span>`);
   const answerRow = [...rows].reverse().find(r => !r.failed && (role === 'asker' ? r.who === 'peer' : r.who === 'self'));
   const pin = answerRow && state === 'done' ? view.headline(answerRow.body) : '';
   const failed = state === 'failed';
@@ -209,15 +221,19 @@ function applyBridgeThreads(container, deps, records = {}, now = Date.now()) {
       slot.querySelectorAll('details.bt-round').forEach(d => { if (openRows.has(`${d.dataset.round}:${d.dataset.who}`)) d.open = true; });
       if (typeof deps.postProcess === 'function') { try { deps.postProcess(slot); } catch {} }
     }
-    if (ctx.role === 'answerer') banner = { threadId, peer: ctx.peer, title: ctx.fromTitle, agent: ctx.agent };
+    if (ctx.role === 'answerer') banner = { threadId, peer: ctx.peer, title: ctx.fromTitle, agent: ctx.agent, record };
   }
   // 答方会话顶部一条「特战任务：<发问会话标题>」（公司一端；家里一端替公司作答时写「为公司办事」）。一个答方会话只服务一个编号，取最新那串。
   let bar = container.querySelector(':scope > .bt-banner');
   if (banner) {
     if (!bar) { bar = container.ownerDocument.createElement('div'); bar.className = 'bt-banner'; container.insertBefore(bar, container.firstChild); }
     bar.dataset.peer = banner.peer;
+    // 公司一端（2026-10-20）：横条另写「家里 <会话名 #短码> · <家里模型>」和「本会话由 <号> · <模型> 作答」；老版本家里没带短码时照旧。
+    const homePair = banner.peer === 'home' ? pairing.homePairText(banner.record?.from) : '';
+    const answeredBy = banner.peer === 'home' && banner.record ? pairing.answeredByText(banner.record) : '';
     bar.innerHTML = `<span class="bt-icon">⇄</span><b>${banner.peer === 'home' ? '特战任务' : '为' + partyShort(banner.peer) + '办事'}：</b><span>${esc(deps, banner.title || banner.threadId)}</span>`
-      + `<span class="bt-banner-id">${esc(deps, banner.threadId)} · ${esc(deps, partyName(banner.peer, banner.agent))}</span>`;
+      + `<span class="bt-banner-id">${esc(deps, banner.threadId)} · ${esc(deps, homePair || partyName(banner.peer, banner.agent))}</span>`
+      + (answeredBy ? `<span class="bt-banner-id bt-banner-by">${esc(deps, answeredBy)}</span>` : '');
   } else if (bar) bar.remove();
   return byThread.size;
 }
@@ -257,8 +273,10 @@ function restartBadge(sessionId, issues) {
 function sessionBadge(sessionId, records, now = Date.now()) {
   if (!sessionId) return null;
   let best = null;
+  const mine = [];
   for (const t of Object.values(records || {})) {
     if (t.sessionId !== sessionId) continue;
+    mine.push(t);
     const last = t.rounds?.[t.rounds.length - 1];
     const at = last?.sentAt || last?.receivedAt || t.createdAt || 0;
     if (!best || at > best.at) best = { t, at };
@@ -266,24 +284,45 @@ function sessionBadge(sessionId, records, now = Date.now()) {
   if (!best) return null;
   const t = best.t;
   if (t.bridgeRole === 'asker') {
-    const s = view.threadSummary(t, now);
-    const last = t.rounds[t.rounds.length - 1] || {};
-    const since = s.state === 'running' ? last.startedAt : s.state === 'queued' ? last.sentAt : null;
-    const elapsed = since ? view.fmtDur(now - since) : '';
-    const chip = s.state === 'done' ? `⇄ ${s.rounds} 轮` : `⇄ ${s.label}${elapsed ? ' · ' + elapsed : ''}`;
-    const step = s.steps.find(x => x.state === 'current' || x.state === 'failed');
-    const sub = s.state === 'done' ? `${t.id} · 第 ${s.lastRound} 轮已回执${s.lastTotal ? ' · ' + s.lastTotal : ''}`
-      : `${t.id} · 第 ${s.lastRound} 轮 · ${step ? step.label : s.label}`;
-    const pin = s.state === 'done' ? view.headline(last.reply || '') : '';
-    return { chip, sub, pin, state: s.state, role: 'asker', thread: t.id };
+    const result = askerBadge(t, now);
+    // 对端（2026-10-20）：「→ 公司 号 1 · GLM-5 · 会话 <公司会话号牌>」；本会话有多个在途编号时全列出（lines），最新的放在最前。
+    if (t.bridgePeer === 'company') {
+      const inFlight = mine.filter(x => x.bridgeRole === 'asker' && x.bridgePeer === 'company' && ['queued', 'running'].includes(view.threadSummary(x, now).state));
+      const list = [t, ...inFlight.filter(x => x !== t)];
+      const lines = list.map(x => `${x.id} ${pairing.companyPairText(x) || '→ 公司'}`);
+      const peer = inFlight.length > 1
+        ? `→ 公司 ${inFlight.length} 个在途：` + inFlight.map(x => `${pairing.threadShort(x.id)} ${pairing.companyPairText(x, { withPlate: false }).replace(/^→ 公司 ?/, '') || '排队中'}`).join('｜')
+        : pairing.companyPairText(t);
+      if (peer) Object.assign(result, { peer, lines });
+    }
+    return result;
   }
+  return answererBadge(t, now);
+}
+function askerBadge(t, now) {
+  const s = view.threadSummary(t, now);
+  const last = t.rounds[t.rounds.length - 1] || {};
+  const since = s.state === 'running' ? last.startedAt : s.state === 'queued' ? last.sentAt : null;
+  const elapsed = since ? view.fmtDur(now - since) : '';
+  const chip = s.state === 'done' ? `⇄ ${s.rounds} 轮` : `⇄ ${s.label}${elapsed ? ' · ' + elapsed : ''}`;
+  const step = s.steps.find(x => x.state === 'current' || x.state === 'failed');
+  const sub = s.state === 'done' ? `${t.id} · 第 ${s.lastRound} 轮已回执${s.lastTotal ? ' · ' + s.lastTotal : ''}`
+    : `${t.id} · 第 ${s.lastRound} 轮 · ${step ? step.label : s.label}`;
+  const pin = s.state === 'done' ? view.headline(last.reply || '') : '';
+  return { chip, sub, pin, state: s.state, role: 'asker', thread: t.id };
+}
+function answererBadge(t, now) {
   const s = view.answerSummary(t, now);
   // 公司一端替家里作答（2026-10-17 用户）：会话名已以「特战」开头，侧栏不再写「家里」，标签只放这一轮到哪了。
   const tezhan = t.bridgePeer === 'home';
   const progress = s.state === 'done' ? `第 ${s.lastRound} 轮已答` : s.state === 'failed' ? '没答上' : s.note || s.label;
   const sub = tezhan ? `特战任务 · ${t.id} · ${progress}` : `为${partyShort(t.bridgePeer)}办事 · ${t.id} · ${progress}`;
   const chip = tezhan ? `⇄ ${s.state === 'done' ? '已答' : s.state === 'failed' ? '没答上' : s.label}` : `⇄ ${partyShort(t.bridgePeer)}`;
-  return { chip, sub, pin: '', state: s.state, role: 'answerer', thread: t.id };
+  const out = { chip, sub, pin: '', state: s.state, role: 'answerer', thread: t.id };
+  // 公司一端（2026-10-20）：对接的是家里哪个会话、本会话由哪个号哪个模型作答；老版本家里没带短码时不加。
+  const homePair = tezhan ? pairing.homePairText(t.from) : '';
+  if (homePair) { const by = pairing.answeredByText(t); out.peer = homePair + (by ? ' · ' + by : ''); out.lines = [`${t.id} ${out.peer}`]; }
+  return out;
 }
 
 // 按钮的两种做法（2026-10-16 取舍）：「补收」直接调 bridge:recollect（只是请对端取回已写好的回答，不需要会话里的 AI 动脑）；

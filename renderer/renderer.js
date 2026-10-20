@@ -2026,7 +2026,8 @@ function paintCrumbBridge(sessionId) {
   let badge = null;
   try { badge = window._bridgeThreads?.badge(sessionId) || null; } catch { badge = null; }
   let chip = toolbarCrumbEl.querySelector('.crumb-bridge');
-  if (!badge) { chip?.remove(); return; }
+  let peer = toolbarCrumbEl.querySelector('.crumb-bridge-peer');
+  if (!badge) { chip?.remove(); peer?.remove(); return; }
   if (!chip) {
     chip = document.createElement('span');
     chip.className = 'bt-badge crumb-bridge';
@@ -2035,7 +2036,17 @@ function paintCrumbBridge(sessionId) {
   chip.dataset.state = badge.state || '';
   chip.dataset.role = badge.role || '';
   chip.textContent = badge.chip;
-  chip.title = badge.sub + (badge.pin ? ' · ' + badge.pin : '');
+  // 配对号牌（2026-10-20）：对端是谁写在标签后面；本会话有多个在途编号时悬停逐条列出。
+  const lines = Array.isArray(badge.lines) && badge.lines.length ? '\n' + badge.lines.join('\n') : '';
+  chip.title = badge.sub + (badge.pin ? ' · ' + badge.pin : '') + lines;
+  if (!badge.peer) { peer?.remove(); return; }
+  if (!peer) {
+    peer = document.createElement('span');
+    peer.className = 'crumb-bridge-peer';
+    chip.after(peer);
+  }
+  peer.textContent = badge.peer;
+  peer.title = (badge.lines || [badge.peer]).join('\n');
 }
 document.addEventListener('bridge-threads-updated', () => {
   const id = (toolbarCrumbEl?.dataset.signature || '').replace(/^session:/, '');

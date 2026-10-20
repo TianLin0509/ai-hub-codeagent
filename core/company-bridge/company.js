@@ -56,14 +56,13 @@ const SCRUB_TYPES = new Set(['status', 'reply', 'hub-admin-status']);
 const MASKED_ID = /[A-Za-z0-9]{1,4}\*{3,4}[A-Za-z0-9]{0,2}/g;
 
 const PURPOSE = 'company-bridge';
-// 特战会话名（2026-10-18 用户：「在公司侧 session 名字里直接看出对应家里哪个」）：家里编号 Q-1018-01、
-// 由家里的 Codex 会话发问 → 「1018-Q1-codex」。编号不是这个格式（极少见）时退回「特战 · 问题标题」。
+const pairingPlate = require('./pairing-plate');
+// 特战会话名（2026-10-18：「在公司侧 session 名字里直接看出对应家里哪个」）。2026-10-20 起用配对号牌
+// 「Q21 · 家「会话名前 10 字 #短码」· 模型」（pairing-plate.js）；老版本家里没带短码，退回「1018-Q1-codex」；
+// 换号重做的新会话加「· 重做 N」，不再出现两个同名会话。编号不是 Q-MMDD-NN（极少见）时退回「特战 · 问题标题」。
+// 会话名只用于显示：补收、换号、恢复都按会话编号（t.sessionId / prevSessions）找会话，不按名字。
 function tezhanSessionTitle(t) {
-  const m = /^Q-(\d{4})-(\d+)$/.exec(String(t.id || ''));
-  if (!m) return '特战 · ' + short(t.title, 26);
-  const kind = String(t.from?.kind || '').toLowerCase();
-  const agent = /codex/.test(kind) ? 'codex' : /deepseek/.test(kind) ? 'deepseek' : /claude/.test(kind) ? 'claude' : kind.replace(/[^a-z0-9]/g, '').slice(0, 12) || 'home';
-  return `${m[1]}-Q${Number(m[2])}-${agent}`;
+  return pairingPlate.companySessionTitle(t);
 }
 // 历代默认说明：没改过的老设置里存的就是它们，读设置时换成当前默认。
 const V1_INSTRUCTIONS = [
@@ -249,7 +248,9 @@ class CompanyBridge {
     // 发回家里的文字统一去掉号的身份（2026-10-18 审核：开会话失败的报错带着「号池账号 w001****11（同事备注）」原样回了家里）。
     // 报错、进度说明里的工号掩码、号主备注、号池编号都换掉。
     const rawPrepare = this.link.prepare.bind(this.link);
-    this.link.prepare = (type, payload = {}, ...rest) => rawPrepare(type, SCRUB_TYPES.has(type) ? this.scrubPayload(payload) : payload, ...rest);
+    // 配对信息（2026-10-20）：给家里的进度和回执带上公司会话名、作答的号（代称）和模型，家里据此显示「→ 公司 号 1 · GLM-5 · 会话 Q21 · 家「…」」。
+    // 老版本家里不认这个字段，照收不误。
+    this.link.prepare = (type, payload = {}, ...rest) => rawPrepare(type, SCRUB_TYPES.has(type) ? this.scrubPayload(this.withPairing(type, payload)) : payload, ...rest);
     this.busy = null; this.advanceBusy = null; this.deliverBusy = null; this.timer = null; this.nextPullAt = 0; this.lastPullAt = 0;
     // 本进程启动的时刻：上一个进程记下的「CLI 没就绪从何时起」「等切模型从何时起」在新进程里从头算（审核 2026-10-18）。
     this.bootAt = this.now();
@@ -257,6 +258,8 @@ class CompanyBridge {
     this.images = new (require('./images').BridgeImages)(this);
     this.hubAdmin = new HubAdmin({ bridge: this, deps });
     this.quota = new QuotaWatch(this);
+    // 每个会话占多少内存：并行上限和收会话共用这一个估计（session-care.js createSessionMemEstimator；main 接了 measureSessionMem 才实测）。
+    this.sessionMem = care.createSessionMemEstimator({ measure: deps.measureSessionMem || null, now: () => this.now() });
     this.gatePass = new GatePasser({ open: url => deps.openHiddenGate(url), logDir: path.join(deps.dataDir, 'logs'), now: () => this.now(),
       notify: (title, text) => this.notify(title, text) });
     // 升级前就配对过的电脑（入口还没隐藏时用过）直接算已解锁，不让成员升级后找不到入口。
@@ -289,7 +292,26 @@ class CompanyBridge {
     // 远程更新的上次结果（hub-admin.js announce）里的失败原因同样过一遍。
     if (out.lastResult && typeof out.lastResult === 'object' && typeof out.lastResult.reason === 'string') out.lastResult = { ...out.lastResult, reason: this.scrubText(out.lastResult.reason) };
     if (out.meta && typeof out.meta === 'object') { const { poolLabel: _p, account: _a, ...meta } = out.meta; out.meta = meta; }
+    // 公司会话名可能被人手改过，同样过一遍（号的代称本来就是脱敏后的写法）。
+    if (out.pairing && typeof out.pairing === 'object' && typeof out.pairing.sessionTitle === 'string') out.pairing = { ...out.pairing, sessionTitle: this.scrubText(out.pairing.sessionTitle) };
     return out;
+  }
+  withPairing(type, payload) {
+    if ((type !== 'status' && type !== 'reply') || !payload || !payload.thread || payload.pairing) return payload;
+    let pairing = null;
+    try { const t = this.thread(String(payload.thread)); pairing = t && this.pairingOf(t, payload.meta); } catch { pairing = null; }
+    return pairing ? { ...payload, pairing } : payload;
+  }
+  // 这条线程现在由哪个公司会话、哪个号、哪个模型在答；还没开会话（排队中、换号刚把会话清空）时返回 null。
+  // aliases：状态页一次列几十条时先取一份代称表（读号池登记要读盘），不每条都读；memoryOnly：只看内存里开着的会话，不读盘。
+  pairingOf(t, meta = null, { aliases = null, memoryOnly = false } = {}) {
+    if (!t || !t.sessionId) return null;
+    const s = this.deps.getSession(t.sessionId) || (memoryOnly ? null : this.deps.getSessionMetadata?.(t.sessionId)) || null;
+    const key = s ? (s.codeagentPoolAccount ? String(s.codeagentPoolAccount) : 'personal') : null;
+    const alias = key && (aliases ? aliases.get(key) || (key === 'personal' ? '个人' : '号池里的一个号') : this.aliasOf(key));
+    const last = [...(t.rounds || [])].reverse().find(r => r.meta) || null;
+    const model = meta?.actualModel || meta?.model || last?.meta?.actualModel || last?.meta?.model || s?.codeagentActualModel || s?.currentModel?.displayName || s?.currentModel?.id || '';
+    return { sessionTitle: String(s?.title || tezhanSessionTitle(t)), ...(alias ? { accountAlias: alias } : {}), ...(model ? { model: String(model) } : {}) };
   }
   // 隐藏入口：本机解锁过一次就一直显示（存在本机数据目录）。
   unlocked() { return !!this.store.get('featureUnlock'); }
@@ -602,18 +624,24 @@ class CompanyBridge {
     const s = this.settings();
     let lanes = 1;
     if (s.usePool) { try { lanes += Math.max(0, Number(this.deps.poolLanes?.()) || 0); } catch { /* 号池读不到就只算个人账号 */ } }
-    const limit = care.parallelCap({ date: new Date(this.now()), busyHours: s.busyHours, peakCap: s.maxParallel, idleCap: s.maxParallelIdle,
+    const mem = this.sessionMemEstimate();
+    const limit = { ...care.parallelCap({ date: new Date(this.now()), busyHours: s.busyHours, peakCap: s.maxParallel, idleCap: s.maxParallelIdle,
       perAccountPeak: s.perAccountPeak, perAccountIdle: s.perAccountIdle, memFloor: s.memFloorPct / 100, lanes, working,
-      memory: this.deps.memory ? this.deps.memory() : care.memoryNow() });
+      memory: this.deps.memory ? this.deps.memory() : care.memoryNow(), sessionBytes: mem.bytes }), ...care.sessionMemView(mem) };
     this.parallelState = { ...limit, lanes, working, at: this.now() };
     return limit;
   }
-  // 设置页显示「现在最多同时几个、受什么限制」；算不出来时不挡状态页。
+  // 每个会话按多少内存算（实测均值或默认 3.8 GB）；估计器出任何问题都退回默认值，不挡派活。
+  sessionMemEstimate() {
+    try { const m = this.sessionMem.current(); if (Number.isFinite(m.bytes) && m.bytes > 0) return m; } catch { /* 退回默认值 */ }
+    return { bytes: care.SESSION_BYTES, source: 'default', samples: 0, reason: 'failed', note: care.sessionMemNote({ bytes: care.SESSION_BYTES, source: 'default', reason: 'failed' }) };
+  }
+  // 设置页显示「现在最多同时几个、受什么限制、每个会话按多少 GB 算」；算不出来时不挡状态页。
   parallelLimitSafe() {
     try {
       const working = this.openThreads().filter(x => x.state === 'running' && this.roundWorking(x)).length;
-      const { cap, peak, limitedBy, timeCap, laneCap, memCap } = this.parallelLimit(working);
-      return { cap, peak, limitedBy, timeCap, laneCap, memCap, working };
+      const { cap, peak, limitedBy, timeCap, laneCap, memCap, sessionGB, sessionMemSource, sessionMemSamples, sessionMemNote } = this.parallelLimit(working);
+      return { cap, peak, limitedBy, timeCap, laneCap, memCap, working, sessionGB, sessionMemSource, sessionMemSamples, sessionMemNote };
     } catch { return null; }
   }
   // 排队的问题告诉家里：排第几、为什么在等。只在内容变化时发。
@@ -839,7 +867,7 @@ class CompanyBridge {
       ...(hit ? { rehomed: (Number(x.rehomed) || 0) + 1, account: undefined, requestedAccount: x.account || x.requestedAccount || undefined } : {}),
       rehome: { from: fromAlias, why: short(why, 120), progress, at: this.now(), kind: hit ? (hit.kind === 'model-config' ? 'model-config' : 'quota') : choice ? 'choice' : 'switch' },
     });
-    const next = this.saveThread({ ...t, sessionId: null, everAnswered: false, prevSessions, rounds });
+    const next = this.saveThread({ ...t, sessionId: null, everAnswered: false, prevSessions, redoCount: (Number(t.redoCount) || (t.prevSessions || []).length) + 1, rounds });
     // 模型配置有误只对这个号的这个模型避让（2026-10-19）
     const note = this.scrubText(hit && hit.kind === 'model-config' ? `${fromAlias}报模型配置有误（${hit.text || why}），请求这个模型时不再派给它；这一轮自动换号新开会话重做`
       : hit ? `${fromAlias}撞到${Q.KINDS[hit.kind] || '额度上限'}（${hit.text || why}），已暂停派给它；这一轮自动换号新开会话重做`
@@ -998,9 +1026,10 @@ class CompanyBridge {
     const candidates = [...bySession.values()].filter(c => c && this.deps.getSession(c.sessionId) && !this.sessionBusy(c.sessionId))
       .map(c => ({ ...c, idleSince: Math.max(c.idleSince, Number(this.deps.sessionInputAt?.(c.sessionId)) || 0) }));
     const memory = this.deps.memory ? this.deps.memory() : care.memoryNow();
+    const mem = this.sessionMemEstimate(); // 和并行上限同一个估计
     this.careState = { keepWarmMinutes: Math.round(keep.ms / 60000), samples: keep.samples, learned: keep.learned,
-      freePercent: Math.round(memory.ratio * 100), warm: candidates.length, at: this.now() };
-    for (const p of care.planRelease({ candidates, keepWarmMs: keep.ms, now: this.now(), memory })) {
+      freePercent: Math.round(memory.ratio * 100), warm: candidates.length, at: this.now(), ...care.sessionMemView(mem) };
+    for (const p of care.planRelease({ candidates, keepWarmMs: keep.ms, now: this.now(), memory, sessionBytes: mem.bytes })) {
       let result;
       try { result = this.deps.suspendSession(p.sessionId, { reason: 'company-bridge-idle', minIdleMs: 60000, excludePinned: true, excludeFocused: true, excludeMeeting: true }); }
       catch (error) { result = { ok: false, message: error.message }; }
@@ -1452,14 +1481,16 @@ class CompanyBridge {
     return this.status();
   }
 
+  pairingSafe(t, aliases) { try { return this.pairingOf(t, null, { aliases, memoryOnly: true }); } catch { return null; } }
   status() {
     const c = this.link.config(), st = this.link.status();
+    let aliases; try { aliases = this.aliasTable(); } catch { aliases = new Map(); }
     return {
       ok: true, role: 'company', unlocked: this.unlocked(), settings: this.settings(), defaultInstructions: DEFAULT_INSTRUCTIONS, parallel: this.parallelLimitSafe(),
       link: { state: c.state || 'none', baseUrl: c.baseUrl || null, pairedAt: c.pairedAt || null, createdAt: c.createdAt || null, outbox: this.link.pendingOutbox() },
       net: { lastOkAt: st.lastOkAt || null, lastError: st.lastError || null, gate: st.gate || null, peerSeen: st.peerSeen || null, autoGate: this.gatePass.status() },
       nextPullAt: this.nextPullAt, now: this.now(), polling: this.polling(),
-      threads: this.threads().map(t => ({ ...t, session: t.sessionId ? { open: !!this.deps.getSession(t.sessionId), busy: this.sessionBusy(t.sessionId) } : null })),
+      threads: this.threads().map(t => ({ ...t, pairing: this.pairingSafe(t, aliases), session: t.sessionId ? { open: !!this.deps.getSession(t.sessionId), busy: this.sessionBusy(t.sessionId) } : null })),
       askHome: this.askHome.status(),
       images: this.images.status(),
       care: this.careState || null,

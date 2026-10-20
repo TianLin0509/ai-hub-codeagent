@@ -6,8 +6,11 @@
 const { unwrapClaudePasteEnvelope } = require('./prompt-submission-receipts');
 
 const ID = '([A-Z]-\\d{4}-\\d{2,})';
-const RECEIPT = new RegExp(`^【公司回执 ${ID} · 第 (\\d+) 轮(?: · 没答上)?】`);
-const HOME_REPLY = new RegExp(`^【家里回复 ${ID} · 第 (\\d+) 轮(?: · [^】]*)?】`);
+// 首行分隔符宽松认（2026-10-20）：Codex 会话里短消息走按键粘贴，「·」会被吞成空格（delivery-guard.js 有详细说明）；
+// 2026-10-20 起回执首行另带「· 题：<标题前 16 字>」。新旧两种、带不带「·」都认。
+const SEP = '\\s*(?:[·・]\\s*)?';
+const RECEIPT = new RegExp(`^【公司回执\\s*${ID}${SEP}第\\s*(\\d+)\\s*轮(${SEP}没答上)?(?:${SEP}题[：:]([^】]*))?\\s*】`);
+const HOME_REPLY = new RegExp(`^【家里回复\\s*${ID}${SEP}第\\s*(\\d+)\\s*轮(?:${SEP}([^】]*?))?\\s*】`);
 const REWRITE = new RegExp(`^（编号 ${ID}，第 (\\d+) 轮）你上一条回答里有成段的源码`);
 const REQUEST_LINE = new RegExp(`^## (?:成员请求|成员追问|家里的问题|家里的追问|公司 CodeAgent 的求助|公司 CodeAgent 的追问)（编号 ${ID}(?:，第 (\\d+) 轮)?）`, 'm');
 
@@ -29,4 +32,13 @@ function bridgeMessageKind(text) {
   return null;
 }
 
-module.exports = { bridgeMessageKind, bridgeText };
+// 回执首行的附加信息：是不是「没答上」、题目（新格式才有）。家里回复的标签（Claude / Codex / 没答上）放在 tag。认不出返回 null。
+function receiptHeadInfo(text) {
+  const s = bridgeText(text);
+  let m;
+  if ((m = s.match(RECEIPT))) return { kind: 'company-receipt', thread: m[1], round: Number(m[2]), failed: !!m[3], topic: (m[4] || '').trim() };
+  if ((m = s.match(HOME_REPLY))) { const tag = (m[3] || '').trim(); return { kind: 'home-reply', thread: m[1], round: Number(m[2]), failed: tag === '没答上', tag }; }
+  return null;
+}
+
+module.exports = { bridgeMessageKind, bridgeText, receiptHeadInfo };

@@ -783,7 +783,7 @@ function summarize(d) {
   const h = d.hub;
   if (h && !h.error) {
     const par = h.parallel;
-    parts.push(`通道 ${h.queue.running} 个在跑、${h.queue.queued} 个排队${par ? `（上限 ${par.cap}，受${par.limitedBy}限制）` : ''}`);
+    parts.push(`通道 ${h.queue.running} 个在跑、${h.queue.queued} 个排队${par ? `（上限 ${par.cap}，受${par.limitedBy}限制）${par.sessionGB ? `，内存按每个会话 ${par.sessionGB} GB 估算（${par.sessionMemSource === 'measured' ? `实测 ${par.sessionMemSamples} 个会话的平均` : '默认值'}）` : ''}` : ''}`);
   }
   const c = d.codeagent;
   if (c && !c.error) parts.push(`CodeAgent ${c.version ? 'v' + c.version : '版本没读到'}${(c.quota || []).length ? ' · 额度 ' + c.quota.map(q => `${q.account} ${q.pct}%`).join('、') : ''}`);

@@ -673,7 +673,7 @@ if (typeof document !== 'undefined') (function () {
       const math = require('./markdown-math-guard');
       const mathGuard = math.guardMarkdownMath(_normalizeMarkdownPathBreaks(text));
       const pathGuard = guardMarkdownLocalPaths(mathGuard.text);
-      const html = _markedCache.parse(pathGuard.text, { breaks: true, gfm: true });
+      const html = require('./card-markdown').parseCardMarkdown(_markedCache, pathGuard.text);
       const sanitized = restoreMarkdownLocalPaths(
         _domPurifyCache.sanitize(html, { ADD_ATTR: ['data-path', 'class'] }),
         pathGuard,
