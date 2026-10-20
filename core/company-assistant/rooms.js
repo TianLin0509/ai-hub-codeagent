@@ -1,0 +1,163 @@
+'use strict';
+const fs = require('node:fs');
+const path = require('node:path');
+const { randomUUID, createHash } = require('node:crypto');
+const { spawn } = require('node:child_process');
+const component = require('./room-component');
+
+const RULES = ['主题', '开始时间', '时长小时', '时长分钟', '优先会议室', '抢订日'];
+function readJson(file, fallback) {
+  try { return JSON.parse(fs.readFileSync(file, 'utf8')); }
+  catch (error) { if (error.code === 'ENOENT') return fallback; throw new Error('会议室文件读取失败：' + path.basename(file) + '（' + error.message + '）'); }
+}
+// 「10-27（周一）14:00–16:00 · 会议室」：由记录里的日期、开始时间与时长计算；字段不全就原样显示。
+const WEEK = '日一二三四五六';
+function slotText(r = {}) {
+  const room = r['会议室'] || '未选定', raw = `${r['日期'] || ''} ${r['时间'] || ''}`.trim();
+  const d = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(r['日期'] || '').trim());
+  const t = /^(\d{1,2}):(\d{2})\s*起\s*(\d+)h(\d+)m$/.exec(String(r['时间'] || '').trim());
+  if (!d || !t) return `${raw} · ${room}`;
+  const day = new Date(Number(d[1]), Number(d[2]) - 1, Number(d[3]));
+  const start = Number(t[1]) * 60 + Number(t[2]), end = start + Number(t[3]) * 60 + Number(t[4]);
+  if (day.getMonth() !== Number(d[2]) - 1 || Number(t[2]) > 59 || end <= start || end > 24 * 60) return `${raw} · ${room}`;
+  const hm = m => `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
+  return `${d[2]}-${d[3]}（周${WEEK[day.getDay()]}）${hm(start)}–${hm(end)} · ${room}`;
+}
+class RoomBooking {
+  constructor(a, deps = {}) {
+    this.a = a; this.deps = deps; this.timer = null; this.starting = null; this.ticking = false;
+    this.error = ''; this.lastStart = 0; this.found = '';
+  }
+  saved() { const exe = this.settings().exePath; return !!(exe && fs.existsSync(exe)); }
+  settings() { return this.a.settings().rooms || {}; }
+  home() { return this.deps.roomHome || this.settings().home || (this.settings().exePath ? path.dirname(this.settings().exePath) : ''); }
+  file(...parts) { if (!this.home()) throw new Error('请先选择秘书终结者程序'); return path.join(this.home(), ...parts); }
+  helper() { return this.home() ? readJson(this.file('hub-control', 'status.json'), null) : null; }
+  status() {
+    let helper;
+    try { helper = this.helper(); } catch (e) { this.error = e.message; }
+    const live = helper?.protocol === 1 && this.a.now() - helper.at < 30000 && helper.at <= this.a.now() + 5000;
+    return { available: !!this.deps.roomCommand || this.saved() || !!(this.found && fs.existsSync(this.found)),
+      connected: !!live, running: !!(live && helper.running), mode: live ? helper.mode : null,
+      loginNeeded: !!helper?.loginNeeded, loginBusy: !!(live && helper.loginBusy),
+      rules: helper?.rules || null, phases: live ? helper.phases : {}, nextOpen: helper?.nextOpen,
+      error: this.error, home: this.home(), exePath: this.settings().exePath || this.found || '', enabled: !!this.settings().enabled,
+      targetOffsetDays: 7, events: (this.a.state().roomEvents || []).map(e => ({ ...e, slot: slotText(e.record) })) };
+  }
+  start() {
+    if (this.deps.noTimer) return;
+    this.timer = setInterval(() => { void this.tick().catch(e => { this.error = e.message; this.a.changed(); }); }, 15000);
+  }
+  close() { clearInterval(this.timer); this.timer = null; }
+  // Opening the tab only shows what was found; the path is saved when the user clicks connect.
+  async discover() {
+    this.found = this.settings().exePath ? '' : await component.discover(this.a);
+    return this.status();
+  }
+  async install() {
+    const exe = await component.install(this.a, { onProgress: p => { this.error = `正在下载秘书组件：${Math.round((p.received || p.bytes || 0) / 1024 / 1024)} MB`; this.a.changed(); } });
+    this.useExecutable(exe); return this.ensure({ user: true });
+  }
+  useExecutable(exePath) {
+    if (!/\.exe$/i.test(exePath) || !fs.existsSync(exePath)) throw new Error('请选择已安装的秘书终结者 exe');
+    this.a.setSettings({ rooms: { exePath, home: path.dirname(exePath), enabled: false } });
+    this.error = ''; return this.status();
+  }
+  baselineHistory() {
+    if (this.a.state().roomSeen !== undefined || !this.home()) return;
+    const history = readJson(this.file('booking_history.json'), []);
+    if (!Array.isArray(history)) throw new Error('秘书历史格式不正确，未启动抢订');
+    this.a.saveState({ roomSeen: history.map(r => createHash('sha256').update(JSON.stringify(r)).digest('hex')) });
+  }
+  // user=true only for the「接通秘书」/install buttons: they may locate, save and probe the
+  // secretary. Assistant/phone tools and the daily auto-start reuse what the user connected.
+  async ensure({ user = false } = {}) {
+    if (this.status().connected) { this.baselineHistory(); return this.status(); }
+    if (this.starting) return this.starting;
+    this.starting = (async () => {
+      if (!this.deps.roomCommand && !this.saved()) {
+        if (!user) throw new Error(component.NEED_CONNECT);
+        const exe = this.found && fs.existsSync(this.found) ? this.found : await component.discover(this.a);
+        if (exe) this.useExecutable(exe);
+      }
+      const command = this.deps.roomCommand || [this.settings().exePath];
+      if (!command[0] || !fs.existsSync(command[0])) throw new Error('尚未接入秘书终结者，请在设置里选择程序');
+      this.baselineHistory();
+      if (!this.deps.roomCommand) await component.stage(this.a, command[0], this.home(), { probe: user, probeOptions: this.deps.roomProbe });
+      const child = (this.deps.roomSpawn || spawn)(command[0], [...command.slice(1), '--hub-control'], {
+        cwd: path.dirname(command[0]), windowsHide: true,
+        env: { ...process.env, ...(this.deps.roomEnv || {}), MSZ_HOME: this.home() }, stdio: 'ignore',
+      });
+      let failed = null;
+      child.on('error', e => { failed = e; });
+      child.unref?.();
+      const end = Date.now() + 20000;
+      while (Date.now() < end) {
+        if (failed) throw failed;
+        if (this.status().connected) { this.error = ''; return this.status(); }
+        await new Promise(r => setTimeout(r, 250));
+      }
+      throw new Error('控制组件已准备好。若旧版秘书正在运行，请在秘书托盘退出后点「接通秘书」；Hub 不会中断正在执行的抢订。');
+    })().finally(() => { this.starting = null; this.a.changed(); });
+    return this.starting;
+  }
+  async command(op, args = {}, { user = false } = {}) {
+    if (!['status', 'configure', 'start', 'pause', 'login', 'show', 'test'].includes(op)) throw new Error('不支持的会议室操作');
+    if (op === 'configure' && Object.keys(args).some(k => !RULES.includes(k))) throw new Error('此版本按每周规则抢七天后的会议室，不支持指定明天；请提供主题、时段、会议室和星期');
+    if (op === 'status') return this.status();
+    // Never locate, register or launch the secretary on the assistant's own initiative.
+    if (!user && !this.deps.roomCommand && !this.saved()) return { ...this.status(), ok: false, needsConnect: true, error: component.NEED_CONNECT };
+    await this.ensure({ user });
+    const id = randomUUID(), req = this.file('hub-control', 'requests', id + '.json'), reply = this.file('hub-control', 'replies', id + '.json');
+    fs.mkdirSync(path.dirname(req), { recursive: true });
+    const tmp = req + '.tmp'; fs.writeFileSync(tmp, JSON.stringify({ id, op, args, at: this.a.now() }), 'utf8'); fs.renameSync(tmp, req);
+    const end = Date.now() + 25000;
+    while (Date.now() < end) {
+      const result = readJson(reply, null);
+      if (result) {
+        if (result.requestId !== id) throw new Error('秘书回执编号不一致');
+        if (!result.ok) throw new Error(result.error || '秘书未执行这项操作');
+        if (op === 'start' || op === 'pause') this.a.setSettings({ rooms: { enabled: op === 'start' } });
+        this.error = ''; this.a.changed(); return { ...this.status(), ...result, connected: true };
+      }
+      await new Promise(r => setTimeout(r, 200));
+    }
+    throw new Error('秘书尚未回报结果，请查看当前状态；没有自动重复执行');
+  }
+  async tick() {
+    if (this.ticking || !this.home()) return;
+    this.ticking = true;
+    try {
+      const now = this.a.now(), d = new Date(now), minute = d.getHours() * 60 + d.getMinutes();
+      const live = this.status();
+      if (this.settings().enabled && live.connected && !live.running) this.a.setSettings({ rooms: { enabled: false } });
+      if (this.settings().enabled && minute >= 690 && minute < 720 && !live.connected && now - this.lastStart >= 10 * 60000) {
+        this.lastStart = now; await this.command('start');
+      }
+      const history = readJson(this.file('booking_history.json'), []);
+      if (!Array.isArray(history)) throw new Error('秘书历史格式不正确，已保留之前的结果');
+      const idOf = r => createHash('sha256').update(JSON.stringify(r)).digest('hex');
+      const stored = this.a.state(), prior = stored.roomSeen;
+      const ids = history.map(idOf), seen = new Set(prior || ids);
+      let events = stored.roomEvents || [];
+      if (prior) for (const record of history) {
+        const id = idOf(record);
+        if (seen.has(id)) continue;
+        seen.add(id);
+        events = [{ id, at: now, record, phoneSent: false }, ...events].slice(0, 30);
+      }
+      this.a.saveState({ roomSeen: [...new Set([...(prior || []), ...ids])].slice(-200), roomEvents: events });
+      for (const event of events.filter(e => !e.phoneSent).slice(0, 3)) {
+        if (!this.a.phone?.active()) break;
+        const r = event.record;
+        const text = `会议室${r['状态'] || '结果'}：${slotText(r)}${r['备注'] ? '\n' + r['备注'] : ''}`;
+        if (await this.a.phone.send(text, 'room')) {
+          const latest = this.a.state().roomEvents || [];
+          this.a.saveState({ roomEvents: latest.map(e => e.id === event.id ? { ...e, phoneSent: true } : e) });
+        } else break;
+      }
+      this.error = ''; this.a.changed();
+    } finally { this.ticking = false; }
+  }
+}
+module.exports = { RoomBooking, RULES, readJson, slotText };

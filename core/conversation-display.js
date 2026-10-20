@@ -16,6 +16,8 @@ function displayTurns(turns) {
     if (turn.thinking || turn.toolCalls?.length || !cards.length) cards.push({
       ...base, id: `${turn.id}:activity`, logicalTurnId: turn.id,
       text: '', phase: 'activity',
+      // Claude thinking summaries are already their own timed rows.
+      thinking: cards.some(m => m.fromThinking) ? null : turn.thinking,
       nativeOutcome: cards.length && turn.nativeOutcome === 'completed' ? null : turn.nativeOutcome,
     });
     // Message completion is not turn completion. Keep one display-only link

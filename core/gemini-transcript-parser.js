@@ -27,9 +27,12 @@ function parseGeminiTranscriptToTurns(file,options={}){
   // Gemini CLI stamps a reply when its stream ends and a tool call when it
   // finishes, so each reply's call runs from the latest prompt, reply or tool
   // completion before it. Thoughts are billed outside candidate output.
-  const turns=[];let mark=null;
+  // Every model row after one prompt is one reply, like a Codex turn: replyKey
+  // lets the chat view show earlier rows as progress and the last as the answer.
+  const turns=[];let mark=null,replyKey=null;
   for(const [id,row]of messages){
     const text=textOf(row.content),user=row.type==='user';
+    if(user)replyKey=id;
     const tools=(row.toolCalls||[]).map(t=>({id:t.id,callId:t.id,name:t.displayName||t.name,input:t.args,
       output:t.resultDisplay||t.result,status:({success:'completed',error:'failed',cancelled:'interrupted',executing:'running',scheduled:'running'})[t.status]||'unknown',
       isError:t.status==='error',startedAt:at(t.timestamp)}));
@@ -45,8 +48,9 @@ function parseGeminiTranscriptToTurns(file,options={}){
     turns.push({id,role:user?'user':'assistant',kind:'gemini',source:'gemini-cli',text,ts:at(row.timestamp),
       model:row.model,thinking:(row.thoughts||[]).map(t=>typeof t==='string'?t:t.text||t.subject||'').filter(Boolean).join('\n'),
       toolCalls:tools,usage:row.tokens,
-      ...(user?{}:{nativeOutcome:completed?'completed':null,
-        displayMessages:text?[{id:id+':text',text,phase:completed?'final_answer':'commentary',ts:at(row.timestamp)}]:[],
+      ...(user?{}:{nativeOutcome:completed?'completed':null,replyKey,
+        // Text that hands off to tools is a step, not the answer.
+        displayMessages:text?[{id:id+':text',text,phase:completed&&!tools.length?'final_answer':'commentary',ts:at(row.timestamp)}]:[],
         ...(speed?{turnSpeed:speed}:{})})});
   }
   return Number.isFinite(options.limit)&&options.limit>=0

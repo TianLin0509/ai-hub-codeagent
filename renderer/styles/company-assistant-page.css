@@ -3,11 +3,34 @@
 #btn-company-assistant.has-unread .btn-label:after{content:'';display:inline-block;width:6px;height:6px;background:#ff755c;border-radius:50%;margin:0 0 7px 6px}
 .company-assistant-page-open #session-sidebar{visibility:hidden}
 .company-assistant-page-open #toolbar-actions,.company-assistant-page-open #toolbar-crumb,.company-assistant-page-open #btn-expand-sidebar{visibility:hidden}
-.company-assistant-page{position:fixed;left:0;right:0;top:44px;bottom:0;z-index:880;display:flex;flex-direction:column;background:#f3f4f6;color:#1b2942;font:14px/1.7 var(--font-ui,"Microsoft YaHei",system-ui,sans-serif);-webkit-app-region:no-drag}
+.company-assistant-page{position:fixed;left:0;right:0;top:44px;bottom:0;z-index:880;display:flex;flex-direction:row;background:#f3f4f6;color:#1b2942;font:14px/1.7 var(--font-ui,"Microsoft YaHei",system-ui,sans-serif);-webkit-app-region:no-drag}
 .company-assistant-page[hidden]{display:none}
-.ca-head{display:flex;align-items:center;gap:12px;padding:10px 28px;border-bottom:1px solid #e3e7ee;background:#fff}
-.ca-title h1{font-size:17px;line-height:1.3;margin:0}
-.ca-status{flex:1;min-width:0;display:flex;align-items:center;gap:6px;flex-wrap:wrap;font-size:13px}
+.ca-sidebar{width:272px;flex:0 0 272px;box-sizing:border-box;background:#fff;border-right:1px solid #e3e7ee;display:flex;flex-direction:column;padding:24px 18px 14px;overflow-y:auto}
+.ca-main{position:relative;min-width:0;flex:1;display:flex;flex-direction:column;overflow:hidden}
+.ca-identity{display:flex;align-items:center;gap:12px;margin-bottom:24px}
+.ca-identity>img{width:44px;height:44px;object-fit:contain}
+.ca-identity h1{font-size:19px;margin:0;line-height:1.4}
+.ca-identity h1 small{font-size:11px;font-weight:400;color:#8a94a6}
+.ca-identity .ca-side-copy>span{font-size:12px;color:#8a94a6}
+.ca-side-heading{font-size:11.5px;color:#8a94a6;margin:0 10px 7px}
+.ca-status{display:flex;flex-direction:column;gap:5px;margin-bottom:24px}
+.ca-connection{display:flex;align-items:center;gap:2px}
+.ca-connection-main,.ca-side-button{display:flex;align-items:center;gap:10px;border:0;border-radius:8px;background:transparent;color:inherit;font:inherit;text-align:left;cursor:pointer;padding:9px 8px;min-width:0}
+.ca-connection-main{flex:1}
+.ca-connection-main:hover,.ca-side-button:hover{background:#f3f4f6}
+.ca-side-icon{position:relative;flex:0 0 26px;width:26px;height:28px;display:grid;place-items:center;font-size:17px;color:#6b7280}
+.ca-dot{position:absolute;right:0;bottom:2px;width:10px;height:10px;border:2px solid #fff;border-radius:50%;background:#8a94a6}
+.ca-dot.ok{background:#15803d}.ca-dot.warn{background:#a16207}.ca-dot.run{background:#3478f6}
+.ca-side-copy{min-width:0;flex:1}
+.ca-connection-main b{font-size:13px;font-weight:500;display:block}
+.ca-connection-main small{font-size:11.5px;color:#8a94a6;display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ca-connection>.ca-link{flex:0 0 auto;padding:0 2px;font-size:11.5px}
+.ca-next{font-size:11px;color:#8a94a6;margin:5px 0 0 44px}
+.ca-capabilities{display:flex;flex-direction:column;gap:4px}
+.ca-side-button{width:100%;font-size:13px}
+.ca-side-button .ca-side-copy{display:flex;align-items:center;justify-content:space-between;gap:4px}
+.ca-side-button small{font-size:11px;color:#8a94a6;font-weight:400}
+.ca-side-bottom{margin-top:auto;padding-top:22px}
 .ca-sp{flex:1}
 .ca-chip{font-size:12px;padding:1px 9px;border-radius:999px;background:#eef0f4;color:#4a5568;white-space:nowrap}
 .ca-chip.ok{background:#e3f6ec;color:#15803d}
@@ -30,7 +53,7 @@
 .ca-row{display:flex;gap:8px;align-items:center;margin-top:8px;flex-wrap:wrap}
 .ca-row input{padding:5px 9px;border:1px solid #dfe3ea;border-radius:8px;font:inherit;font-size:13px;min-width:260px}
 .ca-scroll{flex:1;overflow:auto}
-.ca-convo{max-width:980px;margin:0 auto;padding:16px 28px 20px;display:flex;flex-direction:column;gap:10px}
+.ca-convo{max-width:1120px;box-sizing:border-box;margin:0 auto;padding:28px 40px 20px;display:flex;flex-direction:column;gap:16px}
 .ca-convo>div{display:flex;flex-direction:column;gap:10px}
 .ca-convo>div:empty{display:none}
 .ca-brief{background:#fff;border-radius:10px;border-left:3px solid #3478f6;box-shadow:0 1px 2px rgba(15,23,42,.04)}
@@ -59,14 +82,24 @@
 .ca-notice.focus{background:#e8f0fe;border-radius:6px}
 .ca-notice-text{flex-basis:100%;color:#4a5568;font-size:12.5px}
 .ca-msg{background:#fff;border-radius:10px;padding:10px 14px}
-.ca-msg.user{background:#e8f0fe;align-self:flex-end;max-width:80%}
+.ca-msg.user{background:#e8f0fe}
+.ca-message-row{display:flex;align-items:flex-start;gap:12px;min-width:0;width:100%}
+.ca-avatar{width:36px;height:36px;flex:0 0 36px;object-fit:contain;border-radius:10px}
+.ca-message-content{min-width:0;flex:1}
+.ca-message-content>.ca-card-head{margin:0 0 6px 2px;color:#6b7280}
+.ca-message-row.user{flex-direction:row-reverse;align-self:flex-end}
+.ca-message-row.user>.ca-message-content{flex:0 1 auto;max-width:70%}
+.ca-message-row.user .ca-card-head{justify-content:flex-end}
+.ca-message-row.user .ca-msg{overflow-wrap:anywhere}
+.ca-message-row.assistant .ca-msg{width:fit-content;max-width:100%;box-sizing:border-box}
+.ca-brief-row .ca-message-content{width:0}
 .ca-body{font-size:14px;margin-top:2px}
 .ca-md{font-size:14px;line-height:1.7;overflow-wrap:anywhere}
 .ca-md p{margin:4px 0}
 .ca-md pre{background:#f6f8fa;padding:8px 10px;border-radius:6px;overflow:auto}
 .ca-md table{border-collapse:collapse}
 .ca-md td,.ca-md th{border:1px solid #e3e7ee;padding:3px 8px}
-.ca-foot{max-width:980px;width:calc(100% - 56px);margin:0 auto;padding:6px 0 12px;display:flex;flex-direction:column;gap:6px}
+.ca-foot{max-width:1040px;width:calc(100% - 80px);box-sizing:border-box;margin:0 auto;padding:6px 0 16px;display:flex;flex-direction:column;gap:8px}
 .ca-chips{display:flex;gap:6px;flex-wrap:wrap}
 .ca-chip-btn{font:inherit;font-size:12.5px;padding:2px 11px;border:1px solid #dfe3ea;border-radius:999px;background:#fff;color:#4a5568;cursor:pointer}
 .ca-chip-btn:hover{border-color:#3478f6;color:#3478f6}
@@ -112,7 +145,7 @@
    以前设置面板插在对话上面、没有自己的滚动条：内容一长就把输入框挤出屏幕，屏幕矮时底部被截掉。
    现在设置盖在对话区上（盖住到页面底），卡片自己滚动；分页标签固定在顶上、「保存」固定在底下。
    分组从「带标题的边框盒」改成细线分隔的小节（同「桌宠」分页的样式），输入框、下拉框统一 32px 高。 */
-.ca-panel[data-kind="settings"]{position:absolute;left:0;right:0;bottom:0;top:var(--ca-head-h,57px);z-index:6;width:auto;max-width:none;margin:0;border:0;border-radius:0;padding:18px 28px 24px;background:rgba(243,244,246,.96);overflow-y:auto;overscroll-behavior:contain}
+.ca-panel[data-kind="settings"]{position:absolute;left:0;right:0;bottom:0;top:0;z-index:6;width:auto;max-width:none;margin:0;border:0;border-radius:0;padding:18px 28px 24px;background:#f3f4f6;overflow-y:auto;overscroll-behavior:contain}
 .ca-panel[data-kind="settings"] .ca-settings{max-width:900px;margin:0 auto;background:#fff;border:1px solid #e3e7ee;border-radius:12px;padding:0 24px;box-shadow:0 6px 24px rgba(15,23,42,.06)}
 .ca-settings-head{position:sticky;top:-18px;z-index:2;background:#fff;margin:0 -24px;padding:16px 24px 12px;border-bottom:1px solid #eef0f4;border-radius:12px 12px 0 0}
 .ca-settings-head h3{font-size:16px}
@@ -125,7 +158,7 @@
 .ca-settings label{display:inline-flex;align-items:center;gap:8px;font-size:13px;color:#2d3748;line-height:1.5}
 .ca-settings input[type=text],.ca-settings input[type=email],.ca-settings input[type=time],.ca-settings select{height:32px;box-sizing:border-box;padding:0 10px;border:1px solid #dfe3ea;border-radius:8px;background:#fff;color:#1b2942;font:inherit;font-size:13px;transition:border-color .12s,box-shadow .12s}
 .ca-settings input[type=text]:focus,.ca-settings input[type=email]:focus,.ca-settings input[type=time]:focus,.ca-settings select:focus{outline:0;border-color:#3478f6;box-shadow:0 0 0 3px rgba(52,120,246,.15)}
-.ca-settings input[type=checkbox]{width:16px;height:16px;accent-color:#3478f6;margin:0}
+.ca-settings input[type=checkbox]{width:16px;min-width:16px;height:16px;accent-color:#3478f6;margin:0}
 .ca-settings .ca-note{margin:0;line-height:1.6}
 .ca-settings .ca-row{margin-top:0}
 .ca-settings .ca-btn{height:32px;box-sizing:border-box;padding:0 14px;display:inline-flex;align-items:center}
@@ -137,7 +170,7 @@
 .ca-coverage{margin:8px 0 14px;font-size:12.5px;color:#64748b;line-height:1.7}
 .ca-coverage summary{cursor:pointer}
 .ca-coverage ul{padding-left:20px}
-.ca-panel[data-kind="source"]{position:absolute;left:0;right:0;bottom:0;top:var(--ca-head-h,57px);z-index:6;max-width:none;width:auto;margin:0;border:0;border-radius:0;padding:18px 28px 24px;background:#f3f4f6;overflow-y:auto;overscroll-behavior:contain}
+.ca-panel[data-kind="source"]{position:absolute;left:0;right:0;bottom:0;top:0;z-index:6;max-width:none;width:auto;margin:0;border:0;border-radius:0;padding:18px 28px 24px;background:#f3f4f6;overflow-y:auto;overscroll-behavior:contain}
 .ca-source{max-width:900px;margin:0 auto;padding:20px 24px;background:#fff;border:1px solid #e3e7ee;border-radius:12px}
 .ca-source-head{display:flex;align-items:center;justify-content:space-between;gap:16px;position:sticky;top:-18px;background:#fff;padding:8px 0;z-index:1}
 .ca-source-head h2{margin:0;font-size:18px}
@@ -146,3 +179,24 @@
 .ca-source-meta{display:flex;flex-wrap:wrap;align-items:center;gap:8px 14px;font-size:12.5px;color:#64748b;overflow-wrap:anywhere}
 .ca-source-meta b{font-size:14px;color:#1b2942}
 .ca-source-text{white-space:pre-wrap;overflow-wrap:anywhere;font:inherit;font-size:14px;line-height:1.8;margin:10px 0;color:#1b2942}
+.ca-panel[data-kind="login"]{position:absolute;inset:16px 24px auto;z-index:7;width:auto;max-width:none;margin:0;max-height:calc(100% - 60px);overflow:auto;box-shadow:0 6px 24px rgba(15,23,42,.06)}
+.ca-settings-head{flex-wrap:wrap;gap:8px}
+.ca-tabs{flex-wrap:wrap;min-width:0;flex-shrink:1}
+.ca-tab{padding:5px 10px}
+.ca-phone-group{flex:1;min-width:160px!important}
+.ca-settings input[type=number]{width:72px;min-width:72px;height:32px;padding:0 8px;border:1px solid #dfe3ea;border-radius:8px;font:inherit}
+.ca-settings details{margin:6px 0}
+.ca-settings details summary{cursor:pointer}
+.ca-ppt-result{padding:14px 0;border-top:1px solid #eef0f4}
+.ca-ppt-result pre{white-space:pre-wrap;overflow-wrap:anywhere;max-height:380px;overflow:auto;font:inherit}
+.ca-ppt-path{overflow-wrap:anywhere;font-size:12px;color:#8a94a6}
+@media(max-width:1099px){
+  .ca-sidebar{width:56px;flex-basis:56px;padding:18px 6px 10px;overflow-x:hidden}
+  .ca-side-copy,.ca-side-heading{display:none!important}
+  .ca-identity{margin:0 0 20px;justify-content:center}
+  .ca-identity>img{width:36px;height:36px}
+  .ca-connection-main,.ca-side-button{padding:8px;justify-content:center}
+  .ca-status{gap:6px;margin-bottom:20px}
+  .ca-convo{padding:24px}
+  .ca-foot{width:calc(100% - 48px)}
+}

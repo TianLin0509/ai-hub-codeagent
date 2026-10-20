@@ -1,0 +1,22 @@
+{
+  "app": "mishu-terminator",
+  "version": "2.1.0",
+  "shell": 1,
+  "date": "2026-10-14",
+  "notes": [
+    "修复：会议室网格从 0:00 排满全天时订错时段（5:30–7:30）",
+    "新增：在线更新（GitHub 优先、阿里云备用、签名校验）",
+    "新增：从页面读取会议室、生成分享包"
+  ],
+  "code": {
+    "file": "msz-code-2.1.0.zip",
+    "size": 66404,
+    "sha256": "70a0260a915ea2b1ac4483f65051b6a9ba5ba63b6e86f83cefea66c9a717ed65"
+  },
+  "exe": {
+    "file": "MishuTerminator-2.1.0.exe",
+    "size": 80568759,
+    "sha256": "1d79f1e23815954484baabf8955c86d7e042658e2e87879377c71e12d900d335"
+  },
+  "signature": "44d800ce874ba4f1bd4d85dff4c4d7230343ed876813c26f18391b5a506d06a389f066fe92746c379b0545e6dab52f7c016d83be88be9521ba97fcba5ab83004"
+}

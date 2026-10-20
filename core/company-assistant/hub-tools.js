@@ -74,6 +74,8 @@ class HubTools {
   async invoke({ name, arguments: args = {}, callerSessionId }) {
     const me = this.a.state().sessionId;
     if (!me || callerSessionId !== me) throw new Error('只有公司助理会话能用这些工具');
+    if (name === 'ppt_library') return this.a.ppt.execute(args.op || 'status', args);
+    if (name === 'room_booking') return this.a.rooms.command(args.op || 'status', args.rules || {});
     if (name === 'list_sessions') {
       return { sessions: this.rows().map(r => ({ ...r, lastActiveAt: r.lastActiveAt ? new Date(r.lastActiveAt).toLocaleString('zh-CN', { hour12: false }) : null })),
         note: 'state：stuck=卡住等确认或选择（可用 press_keys 回答），running=运行中，reply=答完在等回复，idle=空闲，closed=没打开。' };

@@ -19,7 +19,7 @@ const READ_ONLY = Object.freeze({
   auth: ['status'],
   version: [''],
 });
-// 只有用户在助理页上点按钮才会跑的两条：扫码登录、日历初始化（mail autodiscover 只写 welink-cli 自己的本地配置）。
+// Hub 可自动维护登录、初始化日历；会话只读包装不开放这两条。
 const SETUP = Object.freeze({ auth: ['login'], mail: ['autodiscover'] });
 
 // 唯一放行的写命令（2026-10-18 用户同意）：手机对话往他自己选定的那个群发文字（phone.js）。
@@ -128,21 +128,37 @@ async function findCliDeep({ env = process.env, fsModule = fs, execFileImpl, tim
 
 // 跑一条 welink-cli。.js 结尾的是测试用的假程序，用 Hub 自己的程序以 Node 方式运行。
 // onData：边跑边拿到目前为止的全部输出（扫码登录要在命令结束前把二维码显示出来）。
-function run(args, { cli, timeoutMs = 30000, allowSetup = false, sendGroup = '', env = process.env, spawnFn = spawn, onData = null } = {}) {
+function run(args, { cli, timeoutMs = 30000, allowSetup = false, sendGroup = '', env = process.env, spawnFn = spawn, onData = null, signal = null } = {}) {
   const list = checkArgs(args, { allowSetup, sendGroup });
   if (!cli) return Promise.reject(Object.assign(new Error('没找到 welink-cli：公司电脑上需先安装（npm 全局包 @welink/welink-cli）'), { code: 'WELINK_MISSING' }));
   const isScript = /\.(?:c?js)$/i.test(cli);
   const cmd = isScript ? process.execPath : cli;
   const argv = isScript ? [cli, ...list] : list;
   return new Promise((resolve, reject) => {
-    let out = '', err = '', done = false;
+    let out = '', err = '', done = false, stopping = null, cleanupTimer = null;
+    if (signal?.aborted) { reject(Object.assign(new Error('已停止这次 WeLink 登录'), { code: 'WELINK_ABORTED' })); return; }
     const child = spawnFn(cmd, argv, { windowsHide: true, env: { ...env, ...(isScript ? { ELECTRON_RUN_AS_NODE: '1' } : {}) } });
-    const timer = setTimeout(() => { if (done) return; done = true; try { child.kill(); } catch {} reject(Object.assign(new Error(`welink-cli 超过 ${Math.round(timeoutMs / 1000)} 秒没返回：${list.slice(0, 2).join(' ')}`), { code: 'WELINK_TIMEOUT' })); }, timeoutMs);
+    const stop = error => {
+      if (done || stopping) return; stopping = error; clearTimeout(timer); signal?.removeEventListener('abort', aborted);
+      cleanupTimer = setTimeout(() => {
+        if (done) return; done = true;
+        reject(Object.assign(new Error(error.message + '；进程退出尚未确认，请稍后重试'), { code: 'WELINK_CLEANUP_TIMEOUT' }));
+      }, 10000);
+      // Only this invocation's child tree; never find/kill a process by name.
+      if (process.platform === 'win32' && child.pid) {
+        const killer = spawn('taskkill.exe', ['/PID', String(child.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' });
+        killer.on('error', e => { console.warn('[welink] 结束登录进程树失败', e.message); child.kill(); });
+        killer.on('close', code => { if (code && child.exitCode == null) { console.warn('[welink] 结束登录进程树返回', code); child.kill(); } });
+      } else child.kill();
+    };
+    const aborted = () => stop(Object.assign(new Error('已停止这次 WeLink 登录'), { code: 'WELINK_ABORTED' }));
+    const timer = setTimeout(() => stop(Object.assign(new Error(`welink-cli 超过 ${Math.round(timeoutMs / 1000)} 秒没返回：${list.slice(0, 2).join(' ')}`), { code: 'WELINK_TIMEOUT' })), timeoutMs);
+    signal?.addEventListener('abort', aborted, { once: true });
     const tell = () => { if (onData) { try { onData(out + err); } catch { /* 显示失败不影响命令 */ } } };
     child.stdout?.on('data', d => { out += d; tell(); });
     child.stderr?.on('data', d => { err += d; tell(); });
-    child.on('error', e => { if (done) return; done = true; clearTimeout(timer); reject(e); });
-    child.on('close', code => { if (done) return; done = true; clearTimeout(timer); resolve({ code, stdout: out, stderr: err }); });
+    child.on('error', e => { if (done) return; done = true; clearTimeout(timer); clearTimeout(cleanupTimer); signal?.removeEventListener('abort', aborted); reject(e); });
+    child.on('close', code => { if (done) return; done = true; clearTimeout(timer); clearTimeout(cleanupTimer); signal?.removeEventListener('abort', aborted); if (stopping) reject(stopping); else resolve({ code, stdout: out, stderr: err }); });
   });
 }
 

@@ -1,0 +1,15 @@
+{
+  "app": "mishu-terminator",
+  "version": "2.1.1",
+  "shell": 1,
+  "date": "2026-10-20",
+  "notes": [
+    "新增 AI Hub 本地控制接口；复用原抢订引擎和登录资料"
+  ],
+  "code": {
+    "file": "msz-code-2.1.1.zip",
+    "size": 69312,
+    "sha256": "793e4b6308bfbf8595e2f5567ad7373d6fefdf854c80406a1f9bcd736bc00c70"
+  },
+  "signature": "646b31ed1396d76256e73b3d3ddd0d0bc9c3d5d4f79a098d9a5145c3417f44445c91955fe489e32cab144a42430f172979de1e1224290362e05537f7c7effe0a"
+}

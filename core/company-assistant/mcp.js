@@ -7,6 +7,18 @@ const schema = (properties, required = []) => ({ type: 'object', properties, req
 const string = { type: 'string' };
 const id = { type: 'string', description: 'list_sessions 返回的会话编号' };
 const tools = [
+  { name: 'room_booking', description: '复用秘书终结者查看/修改每周会议室规则、启动或暂停守护。开放时刻抢七天后，暂不支持明天等单次日期。只在用户明确要求时改规则或开始抢订；网页登录在电脑完成。', inputSchema: schema({
+    op: { type: 'string', enum: ['status', 'configure', 'start', 'pause', 'login'] },
+    rules: schema({ '主题': string, '开始时间': string, '时长小时': { type: 'integer', minimum: 0, maximum: 12 }, '时长分钟': { type: 'integer', enum: [0, 30] },
+      '优先会议室': { type: 'array', items: string }, '抢订日': { type: 'array', items: { type: 'integer', minimum: 1, maximum: 7 } } })
+  }, ['op']) },
+  { name: 'ppt_library', description: '在 PPT Doctor 已建的本机文字索引里找页、读页、汇总。先 search，再 read，回答保留文件路径和页码；图表未核查。只读，不整理或移动文件。', annotations: { readOnlyHint: true }, inputSchema: schema({
+    op: { type: 'string', enum: ['status', 'catalog', 'search', 'read', 'report'] }, query: string,
+    ids: { type: 'array', items: string }, refs: { type: 'array', items: { type: 'object' } },
+    plan: { type: 'object' }, decision: { type: 'object' }, evidence: { type: 'object' },
+    fileId: { type: 'integer' }, offset: { type: 'integer', minimum: 0 }, limit: { type: 'integer', minimum: 1, maximum: 100 },
+    neighbors: { type: 'integer', minimum: 0, maximum: 2 }, detail: { type: 'string', enum: ['brief', 'full'] }
+  }, ['op']) },
   { name: 'list_sessions', description: '列出这台电脑 Hub 里的会话：编号、标题、目录、状态（stuck 卡住等确认 / running 运行中 / reply 答完等回复 / idle 空闲 / closed 没打开）。用户问「现在有哪些会话」「谁卡住了」时先调它。', annotations: { readOnlyHint: true }, inputSchema: schema({}) },
   { name: 'read_session', description: '看一个会话的最新回答（默认末尾 4000 字）；卡住时附终端画面（题目和选项）。用户问某个会话做到哪了时用。', annotations: { readOnlyHint: true }, inputSchema: schema({ sessionId: id, maxChars: { type: 'number' }, screen: { type: 'boolean', description: '没卡住也要看终端画面时填 true' } }, ['sessionId']) },
   { name: 'send_session', description: '给一个空闲或答完的会话发一段话（推进、追问、改要求），直接执行。会话关着会先自动恢复。发出后 Hub 自动盯着它，做完或卡住推到手机，不用轮询。', inputSchema: schema({ sessionId: id, text: string }, ['sessionId', 'text']) },

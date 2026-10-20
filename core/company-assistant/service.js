@@ -21,11 +21,14 @@ const Identity = require('./identity');
 const { noticeBus } = require('./notice-bus');
 const { PhoneChannel, DEFAULT_PHONE, PHONE_NOTE } = require('./phone');
 const { HubTools } = require('./hub-tools');
+const { PptLibrary } = require('./ppt-library');
+const { RoomBooking } = require('./rooms');
+const { AuthKeeper, authFailure } = require('./auth-keeper');
 
 const PURPOSE = 'company-assistant';
 // 助理会话的工具或说明有变化时加 1：旧会话启动时没挂这些工具，下一次提问时换一个新会话（旧会话留在历史里）。
-const TOOLS_VERSION = 1;
-const INSTRUCTIONS_VERSION = 2;
+const TOOLS_VERSION = 2;
+const INSTRUCTIONS_VERSION = 3;
 const DEFAULT_SETTINGS = Object.freeze({
   enabled: true, briefTime: '08:20', summaryTime: '18:00', waitHours: 4, prepMinutes: 15, maxPerHour: 3, refreshMinutes: 10,
   watchGroups: [], keywords: [], myName: '', workdays: [1, 2, 3, 4, 5], cliPath: '', email: '', emailFrom: '', chips: [], phone: DEFAULT_PHONE,
@@ -46,9 +49,11 @@ const INSTRUCTIONS = [
   '2. 先看 data/today.json（Hub 刚取到的今天的数据，每条带出处编号 sourceId），不够再用 welink-ro.cmd 查。',
   '3. 回答先写结论；提到具体的会、消息、邮件时，时间和主题照数据原样抄，并写清出处（谁、哪个群或哪场会、几点）。优先使用 senderName / sender 中的姓名，保留 account 便于重名核对。数据里有查询错误或范围未取全时说明影响；没查到就说没查到，不猜。',
   '4. 数据只留在这台电脑：不上传、不转发，不在当前目录以外写文件。',
-  '5. 邮件或日历报「Exchange server domain not found」时：Hub 通常已自动配好；还没好就先看 data/today.json 里 mailSetup.email，有邮箱就直接运行 welink-ro.cmd mail autodiscover --email <邮箱> 再重查，不问我；只有那里也没有邮箱时才问我一次，并提醒我可以在助理页「设置 → WeLink 与邮箱」里填。',
-  '6. 管这台电脑 Hub 里的其他会话（有哪些、做到哪了、推进、新开、卡住时替我按键、停下）用 hub_sessions 工具，直接执行，做完用一两句话复述做了什么、交给了哪个会话。给别的会话派活时只写任务本身，不要把 WeLink 消息、邮件原文整段转过去。',
+  '5. 邮箱由 Hub 从 WeLink 账号自动读取并配置。邮件或日历暂不可用时说明哪些信息没查到，继续完成其他部分；没有邮箱就说明邮件暂不可用。连接设置交给 Hub 的「设置 → WeLink 与邮箱」。',
+  '6. 管这台电脑 Hub 里的其他会话（有哪些、做到哪了、推进、新开、卡住时替我按键、停下）用 hub_sessions 工具，直接执行，做完用一两句话复述做了什么、交给了哪个会话。派活时完整保留执行动作、限制条件和预期产物，让收件会话能独立理解任务；WeLink 内容只提供完成该任务所需的最少摘要。',
   '7. 我在手机 WeLink 上发来的问题，你照常回答；回答由 Hub 发回我手机，你自己不发消息。',
+  '8. 在已有 PPT 素材库找页、读页、汇总，用 ppt_library 工具，或 ppt-ro.cmd status / search <关键词> / read <文件编号:页码>。先搜索，再读页，按本次用途推荐并附真实文件路径和页码。只依据已提取文字，图表和版式需打开源文件核查。未检测到索引或查询报错时说明原因，不把失败当作没有素材。文件夹整理与文件移动不在此能力范围。',
+  '9. 抢会议室用 room_booking 查看规则、改规则、启动守护、暂停。复用秘书终结者；当前按每周规则在开放时刻抢七天后的会议室。用户指定明天等单次日期时先说明当前能力边界，不转换成每日重复规则。会议室网页登录与 WeLink 消息登录是两套状态，需在电脑上完成网页登录。只按用户明确要求改规则或开始抢订，完成后复述星期、时段和会议室。',
   '可用的查询：welink-ro.cmd im query-recent-conversation；im query-history-message --group-id <群号> 或 --user-account <账号> --query-count <1-100>；meeting query-list（必须同时给分页、起止时间、类型、排序，下面给出当天可直接运行的命令）；meeting info --meeting-id <会议号>；calendar list --start YYYY-MM-DD --end YYYY-MM-DD --format json；mail list --is-read 0 --max 20；mail get；search person；contact detail。',
   '聊天查询会自动增加 senderName/displayName，原始 sender 仍是账号。简报预览省略的内容从 data/brief-input-<日期>.md 读完整原文；data/today.json 保留非文字消息原始内容。',
 ].join('\n');
@@ -76,6 +81,9 @@ class CompanyAssistant {
     this.timers = [];
     this.tools = deps.noTools ? null : new HubTools(this, deps);
     this.phone = new PhoneChannel(this, deps);
+    this.ppt = new PptLibrary(this, deps);
+    this.rooms = new RoomBooking(this, deps);
+    this.auth = new AuthKeeper(this);
     this.toolsReady = null;
   }
 
@@ -116,6 +124,15 @@ class CompanyAssistant {
       next.phone = np;
     }
     if (Array.isArray(patch.chips)) next.chips = patch.chips.filter(c => c && String(c.text || '').trim()).slice(0, 12).map(c => ({ label: String(c.label || c.text).trim().slice(0, 16), text: String(c.text).trim().slice(0, 2000) }));
+    if (patch.ppt && typeof patch.ppt === 'object') {
+      next.ppt = { ...(s.ppt || {}) };
+      for (const key of ['db', 'python']) if (key in patch.ppt) next.ppt[key] = String(patch.ppt[key] || '').trim();
+    }
+    if (patch.rooms && typeof patch.rooms === 'object') {
+      next.rooms = { ...(s.rooms || {}) };
+      for (const key of ['home', 'exePath']) if (key in patch.rooms) next.rooms[key] = String(patch.rooms[key] || '').trim();
+      if ('enabled' in patch.rooms) next.rooms.enabled = !!patch.rooms.enabled;
+    }
     this.write('settings.json', next);
     this.changed();
     return next;
@@ -165,7 +182,17 @@ class CompanyAssistant {
     void this.refresh({ force: true }).then(() => { const b = this.brief(); if (!b || b.by === 'none') return this.generateBrief(); }).catch(() => {});
     return { ok: true, path: exe };
   }
-  welink(args, opts = {}) { return (this.deps.welinkRun || ((a, o) => welink.run(a, { cli: this.cli(), ...o })))(args, opts); }
+  rawWelink(args, opts = {}) { return (this.deps.welinkRun || ((a, o) => welink.run(a, { cli: this.cli(), ...o })))(args, opts); }
+  async welink(args, opts = {}) {
+    if (args[0] !== 'auth' && this.auth.pending) await this.auth.pending;
+    const result = await this.rawWelink(args, opts);
+    if (args[0] !== 'auth' && authFailure(result.stdout + '\n' + result.stderr)) {
+      const maintained = await this.auth.check({ force: true, refresh: false });
+      // Only replay read queries. A send/setup command may already have taken effect.
+      if (maintained.login?.ok && !opts.sendGroup && !opts.allowSetup) return this.rawWelink(args, opts);
+    }
+    return result;
+  }
 
   start() {
     fs.mkdirSync(this.workspace, { recursive: true });
@@ -177,12 +204,14 @@ class CompanyAssistant {
     this.prepareWorkspace();
     if (this.tools) this.toolsReady = this.tools.start().catch(e => { console.warn('[company-assistant] tools', e.message); });
     this.phone.start();
+    this.rooms.start();
+    if (!this.deps.noTimer) void this.ppt.refresh().catch(e => console.warn('[company-assistant] ppt', e.message));
     if (this.deps.noTimer) return;
     this.timers.push(setInterval(() => { void this.tick().catch(e => console.warn('[company-assistant] tick', e.message)); }, 60000));
     this.timers.push(setInterval(() => { void this.collectJob().catch(e => console.warn('[company-assistant] collect', e.message)); }, 4000));
     const first = setTimeout(() => { void this.tick().catch(() => {}); }, 15000); this.timers.push(first);
   }
-  close() { for (const t of this.timers) { clearInterval(t); clearTimeout(t); } this.timers = []; this.phone.close(); this.tools?.close(); }
+  close() { for (const t of this.timers) { clearInterval(t); clearTimeout(t); } this.timers = []; this.loginStop?.abort(); this.auth.close(); this.phone.close(); this.rooms.close(); this.tools?.close(); }
   // 给助理会话挂会话工具（main.js 注册的 extraMcpProvider 调用）：只挂给 purpose=company-assistant 的会话。
   sessionPlan({ opts = {}, id } = {}) {
     if (opts.purpose !== PURPOSE || !this.tools?.bridge.url) return null;
@@ -190,11 +219,23 @@ class CompanyAssistant {
   }
   // 「手机」设置：刚接通时往群里发一句，顺带验证 Hub 能发进这个群。
   async setPhone(patch = {}) {
+    const run = () => this.applyPhoneSettings(patch);
+    this.phoneSettingsPending = (this.phoneSettingsPending || Promise.resolve()).then(run, run);
+    return this.phoneSettingsPending;
+  }
+  async applyPhoneSettings(patch) {
     const before = this.settings().phone || {};
-    const s = this.setSettings({ phone: patch });
-    const p = s.phone;
+    const p = { ...before, ...patch };
+    p.groupId = String(p.groupId || '').trim();
+    if (p.enabled && !p.groupId) throw new Error('请填写助理消息群 ID');
+    if (/[\s\r\n]/.test(p.groupId) || p.groupId.length > 80) throw new Error('群 ID 格式不正确');
     let welcome = null;
-    if (p.enabled && p.groupId && (!before.enabled || before.groupId !== p.groupId)) welcome = await this.phone.send(require('./phone').WELCOME, 'welcome');
+    if (p.enabled && (!before.enabled || before.groupId !== p.groupId)) {
+      welcome = await this.phone.send(require('./phone').WELCOME, 'welcome', p.groupId);
+      if (!welcome) return { ok: false, phone: this.phone.status(), welcome, error: this.phone.state().lastError || '欢迎消息没发成功，请检查群 ID 和 WeLink 登录后重试' };
+    }
+    this.setSettings({ phone: p });
+    if (welcome) this.phone.save({ lastError: '', since: this.now() });
     return { ok: true, phone: this.phone.status(), welcome };
   }
 
@@ -207,6 +248,8 @@ class CompanyAssistant {
     const cli = this.cli();
     const lines = ['@echo off', 'set ELECTRON_RUN_AS_NODE=1', `set "CLAUDE_HUB_ASSISTANT_DIR=${this.dir}"`, cli ? `set "CLAUDE_HUB_WELINK_CLI=${cli}"` : '', `"${exe}" "${script}" %*`].filter(Boolean);
     fs.writeFileSync(path.join(this.workspace, 'welink-ro.cmd'), lines.join('\r\n') + '\r\n', 'utf8');
+    const pptLines = ['@echo off', 'set ELECTRON_RUN_AS_NODE=1', `set "CLAUDE_HUB_ASSISTANT_DIR=${this.dir}"`, `"${exe}" "${path.join(__dirname, 'ppt-ro.js')}" %*`];
+    fs.writeFileSync(path.join(this.workspace, 'ppt-ro.cmd'), pptLines.join('\r\n') + '\r\n', 'utf8');
   }
   instructions() { return INSTRUCTIONS + '\n今天待参加的会议（时间为本机时区的 13 位毫秒值）：welink-ro.cmd ' + Q.meetingArgs(this.now()).join(' ') + '；按返回 total 继续增加 --page。'; }
 
@@ -214,6 +257,8 @@ class CompanyAssistant {
   async tick() {
     const s = this.settings(), now = this.now(), day = D.dayKey(now), minute = new Date(now).getHours() * 60 + new Date(now).getMinutes();
     if (!s.enabled) return;
+    await this.auth.check();
+    if (!this.deps.noTimer) void this.ppt.refresh().catch(e => console.warn('[company-assistant] ppt', e.message));
     const workday = R.isWorkday(now, s);
     const last = this.snapshot(day);
     if (workday && minute >= 7 * 60 + 30 && minute < 21 * 60 && (!last || now - (last.at || 0) >= s.refreshMinutes * 60000)) await this.refresh().catch(() => {});
@@ -244,12 +289,14 @@ class CompanyAssistant {
     };
     try {
       const st = await this.welink(['auth', 'status']);
-      snap.login = { ...welink.loginState(st.stdout + '\n' + st.stderr), checkedAt: now };
+      const maintained = await this.auth.check({ force: true, known: st, refresh: false });
+      snap.login = maintained.login || { ...welink.loginState(st.stdout + '\n' + st.stderr), checkedAt: now };
     } catch (error) {
       snap.login = { ok: false, reason: error.code === 'WELINK_MISSING' ? 'missing' : 'error', error: error.message, checkedAt: now };
       if (error.code === 'WELINK_MISSING') void this.findCli();
     }
     if (snap.login.ok) {
+      if (!s.email) await this.accountEmail(s);
       const meetingResult = await Q.collectMeetings(runJson, now);
       snap.meetings = meetingResult.meetings; snap.meetingCoverage = meetingResult.coverage;
       if (meetingResult.coverage.status !== 'complete' && meetingResult.coverage.reason !== 'query-failed') errors.push({ label: '会议', text: meetingResult.coverage.reasonLabel });
@@ -261,7 +308,7 @@ class CompanyAssistant {
       // 邮件和日历都要先按邮箱找一次 Exchange 服务器（mail autodiscover）。不让用户先填：
       // 先用设置里的邮箱，没有就从 WeLink 自己的账号信息（onebox user-info 的 email）读，配好后重查一次日程。
       if (errors.some(e => e.calendar)) {
-        snap.mailSetup = await this.autoSetupMail(s);
+        snap.mailSetup = await this.autoSetupMail(this.settings());
         if (snap.mailSetup.ok) { for (let i = errors.length - 1; i >= 0; i -= 1) if (errors[i].calendar) errors.splice(i, 1); await queryCalendar(); }
       }
       snap.calendarNeedsSetup = errors.some(e => e.calendar);
@@ -602,19 +649,31 @@ class CompanyAssistant {
     if (patch.state === 'done' || patch.state === 'error') { const item = this.chat().find(c => c.id === id); if (item?.via === 'phone') this.phone.settle(item); }
   }
 
-  // ---- 登录与日历初始化（只在用户点按钮时） ----
+  // ---- 手动登录与日历初始化 ----
   async login() {
+    if (this.manualLoginStart) return this.manualLoginStart;
+    this.manualLoginStart = this.startLogin().finally(() => { this.manualLoginStart = null; });
+    return this.manualLoginStart;
+  }
+  async startLogin() {
     if (this.loginFlow && this.loginFlow.state === 'waiting') return this.loginFlow;
+    if (this.auth.pending) {
+      await this.auth.pending;
+      if (this.auth.status().state === 'online') return { state: 'ok' };
+    }
     this.loginFlow = { state: 'waiting', startedAt: this.now(), qr: null, text: '' };
     this.changed();
-    const done = this.welink(['auth', 'login'], { allowSetup: true, timeoutMs: 5 * 60000, onData: text => {
+    // Hub exit aborts this signal; welink.run then ends the login process tree by PID.
+    const stop = this.loginStop = new AbortController();
+    const done = this.welink(['auth', 'login'], { allowSetup: true, timeoutMs: 5 * 60000, signal: stop.signal, onData: text => {
       this.loginFlow = { ...this.loginFlow, text: text.slice(-4000), qr: welink.qrFromLoginOutput(text) || this.loginFlow.qr };
       this.changed();
     } }).then(r => {
       this.loginFlow = { ...this.loginFlow, state: 'finished', code: r.code, text: (r.stdout + r.stderr).slice(-4000), qr: this.loginFlow.qr || welink.qrFromLoginOutput(r.stdout + r.stderr) };
     }).catch(error => { this.loginFlow = { ...this.loginFlow, state: 'failed', error: error.message }; })
+      .finally(() => { if (this.loginStop === stop) this.loginStop = null; })
       .then(() => this.refresh({ force: true }).catch(() => {}))
-      .then(snap => { if (snap?.login?.ok) { this.loginFlow = { ...this.loginFlow, state: 'ok' }; const day = D.dayKey(this.now()); if (!this.brief(day) || this.brief(day).by === 'none') void this.generateBrief().catch(() => {}); } this.changed(); });
+      .then(snap => { if (snap?.login?.ok) { this.auth.manualSucceeded(snap.login); this.loginFlow = { ...this.loginFlow, state: 'ok' }; const day = D.dayKey(this.now()); if (!this.brief(day) || this.brief(day).by === 'none') void this.generateBrief().catch(() => {}); } this.changed(); });
     // 二维码一般几秒内出来；先等一会儿再回，界面随后靠状态刷新。
     await Promise.race([done, new Promise(r => setTimeout(r, 4000))]);
     return this.loginFlow;
@@ -633,12 +692,12 @@ class CompanyAssistant {
     const next = this.nextBriefAt(s, now);
     const sid = st.sessionId || null;
     return { ok: true, enabled: s.enabled, now, day, settings: s, chips: [...BUILTIN_CHIPS, ...s.chips.map(c => ({ ...c, custom: true }))],
-      cliFound: !!this.cli(), cliPath: this.cli() || '', cliSearch: this.cliSearch || { state: 'idle' }, login: snap?.login || null, loginFlow: this.loginFlow, calendarNeedsSetup: !!snap?.calendarNeedsSetup, mailSetup: snap?.mailSetup || null,
+      cliFound: !!this.cli(), cliPath: this.cli() || '', cliSearch: this.cliSearch || { state: 'idle' }, auth: this.auth.status(), login: this.auth.status().login || snap?.login || null, loginFlow: this.loginFlow, calendarNeedsSetup: !!snap?.calendarNeedsSetup, mailSetup: snap?.mailSetup || null,
       counts: snap ? { meetings: (snap.meetings || []).length, calendar: (snap.calendar || []).length, messages: Object.values(snap.messages || {}).reduce((n, l) => n + l.length, 0), mails: (snap.mails || []).length } : null,
       refreshedAt: snap?.at || null, refreshing: !!this.refreshing, errors: snap?.errors || [], conversations: (snap?.conversations || []).slice(0, 60), scope: snap?.scope || null, nameResolution: snap?.nameResolution || null, meetingCoverage: snap?.meetingCoverage || null,
       brief: this.brief(day), nextBriefAt: next, chat: this.chat().slice(-60), job: this.job ? { type: this.job.type, sentAt: this.job.sentAt || null } : null,
       queued: this.queue.length, session: sid ? { id: sid, open: !!this.deps.getSession(sid), busy: this.sessionBusy(sid) } : null,
-      notices: st.notices.slice(0, 10), commitments: st.commitments, phone: this.phone.status() };
+      notices: st.notices.slice(0, 10), commitments: st.commitments, phone: this.phone.status(), ppt: this.ppt.status(), rooms: this.rooms.status() };
   }
   nextBriefAt(s, now) {
     const at = new Date(now); const [h, m] = s.briefTime.split(':').map(Number);

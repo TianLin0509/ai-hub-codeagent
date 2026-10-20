@@ -7,7 +7,9 @@ const { displayTurns } = require('../core/conversation-display');
 // explicit response identities remain boundaries.
 function sameReply(a, b) {
   return a?.role === 'assistant' && b?.role === 'assistant'
-    && !!a.logicalTurnId && a.logicalTurnId === b.logicalTurnId
+    && !!a.logicalTurnId && (a.logicalTurnId === b.logicalTurnId
+      // Gemini / Antigravity store one row per model step under the same prompt.
+      || (!!a.replyKey && a.replyKey === b.replyKey))
     && a.kind === b.kind && a.sessionId === b.sessionId
     && a.inherited === b.inherited;
 }
@@ -17,8 +19,14 @@ function mergeReply(group) {
   const finals = group.filter(m => ['final', 'final_answer'].includes(m.phase) && m.text);
   const body = group.filter(m => m.text &&
     (m.displayVisibility === 'body' || ['final', 'final_answer'].includes(m.phase)));
-  const progress = group.filter(m => m.phase === 'commentary' && m.text && !body.includes(m));
-  const result = finals.at(-1) || group.findLast(m => m.phase !== 'activity') || first;
+  // Phase-less provider items (ACP, older Codex) before the result are
+  // progress too; dropping them lost every note written between tool calls.
+  const progress = group.filter(m => m.phase !== 'activity' && m.text && !body.includes(m));
+  const latest = finals.at(-1) || group.findLast(m => m.phase !== 'activity') || first;
+  // A thinking note may stand in for the answer only while work runs. A turn
+  // that ended without a reply keeps its outcome notice and every note in 过程.
+  const endedSilent = latest.fromThinking && ['completed', 'failed', 'interrupted'].includes(latest.stopReason);
+  const result = endedSilent ? { ...latest, text: '', nativeOutcome: latest.stopReason } : latest;
   const activity = group.findLast(m => m.phase === 'activity');
   const owner = group.findLast(m => m.deliveryContext) || result;
   const tools = new Map();
@@ -33,10 +41,12 @@ function mergeReply(group) {
     text: body.length ? body.map(m => m.text).join('\n\n') : result.text || '',
     phase: finals.length ? 'final_answer' : result.phase,
     simpleChat: true,
-    chatProcessMessages: body.length ? progress : progress.filter(m => m !== result),
+    chatProcessMessages: (body.length ? progress : progress.filter(m => m !== result))
+      .map(m => m.phase === 'commentary' ? m : { ...m, phase: 'commentary' }),
     deliveryContext: owner.deliveryContext,
     toolCalls: [...tools.values()],
-    thinking: group.map(m => m.thinking).filter(Boolean).join('\n\n') || null,
+    // Claude thinking summaries already appear as timed progress rows.
+    thinking: group.some(m => m.fromThinking) ? null : group.map(m => m.thinking).filter(Boolean).join('\n\n') || null,
     nativeOutcome: activity?.nativeOutcome || result.nativeOutcome,
     usage: result.usage || activity?.usage,
     durationMs: result.durationMs ?? activity?.durationMs,

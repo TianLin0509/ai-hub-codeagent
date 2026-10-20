@@ -74,9 +74,22 @@ function projectClaudeRecord(record) {
   const results = new Map();
   const text = []; const thinking = [];
   const displayByMessage = new Map();
+  const thinkingCount = new Map();
   for (const frame of frames) {
     if (frame.type === 'assistant' && !frame.parent_tool_use_id) {
       const messageId = frame.message?.id || frame.uuid;
+      // Claude writes its running commentary as short thinking summaries
+      // (often with no text block at all). Each one is a timed progress row,
+      // like Codex commentary, instead of one blob in a closed drawer.
+      for (const block of frame.message?.content || []) {
+        if (block?.type !== 'thinking' || !block.thinking?.trim() || !messageId) continue;
+        const n = thinkingCount.get(messageId) || 0;
+        thinkingCount.set(messageId, n + 1);
+        displayByMessage.set(`${messageId}:thinking:${n}`, { id: `${id}:thinking:${messageId}:${n}`,
+          itemId: messageId, clientSubmissionId: record.submissionId, userMessageId: id, providerTurnId: null,
+          text: block.thinking.trim(), phase: 'commentary', displayVisibility: 'process', fromThinking: true,
+          ts: frame.hubObservedAt || record.createdAt, tsEnd: frame.hubObservedAt || record.createdAt });
+      }
       const body = (frame.message?.content || []).filter(b => b?.type === 'text').map(b => b.text || '').join('\n\n');
       if (messageId && body) {
         const previous = displayByMessage.get(messageId);
@@ -84,11 +97,9 @@ function projectClaudeRecord(record) {
           clientSubmissionId: record.submissionId, userMessageId: id, providerTurnId: null,
           text: previous ? previous.text + '\n\n' + body : body,
           phase: frame.message.stop_reason === 'end_turn' ? 'final_answer' : 'commentary',
-          // stop_reason describes engine control, not the value of the prose.
-          // Foreground explanations remain readable even before a tool runs.
-          // Automatic background commentary still belongs in the process drawer.
-          displayVisibility: !record.nativeActivity || frame.message.stop_reason === 'end_turn'
-            ? 'body' : 'process',
+          // 2026-10-20 用户要求所有 agent 都像 Codex：工具之间的说明是带时间的
+          // 进展行，正文只放回合结束的答复。运行中最新一条进展仍临时顶在正文位置。
+          displayVisibility: frame.message.stop_reason === 'end_turn' ? 'body' : 'process',
           // A message is an instant, not an interval: without its own end the
           // row would inherit the turn's and show a meaningless sub-second
           // duration next to the answer.
@@ -118,13 +129,14 @@ function projectClaudeRecord(record) {
   const terminal = END.has(record.status);
   const answer = terminal ? record.finalText || '' : text.join('\n\n');
   const displayMessages = [...displayByMessage.values()];
-  const finalMessage = terminal && displayMessages.findLast(m => m.text === answer);
+  const finalMessage = terminal && displayMessages.findLast(m => !m.fromThinking && m.text === answer);
   // Each native end_turn reply remains a visible answer, including when the
   // engine later resumes work. Mark a fallback settled answer without
   // demoting already delivered replies into the process drawer.
   if (finalMessage) finalMessage.phase = 'final_answer';
-  if (terminal && answer && !displayMessages.some(m => m.text === answer)
-      && displayMessages.map(m => m.text).join('\n\n') !== answer) {
+  const spoken = displayMessages.filter(m => !m.fromThinking);
+  if (terminal && answer && !spoken.some(m => m.text === answer)
+      && spoken.map(m => m.text).join('\n\n') !== answer) {
     displayMessages.push({ id: `${id}:result`, text: answer, phase: 'final_answer',
       clientSubmissionId: record.submissionId, userMessageId: id, providerTurnId: null,
       ts: record.completedAt || record.createdAt, tsEnd: record.completedAt || record.createdAt });
@@ -187,7 +199,8 @@ function claudeTranscriptTurns(records) {
 
 function claudeDisplayMessages(record) {
   return record ? require('./conversation-display').displayTurns(claudeTranscriptTurns([record]))
-    .filter(m => m.role === 'assistant' && (m.text || m.toolCalls?.length || m.thinking)) : [];
+    // Group-chat sequences keep thinking out of member replies.
+    .filter(m => m.role === 'assistant' && !m.fromThinking && (m.text || m.toolCalls?.length || m.thinking)) : [];
 }
 
 module.exports = { CONTINUATION_ORIGINS, captureClaudeMessage, claudeTranscriptTurns, claudeDisplayMessages, groupClaudeRecords, tailClaudeRecords };

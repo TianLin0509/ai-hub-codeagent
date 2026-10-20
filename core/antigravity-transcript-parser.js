@@ -17,7 +17,7 @@ function parseAntigravityTranscriptToTurns(file, options = {}) {
     try { const row=JSON.parse(lines[i]); rows.set(row.step_index ?? i,row); }
     catch (error) { if (i !== lines.length-1) throw error; }
   }
-  const turns=[];
+  const turns=[];let replyKey=null;
   const receiptPath=options.receiptsFile||receiptsFile(match[1]);
   const receipts=fs.existsSync(receiptPath)?JSON.parse(fs.readFileSync(receiptPath,'utf8')):{};
   for (const [index,row] of rows) {
@@ -26,6 +26,7 @@ function parseAntigravityTranscriptToTurns(file, options = {}) {
     let text=typeof row.content==='string'?row.content:'';
     if(user) text=/<USER_REQUEST>([\s\S]*?)<\/USER_REQUEST>/.exec(text)?.[1] ?? text;
     const id=`agy-${index}`, ts=Date.parse(row.created_at)||null;
+    if(user) replyKey=id;
     const receipt=receipts[id];
     const final=!user&&receipt?.textHash===hash(text)&&receipt.ts===ts?receipt:null;
     turns.push({id,role:user?'user':'assistant',kind:'gemini',source:'antigravity-cli',text,ts,
@@ -33,7 +34,7 @@ function parseAntigravityTranscriptToTurns(file, options = {}) {
       toolCalls:(row.tool_calls||[]).map((t,i)=>({id:`${id}-tool-${i}`,name:t.name,input:t.args,
         status:row.status==='ERROR'?'failed':row.status==='DONE'?'completed':'running',isError:row.status==='ERROR'})),
       // DONE marks a step, not a whole turn. Only the native Stop hook closes a turn.
-      ...(user?{}:{nativeOutcome:final?.outcome||null,tsEnd:final?.completedAt||null,displayMessages:text?[{id:`${id}:text`,text,phase:final?.outcome==='completed'?'final_answer':'commentary',ts}]:[]})});
+      ...(user?{}:{replyKey,nativeOutcome:final?.outcome||null,tsEnd:final?.completedAt||null,displayMessages:text?[{id:`${id}:text`,text,phase:final?.outcome==='completed'?'final_answer':'commentary',ts}]:[]})});
   }
   return Number.isFinite(options.limit)&&options.limit>=0
     ?options.limit===0?[]:options.fromTail===false?turns.slice(0,options.limit):turns.slice(-options.limit):turns;

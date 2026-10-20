@@ -35,12 +35,15 @@
     "releasePage": "https://github.com/TianLin0509/ai-hub-codeagent/releases"
   },
   "releaseNotes": [
-    "公司联动「读文件」不再挑后缀：工程配置（.runcfg、.cmp、.pro、.vcxproj 等）和没有后缀的 README 都能读；密钥、凭据文件和二进制照旧不给读，口令自动隐去",
-    "AI特战队的自动会话开起来后在模型菜单里选中这个账号的模型，个人账号和 GLM 号不再报「模型不存在」",
-    "一个账号固定一个模型：启动中心和输入框下方不再有 CodeAgent 模型选项，要换模型在后台输入 /model；左侧会话栏改为显示账号首字母"
+    "助理改为左侧栏管理连接与能力，为简报和对话留出更大空间；你和助理的消息都带头像",
+    "Hub 自动检查并续期 WeLink 登录，能复用桌面登录时自动接上；需要扫码或网络异常时明确提示",
+    "手机助手直接填写专用消息群 ID，欢迎语发送成功后接通；最近会话查找仍可展开使用",
+    "邮箱优先从 WeLink 本人账号读取，读取失败时才显示补填入口",
+    "助理可连接秘书终结者，按原有每周规则管理抢会议室任务；预约结果显示在对话卡片并推送到已连接的手机群",
+    "接入 PPT Doctor 已建文字索引，支持搜索、读完整页和按用途汇总；需要本机 Python 3，不移动素材文件"
   ],
-  "version": "2.1.21",
-  "upstreamVersion": "1.6.559",
-  "upstreamCommit": "b42bc1922fb40a63c324575d578b8834f4ba98e6",
+  "version": "3.0.0",
+  "upstreamVersion": "1.6.561",
+  "upstreamCommit": "7138880568107dc033b7c377df7e549a90bbf96f",
   "upstreamDirty": false
 }

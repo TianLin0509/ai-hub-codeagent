@@ -6,6 +6,7 @@
 // 读不到才在「WeLink 与邮箱」页请用户填一次——不让助理在对话里问。
 // 写法同无线页：盖在主区域上的一层，点左侧其他按钮自动关闭。左侧按钮只在公司版（gate.js）插入。
 function createCompanyAssistantPage({ document, window, ipcRenderer, openSession, closeOtherPanels = () => {}, showMessage }) {
+  const { ASSISTANT_AVATAR_SRC, USER_AVATAR_SRC } = require('./chat-avatar');
   let page = null, data = null, timer = null, briefOpen = false, sending = false;
   const esc = v => String(v ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const pad = n => String(n).padStart(2, '0');
@@ -44,18 +45,24 @@ function createCompanyAssistantPage({ document, window, ipcRenderer, openSession
   function build() {
     if (page) return;
     page = document.createElement('section'); page.className = 'company-assistant-page'; page.id = 'company-assistant-page'; page.hidden = true; page.setAttribute('aria-label', '助理');
-    page.innerHTML = `<header class="ca-head">
-        <div class="ca-title"><h1>助理</h1></div>
+    page.innerHTML = `<aside class="ca-sidebar" aria-label="助理导航">
+        <div class="ca-identity" title="助理 · 只读 WeLink"><img src="${ASSISTANT_AVATAR_SRC}" alt="助理"><div class="ca-side-copy"><h1>助理 <small>v3.0</small></h1><span data-slot="model">工作助理 · 只读 WeLink</span></div></div>
+        <div class="ca-side-heading">连接</div>
         <div class="ca-status" aria-label="状态"></div>
-        <button type="button" class="ca-btn" data-ca="refresh" title="重新从 WeLink 取一次数据">刷新数据</button>
-        <button type="button" class="ca-btn" data-ca="settings">设置</button>
-      </header>
+        <div class="ca-side-heading">能力</div>
+        <nav class="ca-capabilities" aria-label="助理能力"></nav>
+        <div class="ca-side-bottom">
+          <button type="button" class="ca-side-button" data-ca="settings" title="助理设置"><span class="ca-side-icon">⚙</span><span class="ca-side-copy">设置</span></button>
+          <button type="button" class="ca-side-button" data-ca="open-session" title="打开助理会话"><span class="ca-side-icon">↗</span><span class="ca-side-copy">打开会话</span></button>
+        </div>
+      </aside><main class="ca-main">
       <div class="ca-panel" data-slot="panel" hidden></div>
       <div class="ca-scroll"><div class="ca-convo">
         <div data-slot="setup"></div>
         <div data-slot="coverage"></div>
         <div data-slot="brief"></div>
         <div data-slot="notices"></div>
+        <div data-slot="rooms"></div>
         <div data-slot="chat"></div>
       </div></div>
       <footer class="ca-foot">
@@ -64,8 +71,8 @@ function createCompanyAssistantPage({ document, window, ipcRenderer, openSession
           <textarea rows="2" placeholder="问助理任何事，例如「把某个群今天的讨论整理成三点」（Enter 发送，Shift+Enter 换行）" aria-label="问助理"></textarea>
           <button type="submit" class="ca-btn primary">发送</button>
         </form>
-        <div class="ca-foot-note"><span data-slot="job"></span><button type="button" class="ca-link" data-ca="open-session">打开会话</button></div>
-      </footer>`;
+        <div class="ca-foot-note"><span data-slot="job"></span><span>Enter 发送 · Shift+Enter 换行</span></div>
+      </footer></main>`;
     document.body.append(page);
     // Esc 关掉盖在上面的设置。
     page.addEventListener('keydown', event => {
@@ -91,18 +98,30 @@ function createCompanyAssistantPage({ document, window, ipcRenderer, openSession
   }
 
   function status() {
-    const d = data, chips = [];
-    const login = d.login;
-    if (!d.cliFound) chips.push(cliChip(d));
-    else if (!login) chips.push('<span class="ca-chip">WeLink 状态还没查</span>');
-    else if (login.ok) chips.push('<span class="ca-chip ok">WeLink 已登录</span>');
-    else chips.push(`<span class="ca-chip warn">${login.reason === 'expired' ? 'WeLink 登录已过期' : 'WeLink 没登录'}</span><button type="button" class="ca-btn small primary" data-ca="login">扫码登录</button>`);
-    if (login?.ok) chips.push(d.calendarNeedsSetup ? '<span class="ca-chip warn">邮件和日历未接入</span><button type="button" class="ca-btn small primary" data-ca="calendar">填邮箱</button>' : `<span class="ca-chip" title="${esc(d.settings.email || '')}">邮件和日历已接入</span>`);
-    chips.push('<span class="ca-chip">数据只留在本机</span>');
-    chips.push(`<span class="ca-chip">${d.refreshing ? '正在取数据…' : d.refreshedAt ? '数据更新于 ' + when(d.refreshedAt) : '还没取过数据'}</span>`);
-    chips.push('<span class="ca-sp"></span>');
-    chips.push(`<span class="ca-chip">下一份简报：${d.nextBriefAt ? when(d.nextBriefAt) : '—'}</span>`);
-    return chips.join('');
+    const d = data, auth = d.auth || {}, phone = d.phone || {}, p = phone.settings || {};
+    const renewing = auth.state === 'renewing';
+    const online = d.login?.ok && auth.state !== 'needs-scan';
+    const mailErrors = (d.errors || []).some(e => /邮件|日程/.test(e.label || ''));
+    const mailText = !online ? '等待 WeLink 登录' : !d.refreshedAt ? '等待首次查询' : d.calendarNeedsSetup ? '暂未接入' : mailErrors ? '部分查询失败' : '已接入';
+    const loginText = !d.cliFound ? '未找到 welink-cli' : renewing ? '正在自动续期' : online ? (auth.lastRenewAt ? '自动续期 · 上次 ' + clock(auth.lastRenewAt) : '在线 · 自动维护登录') : auth.state === 'needs-scan' ? '自动续期没成功，点这里扫码登录' : auth.error || '正在检查登录';
+    const row = (icon, title, detail, color, action, extra = '') => `<div class="ca-connection" title="${esc(title + ' · ' + detail)}"><button type="button" class="ca-connection-main" data-ca="${action}"><span class="ca-side-icon">${icon}<i class="ca-dot ${color}"></i></span><span class="ca-side-copy"><b>${title}</b><small>${esc(detail)}</small></span></button>${extra}</div>`;
+    return row('W', 'WeLink', loginText, renewing ? 'run' : online ? 'ok' : 'warn', d.cliFound && auth.state === 'needs-scan' ? 'login' : 'settings-tab:welink',
+      !d.cliFound ? '<button class="ca-link ca-side-copy" data-ca="find-cli">查找</button>' : !online && !renewing ? '<button class="ca-link ca-side-copy" data-ca="login">扫码登录</button>' : '')
+      + row('✉', '邮件与日历', mailText, mailText === '已接入' ? 'ok' : '', 'settings-tab:welink')
+      + row('▣', '手机群', !p.groupId ? '填入群 ID 即可接通' : phone.lastError ? phone.lastError : !p.enabled ? '已暂停' : (p.groupName || '群 ' + p.groupId.slice(-6)), p.enabled && p.groupId && !phone.lastError ? 'ok' : '', 'settings-tab:phone')
+      + row('↻', '数据更新时间', d.refreshing ? '正在刷新…' : d.refreshedAt ? when(d.refreshedAt) : '还没取过数据', d.refreshedAt ? 'ok' : '', 'refresh', '<button class="ca-link ca-side-copy" data-ca="refresh" title="刷新数据">刷新</button>')
+      + `<p class="ca-next ca-side-copy">下一份简报 · ${d.nextBriefAt ? when(d.nextBriefAt) : '—'}</p>`;
+  }
+  function capabilities() {
+    const r = data.rooms || {}, p = data.ppt || {};
+    return [['▤', '今日简报', data.brief ? '已更新' : '待生成', 'brief'],
+      ['◷', '抢会议室', r.running ? '守护中' : r.available ? '可配置' : '待接入', 'rooms'],
+      ['▧', 'PPT 素材库', p.available ? `已索引 ${p.files ?? 0} 份` : '未检测到', 'ppt'],
+      ['▣', '手机对话', data.phone?.settings?.enabled ? '已开启' : '待接通', 'phone']]
+      .map(([icon, name, detail, tab]) => `<button class="ca-side-button" data-ca="settings-tab:${tab}" title="${name} · ${detail}"><span class="ca-side-icon">${icon}</span><span class="ca-side-copy">${name}<small>${detail}</small></span></button>`).join('');
+  }
+  function assistantMessage(html, extra = '') {
+    return `<div class="ca-message-row assistant ${extra}"><img class="ca-avatar" src="${ASSISTANT_AVATAR_SRC}" alt="助理"><div class="ca-message-content">${html}</div></div>`;
   }
 
   // welink-cli 没找到时（2026-10-19）：后台在全盘找就显示进度；找完还没有就给「再找一次」「手动选择…」。
@@ -129,8 +148,7 @@ function createCompanyAssistantPage({ document, window, ipcRenderer, openSession
     if (!d.login?.ok || !d.calendarNeedsSetup) return '';
     const auto = d.mailSetup || {};
     const why = auto.reason === 'no-email' ? 'WeLink 账号信息里没读到你的邮箱。' : auto.email ? `用 ${esc(auto.email)} 自动配置没成功${auto.output ? '（' + esc(auto.output) + '）' : ''}。` : '';
-    return `<article class="ca-setup"><b>填一次公司邮箱，邮件和日历就能用</b><p class="ca-note">${why}只用来让 welink-cli 找到公司邮件服务器，不发邮件，数据只留在这台电脑。</p>
-      <div class="ca-row"><input type="email" data-f="setup-email" placeholder="公司邮箱地址" value="${esc(d.settings.email || auto.email || '')}"><button type="button" class="ca-btn primary" data-ca="setup-mail">配置</button></div><p class="ca-note" data-f="setup-msg"></p></article>`;
+    return `<article class="ca-setup"><b>邮件和日历暂不可用</b><p class="ca-note">${why}</p><button class="ca-link" data-ca="calendar">查看连接设置</button></article>`;
   }
 
   function briefCard() {
@@ -206,14 +224,15 @@ function createCompanyAssistantPage({ document, window, ipcRenderer, openSession
       const answer = c.state === 'done' ? `<div class="ca-md">${markdown(c.a)}</div>`
         : c.state === 'error' ? `<p class="ca-note bad">${esc(c.error || '没答上')}<button type="button" class="ca-link" data-ca="retry:${esc(c.id)}">重问</button></p>`
           : `<p class="ca-note run">${c.state === 'queued' ? '排队中…' : '助理正在查…'}</p>`;
-      return `<div class="ca-msg user"><div class="ca-card-head"><b>我</b>${c.via === 'phone' ? '<span class="ca-chip">手机</span>' : ''}<span class="ca-time">${when(c.askedAt)}</span></div><div class="ca-body">${esc(c.q).replace(/\n/g, '<br>')}</div></div>
-        <div class="ca-msg"><div class="ca-card-head"><b>助理</b>${c.answeredAt ? `<span class="ca-time">${when(c.answeredAt)}</span>` : ''}</div>${answer}</div>`;
+      return `<div class="ca-message-row user"><img class="ca-avatar" src="${USER_AVATAR_SRC}" alt="我"><div class="ca-message-content"><div class="ca-card-head"><b>我</b>${c.via === 'phone' ? '<span class="ca-chip">手机</span>' : ''}<span class="ca-time">${when(c.askedAt)}</span></div><div class="ca-msg user"><div class="ca-body">${esc(c.q).replace(/\n/g, '<br>')}</div></div></div></div>
+        ${assistantMessage(`<div class="ca-card-head"><b>助理</b>${c.answeredAt ? `<span class="ca-time">${when(c.answeredAt)}</span>` : ''}</div><div class="ca-msg">${answer}</div>`)}`;
     }).join('');
   }
 
   function render() {
     if (!page || !data) return;
     page.querySelector('.ca-status').innerHTML = status();
+    page.querySelector('.ca-capabilities').innerHTML = capabilities();
     const panel = page.querySelector('[data-slot="panel"]');
     if (!panel.dataset.kind || panel.dataset.kind === 'login') { const html = loginPanel(); panel.innerHTML = html; panel.hidden = !html; panel.dataset.kind = html ? 'login' : ''; }
     // 内容没变就不重画；重画时保留折叠块（其余条目、提醒列表）的展开状态。
@@ -226,8 +245,12 @@ function createCompanyAssistantPage({ document, window, ipcRenderer, openSession
     };
     setHtml('setup', setupCard());
     setHtml('coverage', coverageNote());
-    setHtml('brief', briefCard());
+    setHtml('brief', assistantMessage(briefCard(), 'ca-brief-row'));
     setHtml('notices', noticesStrip());
+    setHtml('rooms', (data.rooms?.events || []).slice(0, 10).map(e => {
+      const r = e.record;
+      return assistantMessage(`<article class="ca-msg"><div class="ca-card-head"><b>会议室 · ${esc(r['状态'])}</b><span class="ca-time">${when(e.at)}</span></div><p>${esc(e.slot || `${r['日期'] || ''} ${r['时间'] || ''} · ${r['会议室'] || '未选定'}`)}</p>${r['备注'] ? `<p class="ca-note">${esc(r['备注'])}</p>` : ''}</article>`);
+    }).join(''));
     const scroll = page.querySelector('.ca-scroll');
     const atBottom = scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight < 40;
     const chat = page.querySelector('[data-slot="chat"]'), html = chatList();
@@ -235,7 +258,7 @@ function createCompanyAssistantPage({ document, window, ipcRenderer, openSession
     page.querySelector('[data-slot="chips"]').innerHTML = data.chips.map((c, i) => `<button type="button" class="ca-chip-btn${c.custom ? ' custom' : ''}" data-ca="chip:${i}" title="${esc(c.text)}">${esc(c.label)}</button>`).join('') + '<button type="button" class="ca-chip-btn add" data-ca="save-chip" title="把输入框里的问题存成小标签">＋ 存为常用</button>';
     const job = data.job ? (data.job.type === 'brief' ? '助理正在整理简报…' : '助理正在回答…') + (data.queued ? `（还有 ${data.queued} 个排队）` : '') : data.session ? (data.session.open ? '助理会话已就绪' : '助理会话已休息，提问时自动恢复') : '第一次提问时会打开助理会话';
     page.querySelector('[data-slot="job"]').textContent = job;
-    page.querySelector('[data-ca="refresh"]').disabled = !!data.refreshing;
+    page.querySelectorAll('[data-ca="refresh"]').forEach(b => { b.disabled = !!data.refreshing; });
   }
   async function load() { data = await call('status'); render(); }
 
@@ -314,8 +337,8 @@ function createCompanyAssistantPage({ document, window, ipcRenderer, openSession
     } catch (error) { if (msg) msg.textContent = '没成功：' + error.message; } finally { if (button) button.disabled = false; }
   }
 
-  const TABS = [['brief', '简报与提醒'], ['welink', 'WeLink 与邮箱'], ['phone', '手机'], ['pet', '桌宠']];
-  let petTab = null, phoneTimer = null, phoneData = null;
+  const TABS = [['brief', '简报与提醒'], ['welink', 'WeLink 与邮箱'], ['phone', '手机'], ['rooms', '抢会议室'], ['ppt', 'PPT 素材库'], ['pet', '桌宠']];
+  let petTab = null, phoneTimer = null, phoneData = null, roomsTimer = null;
 
   // 「手机」页（2026-10-18）：在手机 WeLink 的专用群里和助理对话。群由用户自己在手机上建，这里只选群、开关和看往来。
   const KIND_TAG = { other: '别人发的', stale: '过期没执行', throttled: '太快没处理', unsupported: '不是文字', failed: '没发出去', ack: '回执', done: '会话答完', stuck: '会话卡住', welcome: '接通', test: '测试', error: '没答上', info: '提示' };
@@ -333,17 +356,15 @@ function createCompanyAssistantPage({ document, window, ipcRenderer, openSession
     const st = phoneData.phone.settings, check = phoneData.phone.groupCheck;
     const groups = (phoneData.conversations || []).filter(c => c.group);
     if (st.groupId && !groups.some(g => g.id === st.groupId)) groups.unshift({ id: st.groupId, name: st.groupName || st.groupId, group: true });
-    const options = ['<option value="">— 选一个群 —</option>', ...groups.map(g => `<option value="${esc(g.id)}" data-name="${esc(g.name)}"${g.id === st.groupId ? ' selected' : ''}>${esc(g.name)}</option>`)].join('');
+    const options = ['<option value="">从最近会话选择…</option>', ...groups.map(g => `<option value="${esc(g.id)}" data-name="${esc(g.name)}">${esc(g.name)} · ${esc(g.id)}</option>`)].join('');
     const checkLine = check && check.groupId === st.groupId ? `<span class="ca-chip${check.ok ? ' ok' : ' warn'}">${check.ok ? '成员没问题' : '有其他人'}</span><span class="ca-note">${esc(check.note)}</span>` : '';
     return `<fieldset class="col"><legend>接通状态</legend><div data-slot="phone-live">${phoneLive()}</div></fieldset>
-      <fieldset class="col"><legend>第一次用：在手机上建一个只有你和小微助手的群</legend>
-        <ol class="ca-steps"><li>手机 WeLink 里发起群聊，拉上「小微助手」和一位同事（建群至少要 3 人）。</li>
-          <li>建好后在群设置里把这位同事移出，群里只剩你和小微助手。</li>
-          <li>群名改成「助理 CodeAgent」，在群里随便说一句，再点下面「刷新群列表」，选中这个群。</li>
-          <li>勾上「开启手机对话」并保存：Hub 会在群里发一句「已接通」，之后在群里直接跟助理说话。</li></ol>
-        <p class="ca-note">Hub 只认这个群里你本人发的文字，只往这个群发消息，回答以「【助理】」开头。超过 2 分钟的旧消息不执行，每分钟最多 20 条。</p></fieldset>
-      <fieldset class="col"><legend>选群</legend>
-        <div class="ca-row"><select data-f="phone-group">${options}</select><button type="button" class="ca-btn small" data-x="phone-refresh">刷新群列表</button><button type="button" class="ca-btn small" data-x="phone-check">检查群成员</button></div>
+      <fieldset class="col"><legend>助理消息群 ID</legend>
+        <p class="ca-note">先在 WeLink 建好专用消息群，把群 ID 填在这里。接通后，欢迎消息会发到这个群，之后直接在群里和助理说话。</p>
+        <div class="ca-row"><input class="ca-phone-group" data-f="phone-group" type="text" inputmode="numeric" placeholder="粘贴群 ID" aria-label="助理消息群 ID" value="${esc(st.groupId)}"><button type="button" class="ca-btn primary" data-x="phone-connect">接通</button></div>
+        <div data-slot="phone-connect-result" role="status"></div>
+        <details><summary class="ca-note">不知道群 ID？从最近会话里找</summary><div class="ca-row"><select data-f="phone-recent">${options}</select><button type="button" class="ca-btn small" data-x="phone-refresh">刷新群列表</button></div></details>
+        <div class="ca-row"><button type="button" class="ca-btn small" data-x="phone-check">查看群成员</button><span class="ca-note">群内其他人能看到助理的回答，建议用专用群。</span></div>
         <div class="ca-row" data-slot="phone-check">${checkLine}</div></fieldset>
       <fieldset class="col"><legend>开关与推送</legend>
         <label><input type="checkbox" data-f="phone-enabled"${st.enabled ? ' checked' : ''}>开启手机对话</label>
@@ -358,13 +379,28 @@ function createCompanyAssistantPage({ document, window, ipcRenderer, openSession
     if (panel.dataset.tab !== 'phone' || !body.isConnected) return;
     body.innerHTML = phoneTab();
     const groupSel = body.querySelector('[data-f="phone-group"]');
-    const chosen = () => { const o = groupSel.selectedOptions[0]; return { groupId: groupSel.value, groupName: o?.dataset.name || '' }; };
+    const chosen = () => {
+      const groupId = groupSel.value.trim(), recent = (phoneData.conversations || []).find(g => g.group && g.id === groupId);
+      return { groupId, groupName: recent?.name || (groupId === phoneData.phone.settings.groupId ? phoneData.phone.settings.groupName : '') || '' };
+    };
+    body.querySelector('[data-f="phone-recent"]').onchange = e => { if (e.target.value) groupSel.value = e.target.value; };
+    body.querySelector('[data-x="phone-connect"]').onclick = async e => {
+      const g = chosen(), slot = body.querySelector('[data-slot="phone-connect-result"]');
+      if (!g.groupId) { slot.textContent = '请先填入群 ID'; return; }
+      e.target.disabled = true; slot.textContent = '正在发送欢迎消息…';
+      try {
+        const r = await call('phone-settings', { ...g, enabled: true });
+        if (!r.ok) { slot.innerHTML = `<p class="ca-note bad">${esc(r.error)}</p>`; return; }
+        await mountPhoneTab(panel); showMessage?.('手机对话已接通');
+      } catch (error) { slot.innerHTML = `<p class="ca-note bad">没有接通：${esc(error.message)}</p>`; }
+      finally { e.target.disabled = false; }
+    };
     body.querySelector('[data-x="phone-refresh"]').onclick = async e => {
       e.target.disabled = true;
       try { await call('refresh'); await mountPhoneTab(panel); showMessage?.('群列表已刷新'); } catch (error) { e.target.disabled = false; showMessage?.('没刷新：' + error.message); }
     };
     body.querySelector('[data-x="phone-check"]').onclick = async e => {
-      const g = chosen(); if (!g.groupId) { showMessage?.('先选一个群'); return; }
+      const g = chosen(); if (!g.groupId) { showMessage?.('请先填群 ID'); return; }
       e.target.disabled = true;
       const slot = body.querySelector('[data-slot="phone-check"]');
       try { const r = await call('phone-check-group', { groupId: g.groupId }); slot.innerHTML = `<span class="ca-chip${r.ok ? ' ok' : ' warn'}">${r.ok ? '成员没问题' : '有其他人'}</span><span class="ca-note">${esc(r.note)}</span>`; }
@@ -376,11 +412,12 @@ function createCompanyAssistantPage({ document, window, ipcRenderer, openSession
     };
     body.querySelector('[data-x="phone-save"]').onclick = async e => {
       const g = chosen(), on = f => body.querySelector(`[data-f="phone-${f}"]`).checked;
-      if (on('enabled') && !g.groupId) { showMessage?.('先选一个群再开启'); return; }
+      if (on('enabled') && !g.groupId) { showMessage?.('请先填群 ID'); return; }
       e.target.disabled = true;
       try {
         const r = await call('phone-settings', { ...g, enabled: on('enabled'), pushWatched: on('pushWatched'), pushStuck: on('pushStuck') });
-        showMessage?.(r.welcome === false ? '已保存，但「已接通」那句没发进群里，原因见「最近往来」' : r.welcome ? '已接通：去手机上看看群里那句「已接通」' : '手机设置已保存');
+        if (!r.ok) { showMessage?.('没有接通：' + r.error); e.target.disabled = false; return; }
+        showMessage?.(r.welcome ? '已接通：欢迎消息已发到手机群' : '手机设置已保存');
         await mountPhoneTab(panel);
       } catch (error) { e.target.disabled = false; showMessage?.('没有保存：' + error.message); }
     };
@@ -409,11 +446,11 @@ function createCompanyAssistantPage({ document, window, ipcRenderer, openSession
         <div class="ca-row"><button type="button" class="ca-btn small" data-ca="find-cli">重新查找</button><button type="button" class="ca-btn small" data-ca="pick-cli">手动选择…</button></div></fieldset>` : '';
     return `<fieldset><legend>WeLink 登录</legend><div class="ca-row">${loginLine}</div></fieldset>${cliLine}
       <fieldset class="col"><legend>公司邮箱（邮件和日历要用）</legend>
-        <div class="ca-row"><input type="email" data-f="email" placeholder="公司邮箱地址" value="${esc(s.email || '')}"><button type="button" class="ca-btn primary" data-x="mail">${d.calendarNeedsSetup ? '配置邮件和日历' : '重新配置'}</button>${from ? `<span class="ca-note">${from}</span>` : ''}</div>
+        <div class="ca-row">${s.emailFrom === 'welink' && s.email ? `<span>邮箱（自动读取）：${esc(s.email)}</span>` : `<input type="email" data-f="email" placeholder="自动读取失败，可补填公司邮箱" value="${esc(s.email || '')}">`}<button type="button" class="ca-btn primary" data-x="mail">${d.calendarNeedsSetup ? '配置邮件和日历' : '重新配置'}</button>${from ? `<span class="ca-note">${from}</span>` : ''}</div>
         <p class="ca-note" data-f="mail-msg">${d.calendarNeedsSetup ? '还没接入。' : '已接入。'}只让 welink-cli 按邮箱找一次公司邮件服务器，不发邮件。</p></fieldset>
       <fieldset class="col"><legend>最近一次取数（${d.refreshedAt ? when(d.refreshedAt) : '还没取过'}）</legend>${snapRows}
         <div class="ca-row"><button type="button" class="ca-btn small" data-ca="refresh">刷新数据</button></div></fieldset>
-      <fieldset><legend>我的名字（用来认群里 @我）</legend><input type="text" data-f="myName" value="${esc(s.myName)}" placeholder="WeLink 里的显示名"><button type="button" class="ca-btn small" data-x="name">保存</button></fieldset>`;
+      <fieldset><legend>我的名字（用来认群里 @我）</legend><input type="text" data-f="myName" value="${esc(s.myName)}" placeholder="WeLink 里的显示名"><button type="button" class="ca-btn small" data-x="name">保存</button></fieldset><p class="ca-note">WeLink 数据只留在本机。</p>`;
   }
 
   function briefTab() {
@@ -439,20 +476,127 @@ function createCompanyAssistantPage({ document, window, ipcRenderer, openSession
       <div class="ca-row end"><button type="button" class="ca-btn primary" data-x="save">保存</button></div>`;
   }
 
+  async function mountPptTab(panel) {
+    const body = panel.querySelector('.ca-tab-body');
+    body.innerHTML = '<p class="ca-note">正在检查本机 PPT 文字索引…</p>';
+    let p;
+    try { p = (await call('ppt-status')).ppt; }
+    catch (error) { if (body.isConnected) body.innerHTML = `<p class="ca-note bad">${esc(error.message)}</p>`; return; }
+    if (!body.isConnected || panel.dataset.tab !== 'ppt') return;
+    body.innerHTML = `<fieldset class="col"><legend>在我做过的 PPT 里找页</legend><p class="ca-note">${p.available ? `已索引 ${p.files} 份文稿、${p.pages} 页。` : '未检测到可用的 PPT Doctor 索引。请先用 PPT Doctor 建立文字索引。'}</p>
+      ${p.error ? `<p class="ca-note bad">${esc(p.error)}</p>` : ''}<p class="ca-note">依据已提取文字检索；图表、版式和可编辑性需要打开原稿核查。</p>
+      <details><summary>索引位置</summary><p class="ca-ppt-path">${esc(p.db)}</p><button class="ca-btn" data-x="ppt-pick">选择已有索引…</button><button class="ca-link" data-x="ppt-refresh">重新检查</button></details></fieldset>
+      <form class="ca-row" data-x="ppt-search"><input class="ca-phone-group" data-f="ppt-query" type="text" placeholder="输入主题，例如 SRS 信道估计" aria-label="PPT 检索词"><button class="ca-btn primary" type="submit"${p.available ? '' : ' disabled'}>找素材</button></form>
+      <div data-slot="ppt-results" aria-live="polite"></div>`;
+    body.querySelector('[data-x="ppt-pick"]').onclick = async () => { try { await call('ppt-pick-index'); await mountPptTab(panel); await load(); } catch (error) { showMessage?.(error.message); } };
+    body.querySelector('[data-x="ppt-refresh"]').onclick = () => { void mountPptTab(panel); };
+    body.querySelector('[data-x="ppt-search"]').onsubmit = async event => {
+      event.preventDefault();
+      const query = body.querySelector('[data-f="ppt-query"]').value.trim(); if (!query) return;
+      const button = body.querySelector('[type="submit"]'), slot = body.querySelector('[data-slot="ppt-results"]');
+      button.disabled = true; slot.innerHTML = '<p class="ca-note">正在检索文字，随后可读完整页…</p>';
+      try {
+        const r = await call('ppt-query', { op: 'search', query });
+        slot.innerHTML = (r.candidates || []).map(c => `<article class="ca-ppt-result"><b>${esc(c.ref.name)} · 第 ${c.ref.page} 页</b><p>${esc(c.excerpt || '')}</p><p class="ca-ppt-path">${esc(c.ref.path)}</p>
+          <button class="ca-btn small" data-ppt-read="${esc(c.id)}">读这一页</button><button class="ca-link" data-ppt-open="${esc(c.id)}">打开文件</button><div data-ppt-text></div></article>`).join('') || '<p class="ca-note">本次文字检索未命中，可换一个关键词；不代表整个素材库没有相关内容。</p>';
+        if (r.truncated) slot.insertAdjacentHTML('afterbegin', '<p class="ca-note">当前展示前 30 页，可缩小关键词继续检索。</p>');
+      } catch (error) { slot.innerHTML = `<p class="ca-note bad">没查成：${esc(error.message)}</p>`; }
+      finally { button.disabled = false; }
+    };
+    body.onclick = async event => {
+      const button = event.target.closest('[data-ppt-read],[data-ppt-open]'); if (!button) return;
+      button.disabled = true;
+      try {
+        if (button.dataset.pptOpen) await call('ppt-open', { id: button.dataset.pptOpen });
+        else {
+          const r = await call('ppt-query', { op: 'read', ids: [button.dataset.pptRead] });
+          const item = r.pages?.[0];
+          button.closest('article').querySelector('[data-ppt-text]').innerHTML = item
+            ? `<p class="ca-note">${item.source_state === 'metadata_matches_index' ? '源文件元数据与索引一致' : '源文件已变化或不可用，请核查原稿'}</p><pre>${esc(item.text)}</pre>` : '<p class="ca-note">这页已不在当前索引中，请重新搜索。</p>';
+        }
+      } catch (error) { showMessage?.(error.message); } finally { button.disabled = false; }
+    };
+  }
+
+  async function mountRoomsTab(panel) {
+    clearInterval(roomsTimer); roomsTimer = null;
+    const body = panel.querySelector('.ca-tab-body');
+    body.innerHTML = '<p class="ca-note">正在读取秘书状态…</p>';
+    let r;
+    try { await call('room-discover'); r = (await call('room-status')).rooms; }
+    catch (error) { if (body.isConnected) body.innerHTML = `<p class="ca-note bad">${esc(error.message)}</p>`; return; }
+    if (!body.isConnected || panel.dataset.tab !== 'rooms') return;
+    const rules = r.rules || { '主题': '日常会议', '开始时间': '14:00', '时长小时': 2, '时长分钟': 0, '优先会议室': [], '抢订日': [1, 2, 3, 4, 5] };
+    body.innerHTML = `<fieldset class="col"><legend>秘书终结者</legend><p data-slot="room-live">${r.connected ? r.running ? '正在守护' : '已接通' : r.available ? '已找到程序，等待接通' : '选择已安装的秘书终结者即可接入'}</p>
+      <p class="ca-note">沿用秘书的抢订引擎，每天开放时抢七天后的同一天。暂不支持指定明天等单次日期。</p>
+      <p class="ca-ppt-path">${esc(r.exePath)}</p><div class="ca-row"><button class="ca-btn" data-x="room-pick">选择程序…</button>${r.available && !r.connected ? '<button class="ca-btn primary" data-room-op="connect">接通秘书</button>' : !r.available ? '<button class="ca-btn primary" data-room-op="install">安装并接通（约 77 MB）</button>' : ''}</div>
+      ${r.error ? `<p class="ca-note bad">${esc(r.error)}</p>` : ''}</fieldset>
+      <fieldset class="col"><legend>抢订规则</legend>
+        <label>主题<input type="text" data-room="主题" value="${esc(rules['主题'])}"></label>
+        <div class="ca-row"><label>开始时间<input type="time" data-room="开始时间" value="${esc(rules['开始时间'])}"></label><label>时长（小时）<input type="number" min="0.5" max="12" step="0.5" data-room="duration" value="${Number(rules['时长小时']) + Number(rules['时长分钟']) / 60}"></label></div>
+        <label>优先会议室<input type="text" data-room="rooms" placeholder="用逗号分隔，先填的优先" value="${esc(rules['优先会议室'].join('，'))}"></label>
+        <div class="ca-row">${['一', '二', '三', '四', '五', '六', '日'].map((name, i) => `<label><input type="checkbox" data-room-day="${i + 1}"${rules['抢订日'].includes(i + 1) ? ' checked' : ''}>周${name}</label>`).join('')}</div>
+        <p class="ca-note">有任务运行时先暂停，待浏览器退出后再改规则；会后动作沿用秘书里的设置。</p>
+      </fieldset><fieldset class="col"><legend>会议室网页登录</legend><p class="ca-note">${r.loginNeeded ? '会议室网页需要重新登录。' : '登录状态由秘书在抢订前检查。'}它与 WeLink 消息登录相互独立。</p>
+        <div class="ca-row"><button class="ca-btn" data-room-op="login"${r.connected && !r.running ? '' : ' disabled'}>打开登录</button><button class="ca-btn" data-room-op="test"${r.connected && !r.running ? '' : ' disabled'}>测试填表（不提交）</button></div></fieldset>
+      <p class="ca-note" data-slot="room-msg" aria-live="polite"></p><div class="ca-row end">
+        <button class="ca-btn" data-room-op="pause"${r.connected ? '' : ' disabled'}>暂停</button><button class="ca-btn" data-room-op="save"${r.connected && !r.running ? '' : ' disabled'}>保存规则</button><button class="ca-btn primary" data-room-op="start"${r.connected && !r.running ? '' : ' disabled'}>开始守护</button>
+      </div>`;
+    body.querySelector('[data-x="room-pick"]').onclick = async () => { try { await call('room-pick'); await mountRoomsTab(panel); await load(); } catch (error) { showMessage?.(error.message); } };
+    let acting = false;
+    body.onclick = async event => {
+      const button = event.target.closest('[data-room-op]'); if (!button) return;
+      if (acting) return;
+      const op = button.dataset.roomOp, msg = body.querySelector('[data-slot="room-msg"]');
+      acting = true; button.disabled = true; msg.textContent = '正在交给秘书处理…';
+      try {
+        if (op === 'connect') await call('room-connect');
+        else if (op === 'install') { msg.textContent = '正在下载并核对秘书组件，预计约一分钟…'; await call('room-install'); }
+        else {
+          if (op === 'save' || op === 'start') {
+            const v = key => body.querySelector(`[data-room="${key}"]`).value;
+            const duration = Number(v('duration'));
+            await call('room-command', { op: 'configure', rules: {
+              '主题': v('主题'), '开始时间': v('开始时间'), '时长小时': Math.floor(duration), '时长分钟': (duration % 1) * 60,
+              '优先会议室': v('rooms').split(/[,，、]/).map(s => s.trim()).filter(Boolean),
+              '抢订日': [...body.querySelectorAll('[data-room-day]:checked')].map(e => Number(e.dataset.roomDay)),
+            } });
+          }
+          if (op !== 'save') await call('room-command', { op });
+        }
+        await mountRoomsTab(panel); await load(); showMessage?.(op === 'pause' ? '已请求暂停，浏览器退出后即可改规则' : '秘书已接收');
+      } catch (error) { msg.textContent = error.message; button.disabled = false; }
+      finally { acting = false; }
+    };
+    roomsTimer = setInterval(async () => {
+      if (panel.hidden || panel.dataset.tab !== 'rooms' || !body.isConnected) { clearInterval(roomsTimer); roomsTimer = null; return; }
+      if (acting) return;
+      try {
+        const latest = (await call('room-status')).rooms;
+        body.querySelector('[data-slot="room-live"]').textContent = latest.error || (!latest.connected ? '等待接通' : latest.running ? '正在守护' : '已接通');
+        for (const b of body.querySelectorAll('[data-room-op]')) {
+          if (['save', 'start', 'test', 'login'].includes(b.dataset.roomOp)) b.disabled = !latest.connected || latest.running || latest.loginBusy;
+          if (b.dataset.roomOp === 'pause') b.disabled = !latest.connected;
+        }
+      } catch (error) { body.querySelector('[data-slot="room-msg"]').textContent = '状态刷新失败：' + error.message; }
+    }, 3000);
+  }
+
   function openSettings(tab) {
     const panel = page.querySelector('[data-slot="panel"]');
     const current = TABS.some(([k]) => k === tab) ? tab : (panel.dataset.kind === 'settings' && panel.dataset.tab) || 'brief';
     panel.dataset.kind = 'settings'; panel.dataset.tab = current; panel.hidden = false;
-    // 设置盖在对话区上（从标题栏下面盖到页面底），按标题栏的实际高度放。
-    const head = page.querySelector('.ca-head');
-    if (head) page.style.setProperty('--ca-head-h', head.offsetHeight + 'px');
+    // 面板定位在 ca-main 内，保留侧栏可操作。
     const s = data.settings;
     panel.innerHTML = `<div class="ca-settings" role="dialog" aria-label="助理设置">
       <div class="ca-settings-head"><h3>助理设置</h3><div class="ca-tabs" role="tablist">${TABS.map(([k, label]) => `<button type="button" role="tab" class="ca-tab${k === current ? ' on' : ''}" aria-selected="${k === current}" data-ca="settings-tab:${k}">${label}</button>`).join('')}</div>
         <button type="button" class="ca-btn small" data-ca="close-panel">关闭</button></div>
-      <div class="ca-tab-body" data-tab="${current}">${current === 'brief' ? briefTab() : current === 'welink' ? welinkTab() : current === 'phone' ? '' : '<div data-slot="pet-tab"></div>'}</div></div>`;
+      <div class="ca-tab-body" data-tab="${current}">${current === 'brief' ? briefTab() : current === 'welink' ? welinkTab() : current === 'pet' ? '<div data-slot="pet-tab"></div>' : ''}</div></div>`;
     if (current !== 'phone') { clearInterval(phoneTimer); phoneTimer = null; }
+    if (current !== 'rooms') { clearInterval(roomsTimer); roomsTimer = null; }
     if (current === 'phone') { petTab = null; void mountPhoneTab(panel); return; }
+    if (current === 'ppt') { petTab = null; void mountPptTab(panel); return; }
+    if (current === 'rooms') { petTab = null; void mountRoomsTab(panel); return; }
     if (current === 'pet') {
       const host = panel.querySelector('[data-slot="pet-tab"]');
       try { petTab = require('./hub-pet/pet-settings-tab.js').mountPetSettingsTab(host, { ipcRenderer, window, document }); }
@@ -499,7 +643,7 @@ function createCompanyAssistantPage({ document, window, ipcRenderer, openSession
     if (!page || page.hidden) return;
     page.hidden = true; document.body.classList.remove('company-assistant-page-open');
     document.getElementById('btn-company-assistant')?.classList.remove('active');
-    clearInterval(timer); timer = null; window.removeEventListener('resize', onResize);
+    clearInterval(timer); timer = null; clearInterval(phoneTimer); phoneTimer = null; clearInterval(roomsTimer); roomsTimer = null; window.removeEventListener('resize', onResize);
   }
   nav();
   // 侧栏「助理」一栏的占位行（助理会话还没打开时）点进来：恢复或新开助理会话，再选中它。

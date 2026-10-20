@@ -94,6 +94,9 @@ function parseKimiWireRecords(records) {
   let generation = null;
   let call = null;
   let toolCalls = [];
+  // Text written in a step that then calls tools is progress, shown as a
+  // timed row like Codex commentary instead of vanishing behind the answer.
+  let notes = [];
   const steps = new Map();
 
   for (const record of records) {
@@ -116,6 +119,7 @@ function parseKimiWireRecords(records) {
       currentTurnKey = stableKimiRecordKey(record, turnIndex);
       turnText = '';
       toolCalls = [];
+      notes = [];
       steps.clear();
       currentAssistantTs = null;
       currentPromptTs = toMs(record);
@@ -201,11 +205,15 @@ function parseKimiWireRecords(records) {
       steps.set(event.uuid || stepKey, ended);
     }
     if (ended.text) turnText += ended.text;
-    if (isToolFinish(event.finishReason) || ended.hadTool) continue;
+    if (isToolFinish(event.finishReason) || ended.hadTool) {
+      if (ended.text.trim()) notes.push({ text: ended.text.trim(), ts: toMs(record) });
+      continue;
+    }
     const text = (ended.text || turnText).trim();
     if (!text && toolCalls.length === 0) continue;
+    const id = `kimi-assistant-${currentTurnKey || stableKimiRecordKey(event, turnIndex)}`;
     turns.push({
-      id: `kimi-assistant-${currentTurnKey || stableKimiRecordKey(event, turnIndex)}`,
+      id,
       role: 'assistant',
       text,
       ts: currentAssistantTs,
@@ -213,6 +221,9 @@ function parseKimiWireRecords(records) {
       tsEnd: toMs(record),
       stopReason: event.finishReason || 'completed',
       toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
+      ...(notes.length && ended.text.trim() ? { displayMessages: [
+        ...notes.map((note, i) => ({ id: `${id}:note:${i}`, text: note.text, phase: 'commentary', ts: note.ts })),
+        { id: `${id}:answer`, text: ended.text.trim(), phase: 'final_answer', ts: toMs(record) }] } : {}),
       model: currentModel || undefined,
       outputUsageComplete,
       generation,

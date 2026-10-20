@@ -123,8 +123,9 @@ class PhoneChannel {
   }
 
   // ---- 发 ----
-  send(text, kind = 'answer') {
+  send(text, kind = 'answer', targetGroup = '') {
     const p = this.settings();
+    if (targetGroup) p.groupId = targetGroup;
     if (!p.groupId) return Promise.resolve(false);
     const parts = chunks(plain(text));
     this.outbox = this.outbox.then(async () => {
@@ -133,6 +134,9 @@ class PhoneChannel {
         try {
           const r = await this.a.welink(['im', 'send-to-group', '--group-id', p.groupId, '--text', body], { sendGroup: p.groupId, timeoutMs: 30000 });
           if (r.code !== 0) throw new Error(short(r.stderr || r.stdout || '发送命令失败', 160));
+          const receipt = welink.parseJson(r.stdout), code = receipt?.code ?? receipt?.resultCode ?? receipt?.error?.error_code;
+          if (receipt?.ok === false || receipt?.success === false || code !== undefined && !['0', '200'].includes(String(code)))
+            throw new Error(short(receipt?.error?.error_msg || receipt?.message || receipt?.resultContext || `发送业务码 ${code}`, 160));
           this.update(cur => ({ sent: [...cur.sent.filter(x => this.now() - x.at < 30 * 60000), { hash: digest(body), at: this.now() }].slice(-100) }));
           this.note('out', body, kind);
         } catch (error) {
@@ -205,7 +209,7 @@ class PhoneChannel {
 
   // ---- 设置页用 ----
   async checkGroup(groupId = this.settings().groupId) {
-    if (!groupId) throw new Error('先选一个群');
+    if (!groupId) throw new Error('请先填群 ID');
     const r = await this.a.welink(['im', 'query-group-member', '--group-id', String(groupId)], { timeoutMs: 20000 });
     const members = welink.groupMembers(r.stdout);
     if (!members.length && r.code !== 0) throw new Error(short(r.stderr || r.stdout || '没查到群成员', 160));
