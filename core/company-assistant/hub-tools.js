@@ -74,6 +74,12 @@ class HubTools {
   async invoke({ name, arguments: args = {}, callerSessionId }) {
     const me = this.a.state().sessionId;
     if (!me || callerSessionId !== me) throw new Error('只有公司助理会话能用这些工具');
+    if (name === 'welink_inbox') return this.a.query.inbox(args);
+    if (name === 'welink_message') return this.a.query.message(args);
+    if (name === 'welink_meetings') return this.a.query.meetings(args);
+    if (name === 'assistant_memory') return this.a.memory.execute(args);
+    if (name === 'ppt_find') return this.a.ppt.find(args);
+    if (name === 'ppt_read') return this.a.ppt.read(args);
     if (name === 'ppt_library') return this.a.ppt.execute(args.op || 'status', args);
     if (name === 'room_booking') return this.a.rooms.command(args.op || 'status', args.rules || {});
     if (name === 'list_sessions') {

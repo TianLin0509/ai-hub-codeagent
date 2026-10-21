@@ -56,7 +56,7 @@ def assess(row, task, pages):
             if not isinstance(ref, dict):
                 raise PptutorError('INVALID_ASSESSMENTS', '条件依据需要 id 和 quote。')
             validate_quote(ref.get('id'), ref.get('quote'), pages)
-            if pages[ref['id']]['ref']['file_id'] != pages[row['id']]['ref']['file_id']:
+            if (pages[ref['id']]['ref']['file_id'], pages[ref['id']]['ref'].get('source_id')) != (pages[row['id']]['ref']['file_id'], pages[row['id']]['ref'].get('source_id')):
                 raise PptutorError('CROSS_DOCUMENT_EVIDENCE', '其他文稿的条件不能作为本素材的条件证据。')
     if seen != set(expected):
         raise PptutorError('MISSING_ASSESSMENTS', '每页应判断全部任务条件，包括未证实的条件。')

@@ -1086,7 +1086,12 @@ function markMeetingMemberRead(meetingId, sid, readContext = null) {
 window.markMeetingMemberRead = markMeetingMemberRead;
 
 function markMeetingRead(meetingId) {
-  for (const sid of meetings[meetingId]?.subSessions || []) markMeetingMemberRead(meetingId, sid);
+  const result = meetingUnread.readMeeting(meetings[meetingId], sessions);
+  if (!result.changed) return false;
+  if (result.sessionIds.length) ipcRenderer.send('mark-sessions-read', { sessionIds: result.sessionIds });
+  schedulePersist();
+  scheduleSessionListRender();
+  return true;
 }
 
 function markAllSessionsRead() {
@@ -1340,9 +1345,10 @@ async function selectMeeting(meetingId, opts = {}) {
   clearPreviewUI();
 
   let meeting = meetings[meetingId];
-  // Opening the room is navigation, not proof that every member was read.
-  // Member answers are acknowledged by explicit member/card navigation.
+  // Explicit room navigation acknowledges the room and all current members.
+  // Completion keys remain intact so old answer events cannot revive unread.
   if (meeting) {
+    markMeetingRead(meetingId);
     let acknowledgedFailure = false;
     for (const sid of meeting.subSessions || []) {
       acknowledgedFailure = acknowledgeSessionFailureState(sid, { render: false }) || acknowledgedFailure;

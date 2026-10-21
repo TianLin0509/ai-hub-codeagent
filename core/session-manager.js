@@ -1325,6 +1325,9 @@ class SessionManager extends EventEmitter {
   _shutdownDrainPromise = null;
   _shutdownExitWaiters = new Map();
   _shutdownDrainedSessions = new Map();
+  _ptyTerminationRequests = new WeakSet();
+  _ptyTerminationOwners = new WeakMap();
+  _shutdownTimedOutPtys = new WeakSet();
 
   // Injected by main: the chosen hook HTTP port + per-launch auth token.
   hookPort = null;
@@ -2113,6 +2116,7 @@ class SessionManager extends EventEmitter {
       conptyInheritCursor: (isCodexRuntime || isKimi || isCodeAgent) ? false : !opts.noInheritCursor,
     });
     } catch (error) { codexEditorInput?.dispose(); antigravityForkCleanup?.(); throw error; }
+    if (!isAcp && !isNativeCodex && !isNativeClaude) require('./pty-process-owner').recordPtySpawn(ptyProcess);
     if (codeagentLaunch && codeagentLaunch.memberMcpLearn) {
       try { scheduleNativeMcpLearn(this, id, Number(ptyProcess && ptyProcess.pid), codeagentLaunch.memberMcpLearn); } catch { /* 只影响学习 */ }
     }
@@ -2873,6 +2877,98 @@ class SessionManager extends EventEmitter {
     return true;
   }
 
+  _terminatePty(session) {
+    const pty = session.pty;
+    if (!pty || session.confirmedExit) return false;
+    // API-backed drivers own their asynchronous close/retry state. In
+    // particular, Codex can report a failed close after kill() has returned.
+    // CLI providers share the ACP routing label but contain a real PTY.
+    const backend = session.info?.runtimeBackend;
+    if (['codex-app-server', 'claude-stream-json'].includes(backend)
+        || (backend === 'acp' && !pty.isCliProvider)) {
+      pty.kill();
+      return true;
+    }
+    if (this._ptyTerminationRequests.has(pty)) return false;
+    // node-pty's Windows kill is not idempotent while native onExit is pending:
+    // a second request can close the same pseudoconsole handle twice. Track the
+    // PTY object (not a reusable session id), before calling into native code.
+    this._ptyTerminationRequests.add(pty);
+    const owner = require('./pty-process-owner').ptyProcessOwner(pty);
+    if (owner) this._ptyTerminationOwners.set(pty, owner);
+    try {
+      pty.kill();
+      return true;
+    } catch (error) {
+      this._ptyTerminationRequests.delete(pty);
+      this._ptyTerminationOwners.delete(pty);
+      throw error;
+    }
+  }
+
+  async _readPtyProcessBirth(pid) {
+    const script = `$ErrorActionPreference='Stop'; $p=Get-Process -Id ${pid}; try { [DateTimeOffset]::new($p.StartTime.ToUniversalTime()).ToUnixTimeMilliseconds() } finally { $p.Dispose() }`;
+    return new Promise((resolve, reject) => {
+      require('child_process').execFile('powershell.exe',
+        ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')],
+        { windowsHide: true, timeout: 5000, encoding: 'utf8' },
+        (error, stdout) => error ? reject(error) : resolve(Number(String(stdout).trim())));
+    });
+  }
+
+  async _forceTerminatePty(sessionId, session) {
+    // A late exit or replacement must never redirect this retry to another
+    // session. The PID comes only from the still-owned PTY, not user input.
+    if (this.sessions.get(sessionId) !== session || session.confirmedExit) return null;
+    const pid = Number(session.pty?.pid);
+    if (!Number.isSafeInteger(pid) || pid <= 0 || pid === process.pid) {
+      throw new Error('无法确认待关闭会话的进程号，未强制结束进程');
+    }
+    const owner = this._ptyTerminationOwners.get(session.pty);
+    if (!owner || owner.pid !== pid || !Number.isSafeInteger(owner.observedAt)) {
+      throw new Error('会话进程归属已变化，未强制结束进程');
+    }
+    // A process born after native spawn returned is a reused PID. The anchor
+    // predates the first kill; never synthesize it during shutdown. Probe only
+    // on timeout retry, without the process inspector's cache.
+    const birth = await this._readPtyProcessBirth(pid);
+    if (!Number.isSafeInteger(birth) || birth <= 0 || birth > owner.observedAt) {
+      throw new Error('会话进程号已复用或启动时间无法核对，未强制结束进程');
+    }
+    if (this.sessions.get(sessionId) !== session || session.confirmedExit) return null;
+    if (Number(session.pty?.pid) !== pid
+        || require('./pty-process-owner').ptyProcessOwner(session.pty) !== owner) {
+      throw new Error('会话进程已替换，未强制结束进程');
+    }
+    // Recheck the exact generation inside the terminating process, holding an
+    // OS handle throughout taskkill so Windows cannot recycle the PID in between.
+    const script = String.raw`$ErrorActionPreference='Stop'
+$p=Get-Process -Id ${pid}
+try {
+  $heldHandle=$p.Handle
+  $birth=[DateTimeOffset]::new($p.StartTime.ToUniversalTime()).ToUnixTimeMilliseconds()
+  if ($birth -ne ${birth}) { throw 'PTY process identity changed; termination refused' }
+  $killer=Start-Process -FilePath "$env:SystemRoot\System32\taskkill.exe" -ArgumentList '/pid ${pid} /t /f' -PassThru -WindowStyle Hidden
+  try {
+    if (-not $killer.WaitForExit(5000)) { $killer.Kill(); throw 'taskkill timed out' }
+    if ($killer.ExitCode -ne 0) { throw "taskkill failed with exit code $($killer.ExitCode)" }
+  } finally {
+    $killer.WaitForExit()
+    $killer.Dispose()
+  }
+} finally { $p.Dispose() }`;
+    await new Promise((resolve, reject) => {
+      require('child_process').execFile('powershell.exe',
+        ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')],
+        // The holder must outlive taskkill, including its timeout cleanup.
+        // Killing the PowerShell parent on an outer timeout could release the
+        // identity handle while its taskkill child was still running.
+        { windowsHide: true }, error => error ? reject(error) : resolve());
+    });
+    // Successful taskkill is still not the native onExit acknowledgement.
+    return pid;
+  }
+
   closeSession(sessionId) {
     const session = this.sessions.get(sessionId);
     if (!session) return;
@@ -2891,7 +2987,7 @@ class SessionManager extends EventEmitter {
       return;
     }
     if (session.confirmedExit) return this._handlePtyExit(sessionId, session.pty, session.confirmedExit);
-    session.pty.kill();
+    this._terminatePty(session);
     // Do NOT delete from this.sessions here — the onExit handler does it.
     // The guard in onExit (entry.pty !== ptyProcess) requires the entry to
     // still be present so it can confirm the dying pty owns the entry.
@@ -3114,7 +3210,7 @@ class SessionManager extends EventEmitter {
         this.sessions.delete(sessionId);
         this.onSessionSuspended(sessionId, session.info.meetingId || null, dormantInfo, { noPty: true });
       } else {
-        session.pty.kill();
+        this._terminatePty(session);
       }
       return { ok: true, sessionId, lastActivityAt, reason: session.suspendReason };
     } catch (error) {
@@ -3912,7 +4008,7 @@ class SessionManager extends EventEmitter {
       s.outputDelivery?.close();
       if (s.terminalSnapshot) s.terminalSnapshot.dispose();
       if (s.pty) {
-        s.pty.kill();
+        this._terminatePty(s);
       }
     }
     this.sessions.clear();
@@ -3942,6 +4038,7 @@ class SessionManager extends EventEmitter {
     this._shutdownDrainPromise = (async () => {
       const waits = [];
       const killErrors = [];
+      const forceRequestedPids = [];
 
       // Set up all waiters first. A native exit callback cannot run JS until
       // this synchronous setup yields, so no PTY can escape between snapshot
@@ -3970,18 +4067,23 @@ class SessionManager extends EventEmitter {
         }));
       }
 
-      for (const [sessionId, session] of entries) {
-        if (!session.pty) continue;
+      await Promise.all(entries.map(async ([sessionId, session]) => {
+        if (!session.pty) return;
         try {
           if (session.confirmedExit) await this._handlePtyExit(sessionId, session.pty, session.confirmedExit);
-          else session.pty.kill();
+          else if (this._shutdownTimedOutPtys.has(session.pty)
+              && this._ptyTerminationRequests.has(session.pty)) {
+            logger.warn('[shutdown] retrying timed-out PTY via its owned process tree:', sessionId);
+            const pid = await this._forceTerminatePty(sessionId, session);
+            if (pid !== null) forceRequestedPids.push(pid);
+          } else this._terminatePty(session);
         } catch (error) {
           // Do not pretend this PTY is drained. Its already-registered onExit
           // waiter remains authoritative and prevents unsafe teardown.
           killErrors.push({ sessionId, message: error && error.message ? error.message : String(error) });
           logger.warn('[shutdown] PTY kill failed; waiting for native exit callback:', sessionId, error && error.message);
         }
-      }
+      }));
 
       let warningTimer = null;
       if (waits.length > 0 && warnAfterMs > 0) {
@@ -4007,7 +4109,10 @@ class SessionManager extends EventEmitter {
         const pendingSessionIds = [...this._shutdownExitWaiters.keys()];
         for (const sessionId of pendingSessionIds) {
           const waiter = this._shutdownExitWaiters.get(sessionId);
-          if (waiter) waiter.timedOut = true;
+          if (waiter) {
+            waiter.timedOut = true;
+            this._shutdownTimedOutPtys.add(waiter.pty);
+          }
         }
         for (const [sessionId, drainedSession] of this._shutdownDrainedSessions) {
           this.onSessionSuspended(
@@ -4025,6 +4130,7 @@ class SessionManager extends EventEmitter {
           drainedPtyCount: waits.length - pendingSessionIds.length,
           pendingSessionIds,
           killErrors,
+          forceRequestedPids,
           durationMs: Date.now() - startedAt,
           error: 'pty_drain_timeout',
         };
@@ -4037,6 +4143,7 @@ class SessionManager extends EventEmitter {
         safeToQuit: true,
         drainedPtyCount: waits.length,
         killErrors,
+        forceRequestedPids,
         durationMs: Date.now() - startedAt,
       };
     })();

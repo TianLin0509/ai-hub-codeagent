@@ -38,6 +38,20 @@ function readMeetingMember(meeting, sid, sessions = new Map(), readContext = nul
   return { changed: removed || sessionRead, sessionRead };
 }
 
+function readMeeting(meeting, sessions = new Map()) {
+  if (!meeting) return { changed: false, sessionIds: [] };
+  let changed = Number(meeting.unreadCount) > 0 || !!meeting.unreadAnswered?.size;
+  const sessionIds = [];
+  for (const sid of meeting.subSessions || []) {
+    const result = readMeetingMember(meeting, sid, sessions);
+    changed = result.changed || changed;
+    if (result.sessionRead) sessionIds.push(sid);
+  }
+  meeting.unreadCount = 0;
+  meeting.unreadAnswered?.clear();
+  return { changed, sessionIds };
+}
+
 function preserveMeetingAttention(previous, next) {
   if (!previous || !next) return;
   const valid = new Set(next.subSessions || []);
@@ -50,4 +64,4 @@ function preserveMeetingAttention(previous, next) {
   next._answeredRound = previous._answeredRound;
 }
 
-module.exports = { getMeetingUnreadMemberIds, recordMeetingAnswer, readMeetingMember, preserveMeetingAttention };
+module.exports = { getMeetingUnreadMemberIds, recordMeetingAnswer, readMeetingMember, readMeeting, preserveMeetingAttention };

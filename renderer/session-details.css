@@ -12,7 +12,6 @@
 .sl-detail-model { flex: 1 1 auto; min-width: 20px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 9.5px; }
 .sl-detail-context { flex: 0 0 auto; white-space: nowrap; font-size: 9px; color: var(--text-muted); }
 #session-list .sidebar-group .session-item.slim.child { margin-left: 18px; padding-left: 8px; border-left: 1px solid var(--border-color); border-radius: 0 5px 5px 0; grid-template-columns: minmax(20px, max-content) minmax(0, 1fr) auto; }
-.sidebar-group.compact-group:not(.hover-open):not(.has-active-member):not(:focus-within) > .sidebar-group-children { display: none; }
 #session-list .sidebar-group .session-item.slim.meeting.gc { padding-top: 0; padding-bottom: 0; }
 #session-list .sidebar-group .session-item.slim.meeting.gc .sl-line1:not(.with-arrow) { grid-template-columns: minmax(20px, max-content) minmax(0, 1fr) auto; }
 #session-list .sidebar-group .session-item.slim.meeting.gc .sl-group-progress { display: none; }

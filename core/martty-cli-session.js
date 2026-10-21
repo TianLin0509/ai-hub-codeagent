@@ -35,6 +35,7 @@ class MarttyCliSession extends AcpSession {
     try{this.pty=require('node-pty').spawn(this.options.launch.command,args,{cwd:this.options.cwd,env,cols:this.cols||120,rows:this.rows||30,
       name:'xterm-256color',useConpty:true,conptyInheritCursor:false});
     }catch(error){this.dispose();this.readyReject(error);return ready;}
+    require('./pty-process-owner').recordPtySpawn(this.pty);
     this.pty.onData(data=>{this.buffer=(this.buffer+data).slice(-100000);this.emit('data',data);});
     this.pty.onExit(info=>{this.closed=true;this.fail(new Error('CLI 已退出'));this.dispose();this.emit('exit',info);});
     return ready;

@@ -843,160 +843,68 @@ sessionListEl.addEventListener('keydown', event => {
   const unreadMemberIds = new Set(Object.values(getMeetings()).flatMap(m => [...getMeetingUnreadMemberIds(m, sessionMap)]));
   function appendItem(s, child = false, target = renderTarget) {
     if (s._isMeeting) {
+      const meeting = s._meeting;
+      const memberIds = meeting.subSessions || [];
       const isActive = getActiveMeetingId() === s.id;
-      const isGroupChat = !!s._meeting.groupChat;
-      // Compact groups reveal members on hover/focus; detail mode has an
-      // explicit collapse arrow. Legacy meeting expansion stays unchanged.
-      const canExpand = !isGroupChat || detailsEnabled;
-      const isExpanded = isGroupChat && detailsEnabled
-        ? !collapsedDetailsMeetings.has(s.id) : canExpand && _expandedMeetings.has(s.id);
-      const groupContainer = isGroupChat ? doc.createElement('div') : null;
-      if (groupContainer) {
-        groupContainer.className = 'sidebar-group' + (detailsEnabled ? ' detailed-group' : ' compact-group')
-          + (s._meeting.subSessions?.includes(getActiveSessionId()) ? ' has-active-member' : '')
-          + (hoveredMeetingId === s.id ? ' hover-open' : '');
-        groupContainer.dataset.sidebarGroup = s.id;
-        groupContainer.dataset.sidebarRenderKey='group:'+s.id;
-        groupContainer.dataset.sidebarRenderTree='true';
-        target.appendChild(groupContainer);
-      }
-      const div = doc.createElement('div');
-      // 2026-07-19 maintainer · 方案C：群聊两行卡（行1 状态+标题+时间，行2 成员 mini-jump），
-      //   不再渲染 badge pill（等你/休眠进 sl-state，已选数进行2 末尾）。
-      const isDormantMeeting = s.status === 'dormant';
-      const unreadMembers = getMeetingUnreadMemberIds(s._meeting, sessionMap);
+      const isDormant = s.status === 'dormant';
+      const unreadMembers = getMeetingUnreadMemberIds(meeting, sessionMap);
       const hasUnread = sidebarItemHasUnread(s, sessionMap);
-      // 2026-07-20 maintainer：群聊运行中 = 任一成员 agent 在运行（成员 running 已语义化）
-      const meetingRuntime = _meetingRuntimeAggregate(s._meeting, sessionMap);
-      const anySubRunning = meetingRuntime.running;
-      const anySubWaiting = meetingRuntime.waiting;
-      const anySubFailed = meetingRuntime.failed;
-      div.className = 'session-item slim meeting' + (isGroupChat ? ' gc' : '')
-        + (anySubFailed ? ' runtime-error' : '')
-        + (anySubRunning ? ' running' : '')
-        + (detailsEnabled ? ' has-session-details' : '')
+      const runtime = _meetingRuntimeAggregate(meeting, sessionMap);
+      const dotCls = sections.states.get(s.id) || 'idle';
+      const group = doc.createElement('div');
+      // All rooms keep the same parent row and visible, indented member rows.
+      // Unread/runtime/detail preferences change indicators, never the layout.
+      group.className = 'sidebar-group'
+        + (memberIds.includes(getActiveSessionId()) ? ' has-active-member' : '');
+      group.dataset.sidebarGroup = s.id;
+      group.dataset.sidebarRenderKey = 'group:' + s.id;
+      group.dataset.sidebarRenderTree = 'true';
+      target.appendChild(group);
+      const div = doc.createElement('div');
+      div.className = 'session-item slim meeting gc'
+        + (runtime.failed ? ' runtime-error' : '')
+        + (runtime.running ? ' running' : '')
         + (isActive ? ' selected' : '')
-        + (isExpanded ? ' expanded' : '') + (isDormantMeeting ? ' dormant' : '')
+        + (isDormant ? ' dormant' : '')
         + (hasUnread ? ' need-unread' : '');
       div.dataset.meetingId = s.id;
-      div.dataset.sidebarRenderKey='meeting:'+s.id;
-      div.tabIndex = 0;
-      const SLOT_LABELS_M = ['一号位', '二号位', '三号位'];
-      const miniSids = isGroupChat ? (s._meeting.subSessions || []) : (s._meeting.subSessions || []).slice(0, 3);
-      const memberTotal = (s._meeting.subSessions || []).length;
-      const memberSelected = isGroupChat
-        ? (Array.isArray(s._meeting.participants) ? s._meeting.participants.length : memberTotal)
-        : memberTotal;
-      div.setAttribute('aria-label', isDormantMeeting ? `${s.title} · 休眠中 · ${memberSelected}/${memberTotal} 已选 · 点击打开群聊` : s.title);
-      // 群聊子会话默认折叠，若只在普通 session 行画告警，Claude/DeepSeek 成员的
-      // memory link 错误在最常用的群聊视图里仍然不可见。父行聚合显示，mini-jump
-      // tooltip 再指出具体成员。
-      const meetingWarning = miniSids.map((subId, idx) => {
-        const sub = sessionMap.get(subId);
-        const warning = _sessionWarningText(sub);
-        if (!warning) return '';
-        return `${(sub && (sub.title || sub.kind)) || `AI ${idx + 1}`}：${warning}`;
-      }).filter(Boolean).join('；');
-      const miniJumpsHtml = isGroupChat ? '' : miniSids.map((subId, idx) => {
-        const sub = sessionMap.get(subId);
-        const label = isGroupChat
-          ? ((sub && (sub.title || sub.kind)) || `AI ${idx + 1}`)
-          : (SLOT_LABELS_M[idx] || `Slot ${idx + 1}`);
-        const avatarSrc = sub && sub.kind
-          // *-resume 没有专属 svg，归一到基础 kind 头像（assets 只有 5+1 个基础 logo）
-          ? `assets/ai-logos/${_logoKind(sub.kind, require('../core/codeagent-models').iconModelId(sub)) || String(sub.kind).replace(/-resume$/, '')}.svg`
-          : '';
-        const modelLabel = sub && sub.currentModel ? (typeof modelShort === 'function' ? modelShort(sub.currentModel) : sub.currentModel.id) : '';
-        const subRuntime = sub ? getSessionRuntimeTruth(sub) : null;
-        let statusCls = 'mini-st-ready';
-        if (!sub) statusCls = 'mini-st-init';
-        else if (subRuntime.state === RUNTIME_DORMANT) statusCls = 'mini-st-dormant';
-        else if (sessionRuntimeIssue(sub, subRuntime)) statusCls = 'mini-st-error';
-        else if (subRuntime.state === RUNTIME_WAITING) statusCls = 'mini-st-waiting';
-        else if (_subIsRunning(sub)) statusCls = 'mini-st-thinking';
-        else if (subRuntime.state === RUNTIME_UNKNOWN) statusCls = 'mini-st-unknown';
-        const isActiveChild = subId === getActiveSessionId();
-        const ctxPct = isGroupChat && sub && typeof sub.contextPct === 'number' ? sub.contextPct : null;
-        const ctxCls = ctxPct != null && typeof pctClass === 'function' ? pctClass(ctxPct) : '';
-        const ctxLabelHtml = ctxPct != null
-          ? `<span class="mini-jump-ctx ${ctxCls}" title="Context ${ctxPct}%">${ctxPct}%</span>`
-          : '';
-        const subWarning = _sessionWarningText(sub);
-        const runtimeTip = subRuntime ? runtimeTruthSummary(subRuntime) : '尚未初始化';
-        const tooltip = `${label}${modelLabel ? ' · ' + modelLabel : ''}${ctxPct != null ? ' · Ctx ' + ctxPct + '%' : ''} · ${runtimeTip}${subWarning ? ' · ⚠ ' + subWarning : ''} (点击跳转)`;
-        const avatarHtml = isGroupChat
-          ? `<span class="mini-jump-text">${escapeHtml(sub && sub.kind ? sub.kind : ('AI' + (idx + 1)))}</span>`
-          : (avatarSrc
-            ? `<img src="${avatarSrc}" alt="${escapeHtml(label)}" />`
-            : `<span class="mini-jump-letter">${escapeHtml(String(idx + 1))}</span>`);
-        return `<span class="mini-jump-cell">
-          <button class="mini-jump-btn slot-${idx + 1}${isGroupChat ? ' group' : ''}${isActiveChild ? ' active' : ''}" data-sub-id="${subId}" title="${escapeHtml(tooltip)}">
-            ${avatarHtml}
-            <span class="mini-jump-status-dot ${statusCls}"></span>
-          </button>${ctxLabelHtml}
-        </span>`;
-      }).join('');
-      // 异常先提醒；其他成员的实际运行状态仍由各成员行展示。
-      const dotCls = sections.states.get(s.id) || 'idle';
+      div.dataset.sidebarRenderKey = 'meeting:' + s.id;
       div.dataset.state = dotCls;
-      const logos = (s._meeting.subSessions || []).slice(0, 2).map(id => {
+      div.tabIndex = 0;
+      const warning = memberIds.map(id => {
+        const member = sessionMap.get(id);
+        const text = _sessionWarningText(member);
+        return text ? `${member?.title || member?.kind || '成员'}：${text}` : '';
+      }).filter(Boolean).join('；');
+      const selected = Array.isArray(meeting.participants) ? meeting.participants.length : memberIds.length;
+      div.setAttribute('aria-label', [s.title, isDormant ? '休眠中' : '',
+        `${selected}/${memberIds.length} 已选`, warning, `${unreadMembers.size} 位未读`].filter(Boolean).join(' · '));
+      const logos = memberIds.slice(0, 2).map(id => {
         const member = sessionMap.get(id);
         if (!member) return '';
         let state = partitionSidebarSessions([member], { sessionMap, groupMemberIds: new Set([id]) }).states.get(id) || 'idle';
         if (getSessionRuntimeTruth(member).state === RUNTIME_DORMANT && !member._resumePending && state !== 'error') state = 'dorm';
         return _sessionKindHtml(member.kind, member.currentModel ? modelShort(member.currentModel) : '', state, '', require('../core/codeagent-models').iconModelId(member));
       }).join('');
-      const answered = s._meeting.answeredThisTurn?.size || 0;
-      const progress = memberTotal ? Math.min(100, answered / memberTotal * 100) : 0;
-      const unreadChips = isGroupChat && hasUnread ? (s._meeting.subSessions || []).map(sid => {
-        const sub = sessionMap.get(sid);
-        const unread = unreadMembers.has(sid);
-        const runtime = sub ? getSessionRuntimeTruth(sub) : null;
-        const state = runtime?.state === RUNTIME_WAITING ? 'wait' : _subIsRunning(sub) ? 'run' : '';
-        const label = sub?.title || KIND_LABELS[_logoKind(sub?.kind)] || '成员';
-        return `<button type="button" class="mini-jump-btn sl-unread-member${unread ? ' has-unread' : ''}" data-sub-id="${escapeHtml(sid)}" title="${escapeHtml(label)} · ${unread ? '有未读，查看最新回答' : '查看成员'}"><span class="sl-member-name">${escapeHtml(label)}</span>${state ? `<span class="sl-member-runtime ${state}">${state === 'wait' ? '待输入' : '运行中'}</span>` : ''}${unread ? '<span class="sl-member-unread-dot" aria-label="未读"></span>' : ''}</button>`;
-      }).join('') : '';
-      div.innerHTML = [
-        '<div class="sl-line1' + (canExpand ? ' with-arrow' : '') + '">',
-        canExpand ? '<span class="expand-arrow" data-action="toggle-expand" title="展开成员">▸</span>' : '',
-        '<span class="sl-group-logos" data-state="' + dotCls + '" aria-label="群聊 · ' + STATUS_LABELS[dotCls] + '">' + (logos || `<svg class="sl-kind sl-group-icon" data-state="${dotCls}" role="img" aria-label="群聊 · ${STATUS_LABELS[dotCls]}" viewBox="0 0 24 24"><path d="M9 11a3 3 0 1 0 0-6 3 3 0 0 0 0 6ZM3 20v-2a4 4 0 0 1 4-4h4a4 4 0 0 1 4 4v2M16 5a3 3 0 0 1 0 6m1 3a4 4 0 0 1 4 4v2"/></svg>`) + '</span>',
-        '<span class="sl-title" aria-label="' + escapeHtml([s.title, meetingWarning, unreadMembers.size + ' 位未读'].filter(Boolean).join(' · ')) + '">' + _warningHtml(meetingWarning) + escapeHtml(s.title) + (s._meeting?.orchestration?.enabled === true ? '<span class="sl-orch-tag" title="AI 编排模式">编排</span>' : '') + '</span>',
-        timeHtml(s, hasUnread ? unreadMembers.size : 0) + '</div>',
-        hasUnread ? '<div class="sl-group-actions">' + (unreadChips ? '<div class="sl-unread-members">' + unreadChips + '</div>' : '')
-          + (markMeetingRead ? '<button type="button" class="sl-meeting-read" data-action="mark-meeting-read" data-sidebar-control="read-' + escapeHtml(s.id) + '">整组已读</button>' : '') + '</div>' : '',
-        isGroupChat ? '' : '<div class="session-mini-jumps">' + miniJumpsHtml + '<span class="sl-members-hint">' + memberSelected + '/' + memberTotal + ' 已选</span></div>',
-        isGroupChat ? '<span class="sl-group-progress" title="本轮已答 ' + answered + '/' + memberTotal + '"><i style="width:' + progress + '%"></i></span>' : '',
-      ].join('');
-      div.addEventListener('contextmenu', (e) => {
-        e.preventDefault();
-        const member = e.target.closest('.mini-jump-btn[data-sub-id]');
-        openContextMenu(member ? member.dataset.subId : s.id, e.clientX, e.clientY);
+      div.innerHTML = '<div class="sl-line1">'
+        + '<span class="sl-group-logos" data-state="' + dotCls + '" aria-label="群聊 · ' + STATUS_LABELS[dotCls] + '">'
+        + (logos || `<svg class="sl-kind sl-group-icon" data-state="${dotCls}" role="img" aria-label="群聊" viewBox="0 0 24 24"><path d="M9 11a3 3 0 1 0 0-6 3 3 0 0 0 0 6ZM3 20v-2a4 4 0 0 1 4-4h4a4 4 0 0 1 4 4v2M16 5a3 3 0 0 1 0 6m1 3a4 4 0 0 1 4 4v2"/></svg>`) + '</span>'
+        + '<span class="sl-title">' + _warningHtml(warning) + escapeHtml(s.title)
+        + (meeting.orchestration?.enabled === true ? '<span class="sl-orch-tag" title="AI 编排模式">编排</span>' : '') + '</span>'
+        + timeHtml(s, hasUnread ? Math.max(1, unreadMembers.size) : 0) + '</div>';
+      div.addEventListener('contextmenu', event => {
+        event.preventDefault();
+        openContextMenu(s.id, event.clientX, event.clientY);
       });
-      (groupContainer || target).appendChild(div);
-
-      if (isGroupChat) {
-        if (!detailsEnabled || isExpanded) {
-          const children = doc.createElement('div');
-          children.className = 'sidebar-group-children';
-          children.dataset.sidebarRenderKey='members:'+s.id;
-          children.dataset.sidebarRenderTree='true';
-          groupContainer.appendChild(children);
-          for (const id of s._meeting.subSessions || []) {
-            const member = sessionMap.get(id);
-            if (member && (modelFilter === 'all' || familyOfKind(member.kind) === modelFilter)) appendItem(member, true, children);
-          }
-        }
-        return;
-      }
-
-      // Expanded members use the same compact row and default-card navigation.
-      if (isExpanded) {
-        for (const subId of s._meeting.subSessions) {
-          const sub = sessionMap.get(subId);
-          if (!sub) continue;
-          if (modelFilter !== 'all' && familyOfKind(sub.kind) !== modelFilter) continue;
-          appendItem(sub, true, target);
-        }
+      group.appendChild(div);
+      const children = doc.createElement('div');
+      children.className = 'sidebar-group-children';
+      children.dataset.sidebarRenderKey = 'members:' + s.id;
+      children.dataset.sidebarRenderTree = 'true';
+      group.appendChild(children);
+      for (const id of memberIds) {
+        const member = sessionMap.get(id);
+        if (member && (modelFilter === 'all' || familyOfKind(member.kind) === modelFilter)) appendItem(member, true, children);
       }
       return;
     }
@@ -1039,7 +947,7 @@ sessionListEl.addEventListener('keydown', event => {
       : isDormant
       ? `${['idle-timeout', 'company-bridge-idle'].includes(s.suspendReason) ? '自动休眠' : '休眠中'}${showUnread ? `，有 ${unreadCount} 条未读` : ''}，点击唤醒`
       : '';
-    const displayTitle = sessionDisplayTitle(s);
+    const displayTitle = sessionDisplayTitle(s, KIND_LABELS, getMeetings()[s.meetingId]);
     const account = accountBadge(s);
     const accessibleSummary = [displayTitle,
       account ? account.title : '',

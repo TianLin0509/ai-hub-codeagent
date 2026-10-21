@@ -2,7 +2,7 @@
 import json
 import sys
 from pptutor_core.library import Library, PptutorError
-from pptutor_core.report import render
+from pptutor_core.report import render, prepare
 
 
 def execute(req):
@@ -10,10 +10,19 @@ def execute(req):
     if op not in ("status", "catalog", "search", "read", "report"):
         raise PptutorError("READ_ONLY", "PPT 素材库仅支持状态、目录、搜索、读页和汇总。")
     if op == "report":
-        return {"ok": True, "report": render(req["decision"], req["evidence"], req.get("detail", "brief"))}
+        checked = prepare(req["decision"], req["evidence"])
+        conditions = {c["id"]: c["text"] for c in checked["task"]["conditions"]}
+        return {"ok": True, "report": render(req["decision"], req["evidence"], req.get("detail", "brief")),
+                "verified_rows": [{"id": row["id"], "relevance": row["effective_relevance"], "use": row["use"], "reason": row["reason"], "quote": row["quote"],
+                                   "conditions": [{"text": conditions[c["condition_id"]], "status": c["status"]} for c in row["assessments"]]}
+                                  for row, _page in checked["usable"] + checked["excluded"]],
+                "recommendations": [{"id": row["id"], "relevance": row["effective_relevance"]} for row, _page in checked["usable"]]}
     with Library(req.get("db"), req.get("roots", [])) as lib:
         if op == "status":
-            return lib.status()
+            result = lib.status()
+            if req.get("includePaths"):
+                result["documents"] = [dict(row) for row in lib.conn.execute("SELECT path,page_count FROM files WHERE status='ok' AND lower(ext) IN ('.pptx','.ppt')")]
+            return result
         if op == "catalog":
             return lib.catalog(req.get("fileId"), req.get("offset", 0), req.get("limit", 30))
         if op == "search":

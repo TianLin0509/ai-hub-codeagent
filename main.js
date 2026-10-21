@@ -1489,7 +1489,9 @@ function createWindow() {
 }
 
 var devWorkbench;
+var meetingMemberTitleSync;
 function sendToRenderer(channel, data) {
+  if (meetingMemberTitleSync) data = meetingMemberTitleSync.onEvent(channel, data);
   if (devWorkbench) {
     try { devWorkbench.handleEvent(channel, data); }
     catch (error) { console.warn('[dev-workbench] event failed:', error.message); }
@@ -2674,6 +2676,37 @@ let lastPersistedMeetings = bootMeetings;
 for (const m of bootMeetings) {
   meetingManager.restoreMeeting(m);
 }
+const { meetingMemberTitlePatch, createMeetingMemberTitleSync } = require('./core/meeting-member-titles');
+meetingMemberTitleSync = createMeetingMemberTitleSync({
+  getMeeting: id => meetingManager.getMeeting(id),
+  readSession: id => sessionManager.getSession(id) || lastPersistedSessions.find(s => (s.hubId || s.id) === id),
+  writeSession: id => {
+    const live = sessionManager.getSession(id);
+    if (live) {
+      if (isSessionViewer(live)) return null;
+      const current = sessionManager.getSession(id);
+      const freshPatch = meetingMemberTitlePatch(current, meetingManager.getMeeting(current?.meetingId));
+      if (!freshPatch) return null;
+      const updated = sessionManager.updateSessionMeta(id, freshPatch);
+      if (updated) sessionStore.markDirty(id, updated);
+      return updated;
+    }
+    return bootOwners.editClosed(id, () => {
+      const known = lastPersistedSessions.find(s => (s.hubId || s.id) === id);
+      if (!known) return null;
+      const stored = sessionStore.loadSessionFile(id, { strict: true }) || known;
+      const freshPatch = meetingMemberTitlePatch(stored, meetingManager.getMeeting(stored.meetingId));
+      if (!freshPatch) return null;
+      sessionStore.saveSessionFile(id, { ...stored, ...freshPatch });
+      Object.assign(known, freshPatch);
+      return { ...known, id, status: 'dormant' };
+    });
+  },
+  publish: sendToRenderer,
+});
+// Sidebar derives unopened history labels; only actual title/member changes or
+// an opened session write metadata through the ownership-protected sync above.
+for (const meeting of meetingManager.getAllMeetings()) meetingMemberTitleSync.rememberMeeting(meeting);
 // 2026-09-28: one workflow engine. Idle legacy rooms move to the delivery
 // engine once; rooms with a recent unfinished legacy task stay until it ends.
 try { require('./core/delivery-migration').migrateAll({ meetingManager, dataDir: getHubDataDir(), logger: console }); }

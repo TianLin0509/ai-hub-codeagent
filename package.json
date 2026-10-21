@@ -1,6 +1,6 @@
 {
   "name": "ai-hub-community",
-  "version": "3.0.3",
+  "version": "3.1.0",
   "description": "Local multi-agent desktop workspace using your own AI accounts",
   "main": "main-bootstrap.js",
   "scripts": {
@@ -84,7 +84,8 @@
       "core/claude-subscription-fast-settings.json",
       "core/claude-subscription-standard-settings.json",
       "scripts/desktop-icon-layout.ps1",
-      "scripts/desktop-icon-layout.cs"
+      "scripts/desktop-icon-layout.cs",
+      "core/company-assistant/room-component/runtime/**"
     ],
     "extraResources": [
       {
@@ -116,7 +117,8 @@
     "electronLanguages": [
       "zh-CN",
       "en-US"
-    ]
+    ],
+    "beforePack": "core/company-assistant/room-component/build-runtime.js"
   },
   "license": "MIT",
   "repository": {

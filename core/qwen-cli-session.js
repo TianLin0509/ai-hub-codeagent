@@ -67,6 +67,7 @@ class QwenCliSession extends EventEmitter {
     try{this.pty=require('node-pty').spawn(this.options.launch.command,args,{cwd:this.options.cwd,
       env:{...this.options.launch.env,AI_HUB_PROVIDER_HOOK_LOG:this.hookFile},cols:this.cols||120,rows:this.rows||30,
       name:'xterm-256color',useConpty:true,conptyInheritCursor:false});
+      require('./pty-process-owner').recordPtySpawn(this.pty);
     }catch(error){this.dispose();this.readyReject(error);return ready;}
     this.pty.onData(data=>this.emit('data',data));
     this.pty.onExit(info=>{this.closed=true;this.dispose();this.fail(new Error('千问 CLI 已退出'));

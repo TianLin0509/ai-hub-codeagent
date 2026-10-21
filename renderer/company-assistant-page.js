@@ -46,7 +46,7 @@ function createCompanyAssistantPage({ document, window, ipcRenderer, openSession
     if (page) return;
     page = document.createElement('section'); page.className = 'company-assistant-page'; page.id = 'company-assistant-page'; page.hidden = true; page.setAttribute('aria-label', '助理');
     page.innerHTML = `<aside class="ca-sidebar" aria-label="助理导航">
-        <div class="ca-identity" title="助理 · 只读 WeLink"><img src="${ASSISTANT_AVATAR_SRC}" alt="助理"><div class="ca-side-copy"><h1>助理 <small>v3.0</small></h1><span data-slot="model">工作助理 · 只读 WeLink</span></div></div>
+        <div class="ca-identity" title="助理 · 只读 WeLink"><img src="${ASSISTANT_AVATAR_SRC}" alt="助理"><div class="ca-side-copy"><h1>助理 <small>v3.1</small></h1><span data-slot="model">工作助理 · 只读 WeLink</span></div></div>
         <div class="ca-side-heading">连接</div>
         <div class="ca-status" aria-label="状态"></div>
         <div class="ca-side-heading">能力</div>
@@ -101,24 +101,32 @@ function createCompanyAssistantPage({ document, window, ipcRenderer, openSession
     const d = data, auth = d.auth || {}, phone = d.phone || {}, p = phone.settings || {};
     const renewing = auth.state === 'renewing';
     const online = d.login?.ok && auth.state !== 'needs-scan';
-    const mailErrors = (d.errors || []).some(e => /邮件|日程/.test(e.label || ''));
-    const mailText = !online ? '等待 WeLink 登录' : !d.refreshedAt ? '等待首次查询' : d.calendarNeedsSetup ? '暂未接入' : mailErrors ? '部分查询失败' : '已接入';
+    const coverages = [['会议', d.meetingCoverage], ['日程', d.calendarCoverage], ['邮件', d.mailCoverage]];
+    const mailText = coverages.map(([name, c]) => name + ({ complete: '已查', partial: '未取全', failed: '失败' }[c?.status] || '待查')).join(' · ');
     const loginText = !d.cliFound ? '未找到 welink-cli' : renewing ? '正在自动续期' : online ? (auth.lastRenewAt ? '自动续期 · 上次 ' + clock(auth.lastRenewAt) : '在线 · 自动维护登录') : auth.state === 'needs-scan' ? '自动续期没成功，点这里扫码登录' : auth.error || '正在检查登录';
     const row = (icon, title, detail, color, action, extra = '') => `<div class="ca-connection" title="${esc(title + ' · ' + detail)}"><button type="button" class="ca-connection-main" data-ca="${action}"><span class="ca-side-icon">${icon}<i class="ca-dot ${color}"></i></span><span class="ca-side-copy"><b>${title}</b><small>${esc(detail)}</small></span></button>${extra}</div>`;
     return row('W', 'WeLink', loginText, renewing ? 'run' : online ? 'ok' : 'warn', d.cliFound && auth.state === 'needs-scan' ? 'login' : 'settings-tab:welink',
       !d.cliFound ? '<button class="ca-link ca-side-copy" data-ca="find-cli">查找</button>' : !online && !renewing ? '<button class="ca-link ca-side-copy" data-ca="login">扫码登录</button>' : '')
-      + row('✉', '邮件与日历', mailText, mailText === '已接入' ? 'ok' : '', 'settings-tab:welink')
+      + row('✉', '会议、日程与邮件', mailText, coverages.every(([, c]) => c?.status === 'complete') ? 'ok' : coverages.some(([, c]) => ['failed', 'partial'].includes(c?.status)) ? 'warn' : '', 'settings-tab:welink')
       + row('▣', '手机群', !p.groupId ? '填入群 ID 即可接通' : phone.lastError ? phone.lastError : !p.enabled ? '已暂停' : (p.groupName || '群 ' + p.groupId.slice(-6)), p.enabled && p.groupId && !phone.lastError ? 'ok' : '', 'settings-tab:phone')
       + row('↻', '数据更新时间', d.refreshing ? '正在刷新…' : d.refreshedAt ? when(d.refreshedAt) : '还没取过数据', d.refreshedAt ? 'ok' : '', 'refresh', '<button class="ca-link ca-side-copy" data-ca="refresh" title="刷新数据">刷新</button>')
       + `<p class="ca-next ca-side-copy">下一份简报 · ${d.nextBriefAt ? when(d.nextBriefAt) : '—'}</p>`;
+  }
+  function messageCoverage() {
+    const scope = data.scope;
+    if (!scope) return null;
+    const reasons = [scope.stale ? '最近会话查询失败，显示上次记录' : '', scope.partial ? `${scope.partial} 个会话未取全` : '',
+      scope.listFull ? `最近会话返回 ${scope.listed || scope.listCap} 个，可能达到接口上限，未知会话仍可能遗漏` : '', scope.directoryFallback ? '已退回兼容查询，覆盖待核对' : '', scope.limited ? `按设置只查询最近 ${scope.maxConversations} 个会话` : '',
+      scope.directoryInvalid ? `${scope.directoryInvalid} 条会话目录记录无法解析` : '', (scope.conversations || []).some(c => c.unknownTime) ? '部分消息缺少时间，无法确认是否覆盖所选时段' : ''].filter(Boolean);
+    return { status: reasons.length ? 'partial' : 'complete', reasonLabel: reasons.join('；') };
   }
   function capabilities() {
     const r = data.rooms || {}, p = data.ppt || {};
     return [['▤', '今日简报', data.brief ? '已更新' : '待生成', 'brief'],
       ['◷', '抢会议室', r.running ? '守护中' : r.available ? '可配置' : '待接入', 'rooms'],
-      ['▧', 'PPT 素材库', p.available ? `已索引 ${p.files ?? 0} 份` : '未检测到', 'ppt'],
+      ['▧', 'PPT 素材库', p.indexing?.state === 'indexing' ? `正在更新 · ${p.indexing.scanned || 0} 份` : p.available ? `${p.files ?? 0} 份 / ${p.pages ?? 0} 页` : '选择素材目录', 'ppt'],
       ['▣', '手机对话', data.phone?.settings?.enabled ? '已开启' : '待接通', 'phone']]
-      .map(([icon, name, detail, tab]) => `<button class="ca-side-button" data-ca="settings-tab:${tab}" title="${name} · ${detail}"><span class="ca-side-icon">${icon}</span><span class="ca-side-copy">${name}<small>${detail}</small></span></button>`).join('');
+      .map(([icon, name, detail, tab]) => `<button class="ca-side-button" data-ca="${tab === 'ppt' ? 'ppt-assist' : 'settings-tab:' + tab}" title="${name} · ${tab === 'ppt' ? '告诉助理你想讲清什么' : detail}"><span class="ca-side-icon">${icon}</span><span class="ca-side-copy">${name}<small>${detail}</small></span></button>`).join('');
   }
   function assistantMessage(html, extra = '') {
     return `<div class="ca-message-row assistant ${extra}"><img class="ca-avatar" src="${ASSISTANT_AVATAR_SRC}" alt="助理"><div class="ca-message-content">${html}</div></div>`;
@@ -156,9 +164,11 @@ function createCompanyAssistantPage({ document, window, ipcRenderer, openSession
     if (!b) return `<article class="ca-brief empty"><div class="ca-card-head"><b>助理 · 今日简报</b></div><p class="ca-note">今天的简报还没生成。<button type="button" class="ca-btn small primary" data-ca="brief-now">现在生成</button></p></article>`;
     const counts = b.sections.map(s => `<span class="ca-chip${s.key === 'awaiting' ? ' warn' : ''}">${esc(s.title)} ${s.items.length}</span>`).join('');
     const firstItems = b.sections.flatMap(s => s.items.slice(0, 1).map(i => i.text)).slice(0, 2);
-    const headline = b.by === 'none' ? esc(b.note || '') : firstItems.length ? '📌 ' + esc(firstItems.join('；')) : data.errors?.length ? '本次数据尚未取全，已取到的内容里没有待处理事项。' : '今天没有需要你处理的会议、消息和邮件。';
+    const complete = [data.meetingCoverage, data.calendarCoverage, data.mailCoverage, messageCoverage()].every(c => c?.status === 'complete');
+    const headline = b.by === 'none' ? esc(b.note || '') : firstItems.length ? '📌 ' + esc(firstItems.join('；')) : data.errors?.length || !complete ? '本次数据尚未取全，已取到的内容里没有待处理事项。' : '已查询的范围内没有需要你处理的会议、消息和邮件。';
     const more = b.total > 10 ? `<p class="ca-note">另有 ${b.total - 10} 条在下面「其余」里。</p>` : '';
     const row = i => `<div class="ca-item"><div class="ca-item-text">${esc(i.text)}${i.guess ? '<span class="ca-guess">推测</span>' : ''}${i.due ? `<span class="ca-due">截止 ${esc(i.due)}</span>` : ''}</div>
+        ${i.preparation ? `<p class="ca-note ca-preparation">会前准备建议：${esc(i.preparation)}</p>` : ''}
         <div class="ca-src"><button type="button" class="ca-link ca-source-link" data-ca="source:${esc(i.source)}" data-source-day="${esc(b.day || data.day)}" title="查看原文和前后消息">${esc(i.sourceLabel || '查看出处')}</button><button type="button" class="ca-link" data-ca="done:${esc(i.source)}" title="点了以后不再出现在简报里">处理了</button></div></div>`;
     const top = b.sections.map(s => { const items = s.items.filter(i => i.top); return items.length ? `<div class="ca-sec">${esc(s.title)}（${s.items.length}）</div>${items.map(row).join('')}` : ''; }).join('');
     const rest = b.sections.flatMap(s => s.items.filter(i => !i.top).map(i => ({ ...i, title: s.title })));
@@ -185,11 +195,14 @@ function createCompanyAssistantPage({ document, window, ipcRenderer, openSession
 
   function coverageNote() {
     const s = data.scope, errors = data.errors || [], names = data.nameResolution;
-    if (!s && !errors.length) return '';
+    const queryRows = [['会议', data.meetingCoverage, data.counts?.meetings], ['日程', data.calendarCoverage, data.counts?.calendar], ['未读邮件', data.mailCoverage, data.counts?.mails]];
+    if (!s && !errors.length && queryRows.every(([, c]) => !c)) return '';
     const counts = s ? `${s.stale ? '上次数据' : '最近 ' + s.lookbackHours + ' 小时'} · ${s.stale ? s.conversations?.length || 0 : s.fetched} 个会话 · ${s.messages} 条消息` : '采集情况';
-    const issues = [s?.partial ? `${s.partial} 个会话未取全` : '', errors.length ? `${errors.length} 项查询异常` : '', names?.unresolved ? `${names.unresolved} 个发言人姓名未确认` : ''].filter(Boolean);
+    const messageScope = messageCoverage();
+    const issues = [messageScope?.status === 'partial' ? '消息范围未取全' : '', errors.length ? `${errors.length} 项查询异常` : '', names?.unresolved ? `${names.unresolved} 个发言人姓名未确认` : ''].filter(Boolean);
     const rows = (s?.conversations || []).map(c => `<li><b>${esc(c.name)}</b> · ${c.status === 'complete' ? '读取完成' : '部分结果'} · ${esc(c.reasonLabel || '')}${c.oldestAt ? ' · 最早 ' + when(c.oldestAt) : ''}${c.newestAt ? '，最新 ' + when(c.newestAt) : ''}${c.unknownTime ? ` · ${c.unknownTime} 条缺少时间` : ''}</li>`).join('');
-    return `<details class="ca-coverage"><summary>${esc(counts)}${issues.length ? ' · ' + esc(issues.join('，')) : ''}</summary>${s?.stale ? `<p class="ca-note bad">最近会话查询失败。${s.capturedAt ? '以下消息取自 ' + esc(new Date(s.capturedAt).toLocaleString('zh-CN', { hour12: false })) + '，可能已过期。' : '尚无可复用的当前账号聊天记录。'}</p>` : ''}<p class="ca-note">范围是 CLI 列出的最近 ${s?.listCap || 50} 个会话${s?.limited ? '中你设置的前 ' + s.maxConversations + ' 个' : ''}；专用手机群不参与简报。查询失败时保留已取到的内容。</p>${errors.map(e => `<p class="ca-note bad">${esc(e.label)}：${esc(e.text)}</p>`).join('')}${rows ? `<ul>${rows}</ul>` : ''}</details>`;
+    const queries = [...queryRows, ['消息', messageScope, data.counts?.messages]].map(([name, c, n]) => `<li><b>${name}</b> · ${({ complete: '查询完成', partial: '部分结果', failed: '查询失败' })[c?.status] || '尚未确认'}${c?.status === 'complete' && Number.isInteger(n) ? ` · ${n} 条` : ''}${c?.reasonLabel ? ' · ' + esc(c.reasonLabel) : ''}</li>`).join('');
+    return `<details class="ca-coverage"><summary>${esc(counts)}${issues.length ? ' · ' + esc(issues.join('，')) : ''}</summary><ul>${queries}</ul>${s?.stale ? `<p class="ca-note bad">最近会话查询失败。${s.capturedAt ? '以下消息取自 ' + esc(new Date(s.capturedAt).toLocaleString('zh-CN', { hour12: false })) + '，可能已过期。' : '尚无可复用的当前账号聊天记录。'}</p>` : ''}${s ? `<p class="ca-note">本轮列出 ${s.listed || 0} 个最近会话，结合历史目录共检查 ${s.fetched || 0} 个${s.limited ? '（已按设置限制数量）' : ''}；专用手机群不参与简报。查询失败时保留已取到的内容，未覆盖范围会单独提示。</p>` : ''}${errors.map(e => `<p class="ca-note bad">${esc(e.label)}：${esc(e.text)}</p>`).join('')}${rows ? `<ul>${rows}</ul>` : ''}</details>`;
   }
 
   async function openSource(source, day) {
@@ -221,7 +234,8 @@ function createCompanyAssistantPage({ document, window, ipcRenderer, openSession
 
   function chatList() {
     return (data.chat || []).map(c => {
-      const answer = c.state === 'done' ? `<div class="ca-md">${markdown(c.a)}</div>`
+      const pptLinks = (c.pptResults || []).map(p => `<div class="ca-ppt-reference"><span>${esc(p.name)} · 第 ${esc(p.page)} 页</span><button type="button" class="ca-link" data-ca="ppt-open:${esc(p.id)}">打开到第 ${esc(p.page)} 页</button></div>`).join('');
+      const answer = c.state === 'done' ? `<div class="ca-md">${markdown(c.a)}</div>${pptLinks}`
         : c.state === 'error' ? `<p class="ca-note bad">${esc(c.error || '没答上')}<button type="button" class="ca-link" data-ca="retry:${esc(c.id)}">重问</button></p>`
           : `<p class="ca-note run">${c.state === 'queued' ? '排队中…' : '助理正在查…'}</p>`;
       return `<div class="ca-message-row user"><img class="ca-avatar" src="${USER_AVATAR_SRC}" alt="我"><div class="ca-message-content"><div class="ca-card-head"><b>我</b>${c.via === 'phone' ? '<span class="ca-chip">手机</span>' : ''}<span class="ca-time">${when(c.askedAt)}</span></div><div class="ca-msg user"><div class="ca-body">${esc(c.q).replace(/\n/g, '<br>')}</div></div></div></div>
@@ -319,6 +333,22 @@ function createCompanyAssistantPage({ document, window, ipcRenderer, openSession
     if (verb === 'close-panel') { const panel = page.querySelector('[data-slot="panel"]'); panel.hidden = true; panel.innerHTML = ''; panel.dataset.kind = 'closed'; return; }
     if (verb === 'calendar') return openSettings('welink');
     if (verb === 'settings') return openSettings();
+    if (verb === 'ppt-open') {
+      button.disabled = true;
+      try { const r = await call('ppt-open', { id: arg }); if (r.pageFocused === false) showMessage?.(`已打开文件，请查看第 ${r.page} 页；当前环境未能自动跳页`); }
+      catch (error) { showMessage?.(error.message); }
+      finally { button.disabled = false; }
+      return;
+    }
+    if (verb === 'ppt-assist') {
+      const panel = page.querySelector('[data-slot="panel"]');
+      panel.hidden = true; panel.innerHTML = ''; panel.dataset.kind = 'closed';
+      if (!input.value.trim()) input.value = '帮我从已有 PPT 中找几页能讲清楚「」的素材，说明推荐理由并附文件路径和页码。';
+      input.focus();
+      const at = input.value.indexOf('「」'); if (at >= 0) input.setSelectionRange(at + 1, at + 1);
+      input.scrollIntoView({ block: 'nearest' });
+      return;
+    }
     if (verb === 'setup-mail') return setupMail(page.querySelector('[data-f="setup-email"]'), page.querySelector('[data-f="setup-msg"]'), button);
     if (verb === 'settings-tab') return openSettings(arg);
     if (verb === 'open-session') return window.__companyAssistantOpenSession();
@@ -332,7 +362,7 @@ function createCompanyAssistantPage({ document, window, ipcRenderer, openSession
     if (msg) msg.textContent = '正在配置邮件和日历…';
     try {
       const r = await call('setup-calendar', { email: input ? input.value : '' });
-      if (msg) msg.textContent = r.needsSetup ? '还没成功：' + (r.output || '请核对邮箱地址') : '邮件和日历已接入。';
+      if (msg) msg.textContent = r.needsSetup ? '还没成功：' + (r.output || '请核对邮箱地址') : '邮箱连接已配置；各项查询状态见下方。';
       await load();
     } catch (error) { if (msg) msg.textContent = '没成功：' + error.message; } finally { if (button) button.disabled = false; }
   }
@@ -437,9 +467,9 @@ function createCompanyAssistantPage({ document, window, ipcRenderer, openSession
     const from = s.emailFrom === 'welink' ? '从 WeLink 账号自动读到' : s.email ? '你填写的' : '';
     const errs = d.errors || [];
     const errOf = label => errs.find(e => e.label === label || e.label.startsWith(label));
-    const snapRows = [['会议', d.counts?.meetings], ['日程', d.counts?.calendar], ['消息', d.counts?.messages], ['未读邮件', d.counts?.mails]].map(([label, n]) => {
+    const snapRows = [['会议', d.counts?.meetings, d.meetingCoverage], ['日程', d.counts?.calendar, d.calendarCoverage], ['消息', d.counts?.messages, messageCoverage()], ['未读邮件', d.counts?.mails, d.mailCoverage]].map(([label, n, coverage]) => {
       const e = errOf(label);
-      return `<div class="ca-src-row"><span>${label}</span>${e ? `<span class="ca-chip warn" title="${esc(e.text)}">没取到</span><span class="ca-note">${esc(e.text)}</span>` : login?.ok && d.refreshedAt ? `<span class="ca-chip ok">已取到 ${n ?? 0} 条</span>` : '<span class="ca-note">—</span>'}</div>`;
+      return `<div class="ca-src-row"><span>${label}</span>${e || coverage?.status === 'failed' ? `<span class="ca-chip warn">查询失败</span><span class="ca-note">${esc(e?.text || coverage.reasonLabel)}</span>` : coverage?.status === 'partial' ? `<span class="ca-chip warn">未取全</span><span class="ca-note">${esc(coverage.reasonLabel || '')}</span>` : coverage?.status === 'complete' ? `<span class="ca-chip ok">已取到 ${n ?? 0} 条</span>` : '<span class="ca-note">尚未确认</span>'}</div>`;
     }).join('');
     const VIA = { path: '系统路径里找到的', npm: 'npm 全局目录里找到的', disk: '在硬盘里找到的', manual: '你手动选的' };
     const cliLine = d.cliFound ? `<fieldset class="col"><legend>welink-cli 位置</legend><div class="ca-row"><span class="ca-chip ok">已找到</span><span class="ca-note" title="${esc(d.cliPath)}">${esc(d.cliPath)}${VIA[d.cliSearch?.via] ? '（' + VIA[d.cliSearch.via] + '）' : ''}</span></div>
@@ -456,12 +486,12 @@ function createCompanyAssistantPage({ document, window, ipcRenderer, openSession
   function briefTab() {
     const s = data.settings, sc = data.scope;
     const opts = (list, cur, fmt = x => x) => list.map(x => `<option value="${x}"${String(x) === String(cur) ? ' selected' : ''}>${fmt(x)}</option>`).join('');
-    // 2026-10-18：不再手动勾「关注群」，默认取回看时间内所有单聊和群。免打扰、置顶 welink-cli 拿不到（Q-1018-10），不做这两个设置。
-    const last = sc ? `上次取到 ${sc.withMessages} 个会话（单聊 ${sc.p2p}、群 ${sc.withMessages - sc.p2p}）共 ${sc.messages} 条消息${sc.limited ? `，按设置只取了最近 ${sc.maxConversations} 个会话` : ''}。` : '还没取过数据：先扫码登录、点「刷新数据」。';
+    // 2026-10-18：不再手动勾「关注群」，默认取回看时间内所有私聊和群。免打扰、置顶 welink-cli 拿不到（Q-1018-10），不做这两个设置。
+    const last = sc ? `上次取到 ${sc.withMessages} 个会话（私聊 ${sc.p2p}、群 ${sc.withMessages - sc.p2p}）共 ${sc.messages} 条消息${sc.limited ? `，按设置只取了最近 ${sc.maxConversations} 个会话` : ''}。` : '还没取过数据：先扫码登录、点「刷新数据」。';
     return `<fieldset class="col"><legend>聊天记录范围（简报、提醒和对话都用这份数据）</legend>
         <div class="ca-row"><label>回看最近<select data-f="lookbackHours">${opts([12, 24, 36, 48, 72], s.lookbackHours, x => x + ' 小时')}</select></label>
           <label>会话个数<select data-f="maxConversations">${opts([0, 10, 20, 30], s.maxConversations, x => (Number(x) ? '最近 ' + x + ' 个' : '全部（默认）'))}</select></label></div>
-        <p class="ca-note">「全部」是 WeLink 最近会话里排前 50 个（welink-cli 一次最多列 50 个）中，回看时间内有消息的单聊和群，每个都取全部消息。WeLink 的免打扰、置顶信息 welink-cli 拿不到，所以没有这两项设置。</p>
+        <p class="ca-note">默认查询最近 100 个会话，并补查历史已知会话；旧 CLI 会尝试兼容查询。每个会话按回看时间翻页，未取全会显示原因。目录外从未发现的会话仍可能遗漏。WeLink 的免打扰、置顶信息暂不可用。</p>
         <p class="ca-note">${last}</p></fieldset>
       <fieldset><legend>提醒</legend>
         <label>关注词（逗号分隔）<input type="text" data-f="keywords" value="${esc(s.keywords.join('，'))}"></label>
@@ -473,6 +503,7 @@ function createCompanyAssistantPage({ document, window, ipcRenderer, openSession
         <label>下班前小结<input type="time" data-f="summaryTime" value="${esc(s.summaryTime)}"></label>
         <label>自动取数据间隔<select data-f="refreshMinutes">${opts([5, 10, 15, 30], s.refreshMinutes, x => x + ' 分钟')}</select></label></fieldset>
       ${s.chips.length ? `<fieldset><legend>存过的常用问题</legend>${s.chips.map((c, i) => `<label><input type="checkbox" data-chip="${i}" checked>${esc(c.label)}</label>`).join('')}</fieldset>` : ''}
+      <fieldset class="col"><legend>助理记忆</legend><div data-slot="assistant-memory"><p class="ca-note">正在读取…</p></div></fieldset>
       <div class="ca-row end"><button type="button" class="ca-btn primary" data-x="save">保存</button></div>`;
   }
 
@@ -483,76 +514,67 @@ function createCompanyAssistantPage({ document, window, ipcRenderer, openSession
     try { p = (await call('ppt-status')).ppt; }
     catch (error) { if (body.isConnected) body.innerHTML = `<p class="ca-note bad">${esc(error.message)}</p>`; return; }
     if (!body.isConnected || panel.dataset.tab !== 'ppt') return;
-    body.innerHTML = `<fieldset class="col"><legend>在我做过的 PPT 里找页</legend><p class="ca-note">${p.available ? `已索引 ${p.files} 份文稿、${p.pages} 页。` : '未检测到可用的 PPT Doctor 索引。请先用 PPT Doctor 建立文字索引。'}</p>
-      ${p.error ? `<p class="ca-note bad">${esc(p.error)}</p>` : ''}<p class="ca-note">依据已提取文字检索；图表、版式和可编辑性需要打开原稿核查。</p>
-      <details><summary>索引位置</summary><p class="ca-ppt-path">${esc(p.db)}</p><button class="ca-btn" data-x="ppt-pick">选择已有索引…</button><button class="ca-link" data-x="ppt-refresh">重新检查</button></details></fieldset>
-      <form class="ca-row" data-x="ppt-search"><input class="ca-phone-group" data-f="ppt-query" type="text" placeholder="输入主题，例如 SRS 信道估计" aria-label="PPT 检索词"><button class="ca-btn primary" type="submit"${p.available ? '' : ' disabled'}>找素材</button></form>
-      <div data-slot="ppt-results" aria-live="polite"></div>`;
+    const indexing = p.indexing || {}, busy = indexing.state === 'indexing';
+    const scanLine = busy ? `正在更新：已检查 ${indexing.scanned || 0} 份，新增或更新 ${indexing.indexed || 0} 份。` : indexing.completedAt ? `上次更新 ${when(indexing.completedAt)}：新增或更新 ${indexing.indexed || 0} 份，未变化 ${indexing.unchanged || 0} 份，跳过旧版 .ppt ${indexing.skippedPpt || 0} 份${indexing.failed ? `，${indexing.failed} 份读取失败` : ''}。` : '选择目录后会在后台建立文字索引，之后自动检查文件变化。';
+    body.innerHTML = `<fieldset class="col"><legend>在我做过的 PPT 里找页</legend><p class="ca-note">${p.available ? `已索引 ${p.files} 份文稿、${p.pages} 页。` : '还没有素材索引。选择自己的 PPT 文件夹即可使用。'}</p>
+      ${p.error ? `<p class="ca-note bad">${esc(p.error)}</p>` : ''}<p class="ca-note">在对话里说清用途，助理会扩展查询、读原页并按用途推荐，附文件路径和页码。</p>
+      <div class="ca-row"><button class="ca-btn primary" data-ca="ppt-assist">去对话里找素材</button><button class="ca-link" data-x="ppt-refresh">重新检查</button></div>
+      <p class="ca-note">例如：帮我找几页适合向新同事讲混合波束成形的材料，重点解释少量射频链怎么配合多天线。</p>
+      <p class="ca-note">依据已提取文字检索；图表、版式和可编辑性需要打开原稿核查。</p>
+      </fieldset><fieldset class="col"><legend>素材文件夹</legend><p class="ca-note">只检索你选择的 1–3 个文件夹及其子目录，不改动原稿。支持 .pptx；旧版 .ppt 会标明跳过数量。</p>
+      ${(p.roots || []).map(root => `<p class="ca-ppt-path">${esc(root)}</p>`).join('')}
+      <div class="ca-row"><button class="ca-btn" data-x="ppt-folders"${busy ? ' disabled' : ''}>${p.roots?.length ? '更换素材文件夹…' : '选择素材文件夹…'}</button><button class="ca-btn" data-x="ppt-index"${busy || !p.roots?.length ? ' disabled' : ''}>更新索引</button></div>
+      <p class="ca-note${busy ? ' run' : ''}" role="status">${esc(scanLine)}</p>${indexing.error ? `<p class="ca-note bad">${esc(indexing.error)}</p>` : ''}
+      ${(indexing.errors || []).length ? `<details><summary>${indexing.errors.length} 项未完成，展开查看原因</summary>${indexing.errors.map(e => `<p class="ca-note bad">${esc(e.path)}：${esc(e.error)}</p>`).join('')}</details>` : ''}
+      </fieldset><fieldset class="col"><legend>已有 PPT Doctor 索引（可选）</legend><p class="ca-note">如果本机已有索引，可以一起检索。</p><p class="ca-ppt-path">${esc(p.db)}</p><button class="ca-btn" data-x="ppt-pick">选择已有索引…</button></fieldset>`;
     body.querySelector('[data-x="ppt-pick"]').onclick = async () => { try { await call('ppt-pick-index'); await mountPptTab(panel); await load(); } catch (error) { showMessage?.(error.message); } };
     body.querySelector('[data-x="ppt-refresh"]').onclick = () => { void mountPptTab(panel); };
-    body.querySelector('[data-x="ppt-search"]').onsubmit = async event => {
-      event.preventDefault();
-      const query = body.querySelector('[data-f="ppt-query"]').value.trim(); if (!query) return;
-      const button = body.querySelector('[type="submit"]'), slot = body.querySelector('[data-slot="ppt-results"]');
-      button.disabled = true; slot.innerHTML = '<p class="ca-note">正在检索文字，随后可读完整页…</p>';
-      try {
-        const r = await call('ppt-query', { op: 'search', query });
-        slot.innerHTML = (r.candidates || []).map(c => `<article class="ca-ppt-result"><b>${esc(c.ref.name)} · 第 ${c.ref.page} 页</b><p>${esc(c.excerpt || '')}</p><p class="ca-ppt-path">${esc(c.ref.path)}</p>
-          <button class="ca-btn small" data-ppt-read="${esc(c.id)}">读这一页</button><button class="ca-link" data-ppt-open="${esc(c.id)}">打开文件</button><div data-ppt-text></div></article>`).join('') || '<p class="ca-note">本次文字检索未命中，可换一个关键词；不代表整个素材库没有相关内容。</p>';
-        if (r.truncated) slot.insertAdjacentHTML('afterbegin', '<p class="ca-note">当前展示前 30 页，可缩小关键词继续检索。</p>');
-      } catch (error) { slot.innerHTML = `<p class="ca-note bad">没查成：${esc(error.message)}</p>`; }
-      finally { button.disabled = false; }
-    };
-    body.onclick = async event => {
-      const button = event.target.closest('[data-ppt-read],[data-ppt-open]'); if (!button) return;
-      button.disabled = true;
-      try {
-        if (button.dataset.pptOpen) await call('ppt-open', { id: button.dataset.pptOpen });
-        else {
-          const r = await call('ppt-query', { op: 'read', ids: [button.dataset.pptRead] });
-          const item = r.pages?.[0];
-          button.closest('article').querySelector('[data-ppt-text]').innerHTML = item
-            ? `<p class="ca-note">${item.source_state === 'metadata_matches_index' ? '源文件元数据与索引一致' : '源文件已变化或不可用，请核查原稿'}</p><pre>${esc(item.text)}</pre>` : '<p class="ca-note">这页已不在当前索引中，请重新搜索。</p>';
-        }
-      } catch (error) { showMessage?.(error.message); } finally { button.disabled = false; }
-    };
+    for (const [selector, channel] of [['ppt-folders', 'ppt-pick-folders'], ['ppt-index', 'ppt-index']]) {
+      body.querySelector(`[data-x="${selector}"]`).onclick = async event => {
+        event.currentTarget.disabled = true;
+        try { await call(channel); await mountPptTab(panel); await load(); }
+        catch (error) { showMessage?.(error.message); if (body.isConnected) await mountPptTab(panel); }
+      };
+    }
+    if (busy) setTimeout(() => { if (body.isConnected && !panel.hidden && panel.dataset.tab === 'ppt') void mountPptTab(panel); }, 1500);
   }
 
   async function mountRoomsTab(panel) {
     clearInterval(roomsTimer); roomsTimer = null;
     const body = panel.querySelector('.ca-tab-body');
-    body.innerHTML = '<p class="ca-note">正在读取秘书状态…</p>';
+    body.innerHTML = '<p class="ca-note run" role="status">正在准备抢会议室功能，首次可能需要约 2 分钟。可以先使用助理的其他功能。</p>';
     let r;
-    try { await call('room-discover'); r = (await call('room-status')).rooms; }
-    catch (error) { if (body.isConnected) body.innerHTML = `<p class="ca-note bad">${esc(error.message)}</p>`; return; }
+    try { r = (await call('room-connect')).rooms; }
+    catch (error) {
+      if (body.isConnected && panel.dataset.tab === 'rooms') {
+        body.innerHTML = `<p class="ca-note bad">准备未完成：${esc(error.message)}</p><button class="ca-btn" data-room-retry>重试</button>`;
+        body.querySelector('[data-room-retry]').onclick = () => { void mountRoomsTab(panel); };
+      }
+      return;
+    }
     if (!body.isConnected || panel.dataset.tab !== 'rooms') return;
     const rules = r.rules || { '主题': '日常会议', '开始时间': '14:00', '时长小时': 2, '时长分钟': 0, '优先会议室': [], '抢订日': [1, 2, 3, 4, 5] };
-    body.innerHTML = `<fieldset class="col"><legend>秘书终结者</legend><p data-slot="room-live">${r.connected ? r.running ? '正在守护' : '已接通' : r.available ? '已找到程序，等待接通' : '选择已安装的秘书终结者即可接入'}</p>
-      <p class="ca-note">沿用秘书的抢订引擎，每天开放时抢七天后的同一天。暂不支持指定明天等单次日期。</p>
-      <p class="ca-ppt-path">${esc(r.exePath)}</p><div class="ca-row"><button class="ca-btn" data-x="room-pick">选择程序…</button>${r.available && !r.connected ? '<button class="ca-btn primary" data-room-op="connect">接通秘书</button>' : !r.available ? '<button class="ca-btn primary" data-room-op="install">安装并接通（约 77 MB）</button>' : ''}</div>
+    body.innerHTML = `<fieldset class="col"><legend>抢会议室</legend><p data-slot="room-live">${r.preparing ? '正在准备…' : r.connected ? r.running ? '正在守护' : '已就绪' : '暂未准备好'}</p>
+      <p class="ca-note">每天开放时抢七天后的同一天。暂不支持指定明天等单次日期。</p>
       ${r.error ? `<p class="ca-note bad">${esc(r.error)}</p>` : ''}</fieldset>
       <fieldset class="col"><legend>抢订规则</legend>
         <label>主题<input type="text" data-room="主题" value="${esc(rules['主题'])}"></label>
         <div class="ca-row"><label>开始时间<input type="time" data-room="开始时间" value="${esc(rules['开始时间'])}"></label><label>时长（小时）<input type="number" min="0.5" max="12" step="0.5" data-room="duration" value="${Number(rules['时长小时']) + Number(rules['时长分钟']) / 60}"></label></div>
         <label>优先会议室<input type="text" data-room="rooms" placeholder="用逗号分隔，先填的优先" value="${esc(rules['优先会议室'].join('，'))}"></label>
         <div class="ca-row">${['一', '二', '三', '四', '五', '六', '日'].map((name, i) => `<label><input type="checkbox" data-room-day="${i + 1}"${rules['抢订日'].includes(i + 1) ? ' checked' : ''}>周${name}</label>`).join('')}</div>
-        <p class="ca-note">有任务运行时先暂停，待浏览器退出后再改规则；会后动作沿用秘书里的设置。</p>
-      </fieldset><fieldset class="col"><legend>会议室网页登录</legend><p class="ca-note">${r.loginNeeded ? '会议室网页需要重新登录。' : '登录状态由秘书在抢订前检查。'}它与 WeLink 消息登录相互独立。</p>
+        <p class="ca-note">有任务运行时先暂停，待浏览器退出后再改规则；会后动作沿用现有设置。</p>
+      </fieldset><fieldset class="col"><legend>会议室网页登录</legend><p class="ca-note">${r.loginNeeded ? '会议室网页需要重新登录。' : '抢订前会自动检查登录状态。'}它与 WeLink 消息登录相互独立。</p>
         <div class="ca-row"><button class="ca-btn" data-room-op="login"${r.connected && !r.running ? '' : ' disabled'}>打开登录</button><button class="ca-btn" data-room-op="test"${r.connected && !r.running ? '' : ' disabled'}>测试填表（不提交）</button></div></fieldset>
       <p class="ca-note" data-slot="room-msg" aria-live="polite"></p><div class="ca-row end">
         <button class="ca-btn" data-room-op="pause"${r.connected ? '' : ' disabled'}>暂停</button><button class="ca-btn" data-room-op="save"${r.connected && !r.running ? '' : ' disabled'}>保存规则</button><button class="ca-btn primary" data-room-op="start"${r.connected && !r.running ? '' : ' disabled'}>开始守护</button>
       </div>`;
-    body.querySelector('[data-x="room-pick"]').onclick = async () => { try { await call('room-pick'); await mountRoomsTab(panel); await load(); } catch (error) { showMessage?.(error.message); } };
     let acting = false;
     body.onclick = async event => {
       const button = event.target.closest('[data-room-op]'); if (!button) return;
       if (acting) return;
       const op = button.dataset.roomOp, msg = body.querySelector('[data-slot="room-msg"]');
-      acting = true; button.disabled = true; msg.textContent = '正在交给秘书处理…';
+      acting = true; button.disabled = true; msg.textContent = '正在处理…';
       try {
-        if (op === 'connect') await call('room-connect');
-        else if (op === 'install') { msg.textContent = '正在下载并核对秘书组件，预计约一分钟…'; await call('room-install'); }
-        else {
           if (op === 'save' || op === 'start') {
             const v = key => body.querySelector(`[data-room="${key}"]`).value;
             const duration = Number(v('duration'));
@@ -563,8 +585,7 @@ function createCompanyAssistantPage({ document, window, ipcRenderer, openSession
             } });
           }
           if (op !== 'save') await call('room-command', { op });
-        }
-        await mountRoomsTab(panel); await load(); showMessage?.(op === 'pause' ? '已请求暂停，浏览器退出后即可改规则' : '秘书已接收');
+        await mountRoomsTab(panel); await load(); showMessage?.(op === 'pause' ? '已请求暂停，浏览器退出后即可改规则' : '已接收');
       } catch (error) { msg.textContent = error.message; button.disabled = false; }
       finally { acting = false; }
     };
@@ -573,7 +594,7 @@ function createCompanyAssistantPage({ document, window, ipcRenderer, openSession
       if (acting) return;
       try {
         const latest = (await call('room-status')).rooms;
-        body.querySelector('[data-slot="room-live"]').textContent = latest.error || (!latest.connected ? '等待接通' : latest.running ? '正在守护' : '已接通');
+        body.querySelector('[data-slot="room-live"]').textContent = latest.error || (latest.preparing ? '正在准备…' : !latest.connected ? '暂未准备好' : latest.running ? '正在守护' : '已就绪');
         for (const b of body.querySelectorAll('[data-room-op]')) {
           if (['save', 'start', 'test', 'login'].includes(b.dataset.roomOp)) b.disabled = !latest.connected || latest.running || latest.loginBusy;
           if (b.dataset.roomOp === 'pause') b.disabled = !latest.connected;
@@ -604,6 +625,7 @@ function createCompanyAssistantPage({ document, window, ipcRenderer, openSession
       return;
     }
     petTab = null;
+    if (current === 'brief') require('./company-assistant-memory').mountMemory(panel.querySelector('[data-slot="assistant-memory"]'), { call, showMessage });
     if (current === 'welink') {
       panel.querySelector('[data-x="mail"]').onclick = e => setupMail(panel.querySelector('[data-f="email"]'), panel.querySelector('[data-f="mail-msg"]'), e.target).then(() => { if (panel.dataset.tab === 'welink') openSettings('welink'); });
       panel.querySelector('[data-x="name"]').onclick = async () => { try { await call('set-settings', { myName: panel.querySelector('[data-f="myName"]').value }); await load(); showMessage?.('名字已保存'); } catch (error) { showMessage?.('没有保存：' + error.message); } };

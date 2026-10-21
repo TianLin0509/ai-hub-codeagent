@@ -6,8 +6,10 @@ const D = require('./data');
 const { resolveNames } = require('./identity');
 
 async function runReadOnly(args, { run = W.run, cli = W.resolveCli({ configured: process.env.CLAUDE_HUB_WELINK_CONFIGURED || '' }), cacheDir = process.env.CLAUDE_HUB_ASSISTANT_DIR } = {}) {
-  const autodiscover = args[0] === 'mail' && args[1] === 'autodiscover';
-  const execute = (a, opts = {}) => run(a, { cli, timeoutMs: autodiscover ? 120000 : 60000, allowSetup: autodiscover, ...opts });
+  W.checkArgs(args);
+  if (!args.includes('--help') && (args[0] === 'calendar' && args[1] === 'list' || args[0] === 'meeting' && args[1] === 'query-list'))
+    throw new Error('按范围查询会议和日程请用本会话的 welink_meetings MCP；它统一处理日期边界、分页和时区。单场详情可用 meeting info 补查。');
+  const execute = (a, opts = {}) => run(a, { cli, timeoutMs: 60000, ...opts, allowSetup: false });
   const result = await execute(args);
   if (Number(result.code || 0) !== 0 || args[0] !== 'im' || args[1] !== 'query-history-message') return result;
   const raw = W.parseJsonBig(result.stdout);
@@ -31,7 +33,7 @@ async function runReadOnly(args, { run = W.run, cli = W.resolveCli({ configured:
 if (require.main === module) (async () => {
   try {
     const args = process.argv.slice(2);
-    // 例外只有 mail autodiscover：只写 welink-cli 自己的本地配置（按邮箱找 Exchange 服务器），助理兜底配置邮件时要用；扫码登录仍只能由用户在页面上点。
+    // 初始化邮件及登录均由 Hub 主进程维护，Agent 包装只允许查询。
     const result = await runReadOnly(args);
     process.stdout.write(result.stdout);
     if (result.stderr) process.stderr.write(result.stderr);

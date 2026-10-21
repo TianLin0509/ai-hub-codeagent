@@ -25,6 +25,22 @@ jobs:
         run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install-provider.ps1 -Provider codex
       - run: node tests/smoke-official-codex.js
       - run: node tests/e2e-community-cdp.js
+      - name: Fetch pinned meeting-room runtime for the company installer
+        shell: pwsh
+        run: |
+          $baseline = Get-Content core/company-assistant/room-component/baseline.json -Raw -Encoding utf8 | ConvertFrom-Json
+          $exe = $baseline.exe
+          $dir = Join-Path $env:RUNNER_TEMP 'room-runtime'
+          New-Item -ItemType Directory -Force $dir | Out-Null
+          $dest = Join-Path $dir $exe.file
+          $url = "https://github.com/TianLin0509/mishu-terminator/releases/download/v$($baseline.version)/$($exe.file)"
+          curl.exe -fsSL --retry 3 -o $dest $url
+          if ($LASTEXITCODE -ne 0) { throw "download failed: $url" }
+          $hash = (Get-FileHash -Algorithm SHA256 $dest).Hash.ToLowerInvariant()
+          $size = (Get-Item $dest).Length
+          if ($hash -ne $exe.sha256 -or $size -ne [int64]$exe.size) { throw "runtime mismatch: $size bytes, sha256 $hash" }
+          Write-Host "meeting-room runtime verified: $size bytes, sha256 $hash"
+          "AI_HUB_ROOM_RUNTIME_SOURCE=$dest" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
       - name: Package independent CI checkout
         run: npm run dist
       - name: Smoke test packaged application and terminal

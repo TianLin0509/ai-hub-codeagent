@@ -11,6 +11,7 @@ function registerCompanyAssistantIpc(ipcMain, service) {
     'mark-done': request => service.markDone(String(request?.source || ''), request?.done !== false),
     source: request => service.sourceContext(String(request?.source || ''), request?.day),
     'set-settings': request => ({ ok: true, settings: service.setSettings(request || {}) }),
+    memory: request => service.memory.execute(request || { op: 'list' }, { fromSettings: true }),
     login: async () => ({ ok: true, flow: await service.login() }),
     'setup-calendar': request => service.setupCalendar(String(request?.email || '')),
     // 「手机」设置页（2026-10-18）：选群、开关、推送范围；测试消息只发到选定的群。
@@ -53,6 +54,7 @@ function registerCompanyAssistantIpc(ipcMain, service) {
       return { ok: true, sessionId: id };
     },
   };
+  Object.assign(handlers, require('../../core/company-assistant/ppt-ipc').createPptHandlers(service));
   for (const [name, handler] of Object.entries(handlers)) {
     ipcMain.handle('company-assistant:' + name, async (_event, request = {}) => {
       try { return await handler(request); } catch (error) { return { ok: false, error: error.message }; }
