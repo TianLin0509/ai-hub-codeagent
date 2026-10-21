@@ -35,7 +35,9 @@ function resolveSources(config, env) {
 function createAppUpdateController({ app, config, dataDir, currentVersion, sendToRenderer = () => {}, logger = console,
   env = process.env, fetchImpl, resourcesPath = process.resourcesPath, isPackaged = !!(app && app.isPackaged), spawnImpl = spawn,
   // 拉起新程序用的干净环境与工作目录（core/clean-launch-env.js，2026-10-19）：main.js 传入；没传时按当前环境现算。
-  prepareLaunch = () => require('../core/clean-launch-env').prepareHubLaunch({ env, isPackaged, appRoot: app && typeof app.getAppPath === 'function' ? app.getAppPath() : undefined }) }) {
+  prepareLaunch = () => require('../core/clean-launch-env').prepareHubLaunch({ env, isPackaged, appRoot: app && typeof app.getAppPath === 'function' ? app.getAppPath() : undefined }),
+  // 「等通道问题答完再重启」的状态（2026-10-21，core/company-bridge/hub-admin.js restartWaitView）：只给界面看，不进 getState。
+  restartWait = () => null }) {
   const sources = resolveSources(config, env);
   const releasePage = (config && config.releasePage) || '';
   let state = { phase: 'idle', current: currentVersion, sources: sources.map(s => ({ id: s.id, name: s.name })), releasePage, canApply: isPackaged || env.AI_HUB_UPDATE_FORCE_APPLY === '1' };
@@ -44,7 +46,9 @@ function createAppUpdateController({ app, config, dataDir, currentVersion, sendT
   try { lastResult = takeLastResult(dataDir); } catch (error) { logger.warn?.('[app-update] 读取上次结果失败：', error.message); }
   if (lastResult) state.lastResult = lastResult;
 
-  const emit = patch => { state = { ...state, ...patch }; try { sendToRenderer('app-update:state', state); } catch (_) {} return state; };
+  // 界面看到的 = 控制器状态 + 等待重启的状态（读不到就当没在等）。
+  const view = () => { let wait = null; try { wait = restartWait() || null; } catch (_) {} return { ...state, restartWait: wait }; };
+  const emit = patch => { state = { ...state, ...patch }; try { sendToRenderer('app-update:state', view()); } catch (_) {} return state; };
 
   async function check({ silent = false } = {}) {
     if (checking) return checking;
@@ -138,16 +142,25 @@ function createAppUpdateController({ app, config, dataDir, currentVersion, sendT
   function dismissLastResult() { delete state.lastResult; return state; }
 
   // 界面弹出提示后就会 dismiss；家里远程更新（core/company-bridge/hub-admin.js）要在通道接通后另读一次本次启动读到的结果。
-  return { check, download, cancel, apply, getState: () => state, startBackgroundChecks, dismissLastResult, lastResult: () => lastResult,
+  return { check, download, cancel, apply, getState: () => state, view, startBackgroundChecks, dismissLastResult, lastResult: () => lastResult,
     dispose: () => { clearTimeout(timer); if (abort) abort.abort(); } };
 }
 
-function registerAppUpdateIpc(ipcMain, controller) {
-  ipcMain.handle('app-update:get-state', () => controller.getState());
+// gate（2026-10-21）：公司版点「立即重启 / 立即安装」先过「通道问题答完再重启」这道关（hub-admin.js localApply）：
+// { mode:'auto' } 有在途问题时回 needsConfirm；'wait' 答完再重启；'now' 立即重启（在途的记下、重启后接着做）；'cancel' 取消等待。
+// 没有 gate（家里版、公开版、没有通道）照旧直接替换。
+function registerAppUpdateIpc(ipcMain, controller, { gate = null } = {}) {
+  ipcMain.handle('app-update:get-state', () => (controller.view ? controller.view() : controller.getState()));
   ipcMain.handle('app-update:check', () => controller.check({ silent: false }));
   ipcMain.handle('app-update:download', () => controller.download());
   ipcMain.handle('app-update:cancel', () => controller.cancel());
-  ipcMain.handle('app-update:apply', () => controller.apply());
+  ipcMain.handle('app-update:apply', (_e, opts) => {
+    const mode = opts && ['auto', 'wait', 'now', 'cancel'].includes(opts.mode) ? opts.mode : 'auto';
+    const viaGate = gate && typeof gate.apply === 'function' ? gate.apply({ mode }) : null;
+    if (viaGate) return viaGate;
+    if (mode === 'cancel') return controller.view ? controller.view() : controller.getState();
+    return controller.apply();
+  });
   ipcMain.handle('app-update:dismiss-result', () => controller.dismissLastResult());
 }
 

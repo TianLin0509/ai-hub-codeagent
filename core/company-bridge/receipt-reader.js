@@ -102,7 +102,7 @@ function readCompanyReceipt(meta, request) {
           if (lastHuman) { lastHuman.end = index; lastHuman.endInvalid = scanner.getStats().invalidRecords; }
           owner = { userMessageId: row.uuid, text, at: Date.parse(row.timestamp) || null,
             start: index, end: Infinity, startInvalid: scanner.getStats().invalidRecords,
-            endInvalid: null, records: new Map(), uncertain: false };
+            endInvalid: null, records: new Map(), parts: new Map(), uncertain: false };
           groups.push(owner);
           if (row.uuid) userGroups.set(row.uuid, owner);
           lastHuman = owner;
@@ -120,13 +120,24 @@ function readCompanyReceipt(meta, request) {
     for (const block of Array.isArray(row.message?.content) ? row.message.content : []) {
       if (block?.type === 'tool_use' && block.id) toolOwners.set(block.id, owner);
     }
-    if (row.message?.stop_reason !== 'end_turn' || !text.trim()) return;
+    if (!text.trim()) return;
+    // 2026-10-21 同事公司 Hub（2 轮「回执只收到后半段」）：以前只收 end_turn 的正文，CodeAgent 在工具调用之前写的结论
+    // （stop_reason=tool_use / null 的文字块）全丢了。这里把本轮所有带文字的 assistant 块按顺序记下，
+    // 拼回执时取到最后一段最终正文为止（之后还没收尾的过程文字不算，见下方 parts 过滤）。
+    if (row.message?.stop_reason !== 'end_turn') {
+      if (owner && index < owner.end) {
+        const key = row.uuid || (row.message?.id ? row.message.id + ':' + digest(text.trim()) : null);
+        if (key && !owner.parts.has(key)) owner.parts.set(key, { text: text.trim(), index, final: false });
+      }
+      return;
+    }
     const messageId = row.uuid || row.message.id, turnId = row.message.id || row.uuid;
     const id = digest(JSON.stringify([identity, turnId, text.trim()]));
     if (id === request.baseline && baselineIndex === null) baselineIndex = index;
     if (!owner || index >= owner.end) return;
     if (!messageId) { owner.uncertain = true; return; }
     owner.records.set(messageId, { id, messageId, turnId, text: text.trim(), index });
+    if (!owner.parts.has(messageId)) owner.parts.set(messageId, { text: text.trim(), index, final: true });
   });
   let fd, readError;
   try {
@@ -164,8 +175,109 @@ function readCompanyReceipt(meta, request) {
   if (!group.userMessageId || group.uncertain) return unavailable('本次请求的原生消息归属不完整，暂不确认回执');
   const records = [...group.records.values()].filter(record => record.index > baselineIndex && record.index < group.end);
   if (!records.length) return unavailable('本次请求尚未读到最终正文；其他用户输入的答案不会作为本轮回执');
-  return { available: true, userMessageId: group.userMessageId, records,
-    text: records.map(record => record.text).join('\n\n') };
+  const lastFinal = Math.max(...records.map(record => record.index));
+  const parts = [...group.parts.values()].filter(p => p.index > baselineIndex && p.index <= lastFinal).sort((a, b) => a.index - b.index)
+    .map(p => ({ text: p.text, final: p.final }));
+  return { available: true, userMessageId: group.userMessageId, records, parts,
+    text: parts.map(p => p.text).join('\n\n') };
+}
+
+// —— 按问题文本找回答（2026-10-21 同事公司 Hub：「会话停下了，但一直没读到回答」「答完 20 分钟没送回」、重启后补收 0/5）——
+// 上面的 readCompanyReceipt 只读会话绑定的那一个记录文件，且要求记录头身份 = 绑定的原生 id。两种情况会读不到：
+//   1) 会话身份一直没绑定（CodeAgent 不认 --session-id，靠第一个 hook 上报绑定；hook 没到或被判成外来，transcriptPath 一直为空）；
+//   2) 休眠后 --resume 拉起的 CLI 换了原生 id / 记录文件（core/claude-identity-switch.js 只在 30 秒内、或本进程见过旧会话
+//      SessionEnd 时才改绑；隔了几分钟的休眠唤醒和 Hub 重启后都不改绑，新 id 的 hook 全被当成外来会话丢弃）。
+// 这里不依赖绑定和内存状态：在「号的配置目录\projects\<工作目录 slug>」（以及绑定记录所在目录）里，
+// 找发送之后改过的 .jsonl，按这一轮发出的问题（指纹或编号标记，同 matchesRequest）定位，取它之后的全部 assistant 文字。
+function projectSlugOf(cwd) { return require('node:path').resolve(String(cwd || '')).replace(/[^A-Za-z0-9]/g, '-'); }
+function transcriptDirs(meta, fsModule = fs) {
+  const path = require('node:path');
+  const dirs = [];
+  if (meta?.transcriptPath) dirs.push(path.dirname(meta.transcriptPath));
+  const configDir = meta?.codeagentConfigDir;
+  if (configDir && meta?.cwd) {
+    const forms = [path.resolve(String(meta.cwd))];
+    try { const real = fsModule.realpathSync.native ? fsModule.realpathSync.native(forms[0]) : fsModule.realpathSync(forms[0]); if (real && real.toLowerCase() !== forms[0].toLowerCase()) forms.push(real); } catch { /* 目录不在了：只按原写法 */ }
+    for (const form of forms) dirs.push(path.join(configDir, 'projects', projectSlugOf(form)));
+  }
+  const seen = new Set();
+  return dirs.filter(d => { const k = d.toLowerCase(); if (seen.has(k)) return false; seen.add(k); return true; });
+}
+const MAX_SCAN_FILES = 12;
+const MAX_SCAN_BYTES = 64 * 1024 * 1024;
+function candidateTranscripts(meta, since, fsModule = fs) {
+  const path = require('node:path');
+  const out = [];
+  for (const dir of transcriptDirs(meta, fsModule)) {
+    let names; try { names = fsModule.readdirSync(dir).filter(n => n.endsWith('.jsonl')); } catch { continue; }
+    for (const name of names) {
+      const file = path.join(dir, name);
+      let st; try { st = fsModule.statSync(file); } catch { continue; }
+      if (st.mtimeMs < since || st.size > MAX_SCAN_BYTES) continue;
+      if (!out.some(x => x.file.toLowerCase() === file.toLowerCase())) out.push({ file, mtime: st.mtimeMs, size: st.size });
+    }
+  }
+  return out.sort((a, b) => b.mtime - a.mtime).slice(0, MAX_SCAN_FILES);
+}
+// 一个记录文件里这一轮的问题和它之后的回答。返回最后一次出现的这一轮问题（同一段落进多次时取最后一份）。
+function scanFileForRound(file, request, since, fsModule = fs) {
+  let raw; try { raw = fsModule.readFileSync(file, 'utf8'); } catch { return null; }
+  let hit = null, cur = null;
+  for (const line of raw.split('\n')) {
+    if (!line.trim()) continue;
+    let row; try { row = JSON.parse(line); } catch { continue; }
+    if (!row || row.isSidechain) continue;
+    if (row.type === 'user') {
+      if (isToolResultEntry(row)) { if (cur) cur.finished = false; continue; }
+      const text = bodyText(row);
+      const at = Date.parse(row.timestamp) || 0;
+      if ((!at || at >= since) && !row.turnCompanion && matchesRequest({ text, at }, request)) {
+        cur = { file, at, userMessageId: row.uuid || null, nativeId: row.sessionId || null, parts: new Map(), finished: false };
+        hit = cur; continue;
+      }
+      if (!cur) continue;
+      // 续跑的「继续」、后台通知、压缩摘要、斜杠命令回显：还是这一轮；别的真实输入划开边界。
+      if (BARE_CONTINUE.test(promptText(text).trim()) || row.origin?.kind === 'task-notification' || text.trimStart().startsWith('<task-notification>')) { cur.finished = false; continue; }
+      if (isSyntheticUserEntry(row, text) || /^<(?:local-command-|command-name>)/.test(text.trimStart())) continue;
+      cur = null; continue;
+    }
+    if (!cur) continue;
+    if (row.type === 'system' && row.subtype === 'scheduled_task_fire') { cur = null; continue; }
+    if (row.type === 'attachment' && row.attachment?.type === 'queued_command') { cur.finished = false; continue; }
+    if (row.type !== 'assistant') continue;
+    const text = bodyText(row).trim();
+    const blocks = Array.isArray(row.message?.content) ? row.message.content : [];
+    const final = row.message?.stop_reason === 'end_turn';
+    if (text) {
+      const key = row.uuid || (row.message?.id || '') + ':' + digest(text);
+      if (!cur.parts.has(key)) cur.parts.set(key, { text, final });
+    }
+    if (final && text) cur.finished = true;
+    else if (blocks.some(b => b?.type === 'tool_use') || !final) cur.finished = false;
+  }
+  return hit;
+}
+// meta：会话元数据（transcriptPath / codeagentConfigDir / cwd 任有其一）；request：这一轮（promptFingerprint 或 threadId+round+sentAt）。
+// 返回 null（找不到这一轮的问题）或 { file, mtime, at, finished, parts:[{text, final}], text }。
+// finished：问题之后最后一条是带正文的 end_turn（没再调工具、没再等输入）；text 取到最后一段最终正文为止，没收尾时是已写的全部文字。
+function findRoundAnswer(meta, request, { fsModule = fs } = {}) {
+  const first = Math.min(...[request?.sentAt, request?.firstSentAt].filter(Number.isFinite));
+  const since = (Number.isFinite(first) ? first : 0) - 5000;
+  let best = null;
+  for (const c of candidateTranscripts(meta, since, fsModule)) {
+    const hit = scanFileForRound(c.file, request, since, fsModule);
+    if (!hit) continue;
+    const parts = [...hit.parts.values()];
+    const cand = { file: c.file, mtime: c.mtime, at: hit.at, finished: hit.finished, userMessageId: hit.userMessageId, nativeId: hit.nativeId, parts };
+    // 恢复会话的新记录会带着旧记录的历史（同一条提问、同一时间戳）：同一时刻的提问取答完的、写得多的、较新的那份。
+    const better = !best || cand.at > best.at || (cand.at === best.at && (cand.finished !== best.finished ? cand.finished
+      : cand.parts.length !== best.parts.length ? cand.parts.length > best.parts.length : cand.mtime > best.mtime));
+    if (better) best = cand;
+  }
+  if (!best) return null;
+  let parts = best.parts;
+  if (best.finished) { let last = -1; parts.forEach((p, i) => { if (p.final) last = i; }); parts = parts.slice(0, last + 1); }
+  return { ...best, parts, text: parts.map(p => p.text).join('\n\n') };
 }
 
 // 提问有没有真的写进 CodeAgent 的记录（2026-10-16 公司真机 Q-1016-02 第 5 轮：发给了一个已经退出的 CodeAgent，
@@ -223,4 +335,4 @@ function transcriptTurnFinished(meta, fsModule = fs) {
   return finished;
 }
 
-module.exports = { readCompanyReceipt, receiptPromptFingerprint, transcriptHasRequest, transcriptTurnFinished, BARE_CONTINUE };
+module.exports = { readCompanyReceipt, receiptPromptFingerprint, transcriptHasRequest, transcriptTurnFinished, findRoundAnswer, candidateTranscripts, transcriptDirs, BARE_CONTINUE };

@@ -21,6 +21,7 @@ const SESSION_VARS = {
   CLAUDE_HUB_SESSION_ID: 'Hub 会话的 hook 身份：带着它，hook 会把事件记到启动 Hub 的那个会话名下',
   CLAUDE_HUB_PORT: 'Hub 会话的 hook 端口：指向启动它的那个 Hub',
   CLAUDE_HUB_TOKEN: 'Hub 会话的 hook 口令：属于启动它的那个 Hub',
+  CLAUDE_HUB_SOFT_COMPACT: 'Hub 会话的软压缩标记：带着它，提醒钩子会让 AI 结束本轮等启动它的那个 Hub 来压缩',
   CODEAGENT3_LAUNCHER_PID: 'CodeAgent 启动器标记：说明 Hub 是从某个 CodeAgent 会话里拉起的',
   // 「禁止选择题」分支（fix/no-choice-prompt）给自动派活会话设的会话内部标记，hook 靠它判断要不要拦；
   // 用户不会持久设置这个开关，所以无条件清掉（审核 2026-10-19 确认）。

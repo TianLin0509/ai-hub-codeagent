@@ -448,7 +448,9 @@ async function pickModel({ manager, sid, kind, modelId, configDir, allowedModels
         for (let i = 0; i < 12; i += 1) { manager.writeToSession(sid, '\x7f'); await sleep(30); }
         ready = await waitForInput(screen);
       }
-      result = { ...result, inputReady: !!ready.value };
+      // inputUsable：认不出普通输入框（旧版 CodeAgent 画面不同，见 screenHasContent），但菜单已关、输入行没留着「/model」。
+      // 自动会话据此照常把问题发出去（main/ipc/session-handlers.js runCodeAgentPick）；用户会话仍按 inputReady 处理。
+      result = { ...result, inputReady: !!ready.value, inputUsable: !!ready.value || inputUsableAfterPick(await screen.lines()) };
       if (!ready.value) result = { ...result, ok: false, message: `${result?.message || '模型操作尚未完成'}；尚未确认恢复普通输入框` };
     } catch (error) {
       result = { ...result, ok: false, inputReady: false,
@@ -524,6 +526,17 @@ function screenHasContent(lines) {
   return lines.some(line => line.trim());
 }
 
+// 选模型收尾后能不能照常发问题（不要求认出普通输入框）：没有能认出的菜单、没有菜单的标题或底栏残留、
+// 最下面的输入行没留着「/model」、画面不是空白。认不出就当不能用，走原来的失败路径。
+// 「↑↓」类操作提示：菜单或选择框还开着（旧版/汉化界面的底栏写法不一，宁可当成没关）。
+const MENU_TRACES = /Select model|Switch model|选择模型|切换模型|Navigate\s*↑\s*↓|↑\s*\/?\s*↓|Back\s+esc|⌕\s*Search/i;
+function inputUsableAfterPick(lines) {
+  const screen = Array.isArray(lines) ? lines : String(lines || '').split(/\r?\n/);
+  if (!screenHasContent(screen) || modelDialogVisible(screen) || screen.some(line => MENU_TRACES.test(line))) return false;
+  const promptLine = screen[screen.findLastIndex(line => /^\s*(?:[│┃]\s*)?[─\s]*[❯›>]/.test(line))] || '';
+  return !/[❯›>]\s*\/model\b/i.test(promptLine);
+}
+
 async function beforePrompt(manager, sid, { allowUnready = false, isChoiceDialog = null } = {}) {
   const rejectPending = () => {
     if (isPicking(sid)) throw notSent('CodeAgent 正在切换模型，本条消息未发送；切换完成后再发送。', 'codeagent-model-pick-pending');
@@ -570,6 +583,7 @@ module.exports = {
   modelDialogVisible,
   promptInputReady,
   promptInputAvailable,
+  inputUsableAfterPick,
   findTarget,
   confirmationSeen,
   pickerLabelFor,

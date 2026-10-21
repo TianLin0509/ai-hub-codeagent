@@ -10,11 +10,18 @@
 // 通道里不接受任何文件或网址）；不降级（planUpdate 保证）。
 //
 // 重启时机（2.1.9，用户 10-17 22:40：「先记着，先重启中断，等重启完后再恢复——效率更高」）：
-// 有在干活的会话时先等一个宽限期（设置 restartGraceMinutes，默认 3 分钟，0 = 立即；force = 0）；宽限内都答完就直接重启，
+// 有在干活的会话时先等一个宽限期（设置 restartGraceMinutes，默认 20 分钟，0 = 立即；force = 0）；宽限内都答完就直接重启，
 // 到时还有在干活的，就把这些会话记进持久化清单 resumeAfterRestart，立即重启；重启后逐个恢复会话，经正规发送入口
 // 发一句纯「继续」（receipt-reader.js 的 BARE_CONTINUE 把它认作同一轮的延续，回执归属不变），通道轮次保持在途、
 // 回执照常发回家里。恢复失败的通道轮次按现有失败流程报回家里（家里可补收或追问）；本机会话在侧栏标「重启打断」。
 // 指令状态存在通道数据库里：重启后读替换脚本留下的结果（takeLastResult），通道接通时报回家里。
+//
+// 2026-10-21（同事公司 Hub 3.0.1 日志：三天启动 11 次，4 轮在重启后 6 分钟内报「会话已关闭，没有读到回答」）：
+//   - 默认宽限 3 → 20 分钟；要等的除了在干活的会话，还有通道里已发出、还没回执的轮次（waitList，含答完待核对发回的）。
+//     排队还没发出的问题不等：它们存在通道数据库里，等待期间不派发（holdingDispatch），重启后照常接着发。
+//   - 公司电脑上自己点「立即重启 / 立即安装」（一键更新弹窗）也走这里（localApply）：通道有在途问题时先让人选
+//     「答完再重启」（同一套等待，最多等宽限期）还是「立即重启」（= force，走中断—恢复）。以前这条路径完全不等。
+//   - 等待中的人话状态（restartWaitView）：--hub-status、公司 Hub 标题栏小标签与更新弹窗都读它。
 const { randomUUID } = require('node:crypto');
 const { BARE_CONTINUE, transcriptTurnFinished } = require('./receipt-reader');
 
@@ -28,7 +35,7 @@ const OPS = ['update', 'restart', 'status', 'diag', 'act', 'files'];
 const CAPS = ['diag', 'act', 'quota', 'personal-model', 'files'];
 // 执行中的阶段；其余都是结束态。
 const LIVE = ['checking', 'downloading', 'waiting', 'applying', 'restarting'];
-const GRACE_DEFAULT_MINUTES = 3;
+const GRACE_DEFAULT_MINUTES = 20;
 const GRACE_MAX_MINUTES = 30;
 // 发出重启后这么久进程还在：重启没成（例如有会话没能保存退出、关闭被取消），作废这条指令。
 const WATCHDOG_MS = 3 * 60000;
@@ -39,6 +46,9 @@ if (!BARE_CONTINUE.test(RESUME_TEXT)) throw new Error('RESUME_TEXT 必须被 BAR
 const ISSUE_TTL_MS = 24 * 3600000;
 
 const runningRound = t => (t.rounds || []).find(x => !x.reply && !x.error && x.sentAt) || null;
+const queuedRound = t => (t.rounds || []).find(x => !x.reply && !x.error && !x.sentAt) || null;
+// 时刻按公司电脑本地时间写（家里、公司都在北京时间）。
+const hhmm = ms => { const d = new Date(ms); return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0'); };
 const short = (s, n = 60) => { s = String(s || '').replace(/\s+/g, ' ').trim(); return s.length > n ? s.slice(0, n) + '…' : s; };
 
 class HubAdmin {
@@ -150,7 +160,9 @@ class HubAdmin {
     if (!c) parts.push('不是安装版，不能远程更新');
     else if (st.latest?.version) parts.push(`发行源最新 v${st.latest.version}`);
     if (st.phase && st.phase !== 'idle' && c) parts.push('一键更新状态：' + st.phase);
-    if (j && LIVE.includes(j.phase)) parts.push(`远程指令 ${j.id} 进行中（${j.note || j.phase}）`);
+    const wait = this.restartWaitView();
+    if (wait) parts.push(wait.text + '（家里带 --force 可立即重启）');
+    else if (j && LIVE.includes(j.phase)) parts.push(`${j.local ? '公司电脑上点的更新' : '远程指令'} ${j.id} 进行中（${j.note || j.phase}）`);
     parts.push(this.bridge.settings().allowRemoteAdmin === false ? '远程更新：未允许' : `远程更新：已允许（重启前最多等 ${this.graceMinutes()} 分钟）`);
     return parts.join(' · ');
   }
@@ -343,6 +355,81 @@ class HubAdmin {
     return out;
   }
   workingCount() { return this.workingList().length; }
+  // 重启前要等的（2026-10-21）：workingList + 通道里已发出、还没回执的轮次（会话停着、回答写完只等核对发回的也等：
+  // 重启会关掉会话，以前这类轮次在重启后被判「会话已关闭，没有读到回答」，Q-1020-06）。中断—恢复清单仍只记 workingList。
+  waitList() {
+    const out = this.workingList(), b = this.bridge, gen = b.link.gen();
+    for (const t of b.openThreads()) {
+      if (t.state !== 'running' || (gen && t.gen && t.gen !== gen) || out.some(x => x.thread === t.id)) continue;
+      const r = runningRound(t);
+      if (r) out.push({ sessionId: t.sessionId || null, kind: 'bridge', thread: t.id, round: r.round, delivering: true });
+    }
+    return out;
+  }
+  // 排队还没发出的问题（不等它们；只在状态里说一句「重启后接着发」）。
+  queuedCount() {
+    try { return this.bridge.openThreads().filter(t => ['queued', 'running'].includes(t.state) && queuedRound(t)).length; } catch { return 0; }
+  }
+  countText(list) {
+    const bridge = list.filter(x => x.kind === 'bridge').length, local = list.length - bridge;
+    if (!local) return `${bridge} 个通道问题`;
+    if (!bridge) return `${local} 个本机会话的任务`;
+    return `${list.length} 个任务（通道问题 ${bridge} 个、本机会话 ${local} 个）`;
+  }
+  // 等待重启的人话状态（--hub-status、公司 Hub 标题栏小标签、更新弹窗）：没在等返回 null。
+  restartWaitView() {
+    const job = this.job();
+    if (!job || job.phase !== 'waiting' || this.applying) return null;
+    const list = this.waitList();
+    const grace = job.force ? 0 : this.graceMinutes();
+    const since = job.waitSince || job.receivedAt || this.now();
+    const deadline = since + grace * 60000;
+    const verb = job.op === 'update' ? `重启到 v${job.target || '?'}` : '重启';
+    const waitedMin = Math.max(0, Math.floor((this.now() - since) / 60000));
+    const items = list.map(x => ({ kind: x.kind, thread: x.thread || null, round: x.round ?? null, sessionId: x.sessionId || null, title: x.title || null }));
+    const text = list.length ? `等 ${this.countText(list)}答完再${verb}，已等 ${waitedMin} 分钟，预计最晚 ${hhmm(deadline)} 重启`
+      : `在途问题都答完了，马上${verb}`;
+    return { jobId: job.id, op: job.op, local: !!job.local, target: job.target || null, count: list.length,
+      bridgeCount: list.filter(x => x.kind === 'bridge').length, queued: this.queuedCount(), since, deadline, graceMinutes: grace, items, text };
+  }
+  // 公司电脑上点「立即重启 / 立即安装」（一键更新弹窗，main/app-update-controller.js 经 main.js 接过来）。
+  //   mode 'auto'：通道没有在途问题就直接替换；有就不动手，回 needsConfirm 让人选。
+  //   mode 'wait'：答完再重启（同远程指令的等待，最多等宽限期，到时中断—恢复）。
+  //   mode 'now' ：立即重启（= force：在途的记进恢复清单，重启后接着做）。已在等的指令（本机或家里发的）也可以这样催。
+  //   mode 'cancel'：取消公司电脑上发起的等待（家里发的指令不在这里取消）。
+  async localApply({ mode = 'auto' } = {}) {
+    const c = this.controller();
+    if (!c) throw new Error('这台 Hub 不是安装版，不能更新');
+    const view = () => ({ ...c.getState(), restartWait: this.restartWaitView() });
+    const job = this.job();
+    if (mode === 'cancel') {
+      if (job && job.local && job.phase === 'waiting' && !this.applying) await this.finish(job, 'cancelled', '公司电脑上取消了等待重启，这次不更新；之后可以再点「立即重启」');
+      return view();
+    }
+    if (job && LIVE.includes(job.phase)) {
+      if (job.phase === 'waiting' && !this.applying) {
+        if (mode === 'now' && !job.force) { this.setJob({ ...job, force: true, note: '公司电脑上选了立即重启' }); await this.advance(); }
+        return view();
+      }
+      if (['applying', 'restarting'].includes(job.phase) && this.applying) return view();
+      if (['checking', 'downloading'].includes(job.phase)) throw new Error('家里发来的更新还在下载，下载好后会自动等在途问题答完再重启');
+    }
+    const st = c.getState();
+    if (st.phase !== 'ready') throw new Error('更新还没有下载好');
+    const list = this.waitList();
+    if (list.length && mode === 'auto') {
+      const grace = this.graceMinutes();
+      return { ...view(), needsConfirm: true, confirm: { count: list.length, bridgeCount: list.filter(x => x.kind === 'bridge').length, text: this.countText(list),
+        graceMinutes: grace, deadline: this.now() + grace * 60000, queued: this.queuedCount(),
+        items: list.map(x => ({ kind: x.kind, thread: x.thread || null, round: x.round ?? null, title: x.title || null })) } };
+    }
+    const d = new Date(this.now() + 8 * 3600000);
+    const id = 'LOCAL-' + String(d.getUTCMonth() + 1).padStart(2, '0') + String(d.getUTCDate()).padStart(2, '0') + '-' + randomUUID().slice(0, 6);
+    this.setJob({ id, op: 'update', local: true, gen: this.bridge.link.gen() || null, force: mode === 'now', phase: 'waiting', target: st.latest?.version || null,
+      receivedAt: this.now(), waitSince: this.now() });
+    await this.advance();
+    return view();
+  }
   // 这一轮发出之后，会话里已经有新的最终回答（不是发前那条基线）。
   answered(t) {
     const r = runningRound(t);
@@ -363,20 +450,24 @@ class HubAdmin {
     }
     if (job.phase !== 'waiting' || this.applying) return;
     if (this.stale(job)) return this.finish(job, 'failed', '配对已变化（解除或重新配对），这条远程指令作废');
-    const working = this.workingList();
+    const waitFor = this.waitList();
     const grace = job.force ? 0 : this.graceMinutes();
-    const waited = this.now() - (job.waitSince || job.receivedAt || this.now());
+    const since = job.waitSince || job.receivedAt || this.now();
+    const waited = this.now() - since;
     const verb = job.op === 'update' ? `重启到 v${job.target}` : '重启';
-    if (!working.length) return this.restartNow(job, `即将${verb}`);
+    const origin = job.local ? '（公司电脑上点的更新）' : '';
+    if (!waitFor.length) return this.restartNow(job, `即将${verb}${origin}`);
     if (waited < grace * 60000) {
-      if (job.waitingFor !== working.length) {
-        this.setJob({ ...job, waitSince: job.waitSince || this.now(), waitingFor: working.length });
+      if (job.waitingFor !== waitFor.length) {
+        this.setJob({ ...job, waitSince: since, waitingFor: waitFor.length, waitDeadline: since + grace * 60000 });
         const what = job.op === 'update' ? `已下载 v${job.target}，` : '';
-        await this.report(job.id, 'waiting', `${what}等 ${working.length} 个任务答完后${verb}（最多等 ${grace} 分钟，到时先记下、中断，重启后自动接着做；期间新任务先排队）`);
+        const queued = this.queuedCount();
+        await this.report(job.id, 'waiting', `${what}等 ${this.countText(waitFor)}答完再${verb}${origin}（最多等 ${grace} 分钟，预计最晚 ${hhmm(since + grace * 60000)}；`
+          + `到时还没答完的先记下、中断，重启后自动接着做；期间新问题先排队${queued ? `，现有 ${queued} 个排队的重启后接着发` : ''}）`);
       }
       return;
     }
-    return this.interruptAndRestart(job, working, verb, grace);
+    return this.interruptAndRestart(job, this.workingList(), verb, grace);
   }
   // 「中断—恢复」：把在干活的会话记进持久化清单，再重启；清单在下一次启动里处理（resumeInterrupted）。
   async interruptAndRestart(job, working, verb, grace) {
@@ -386,6 +477,8 @@ class HubAdmin {
     for (const item of items.filter(x => x.kind === 'bridge')) this.markRound(item, { resumePending: true, interruptedAt: at },
       '公司 Hub 要重启：这一轮先记下，重启后自动恢复会话接着做，回执照常发回');
     const why = job.force ? 'force：不等' : grace === 0 ? '宽限设为 0' : `等了 ${grace} 分钟`;
+    // 只剩答完待核对发回的轮次（会话已停、不用「继续」）：不算中断，重启后由通道照常补收（2026-10-21）。
+    if (!items.length) { this.save({ resumeAfterRestart: null }); return this.restartNow(job, `即将${verb}（${why}；答完还没发回的回答重启后照常补收）`); }
     return this.restartNow(job, `中断 ${items.length} 个任务后${verb}（${why}；重启后自动恢复这些会话并接着做）`, { interrupted: items.length });
   }
   markRound(item, patch, note) {
@@ -581,7 +674,7 @@ class HubAdmin {
   status() {
     const s = this.state();
     return { job: s.job || null, history: (s.history || []).slice(0, 5), current: this.current(), installed: !!this.controller(),
-      graceMinutes: this.graceMinutes(), resumeAfterRestart: s.resumeAfterRestart || null, resumeIssues: this.resumeIssues(), lastDiag: s.lastDiag || null,
+      graceMinutes: this.graceMinutes(), restartWait: this.restartWaitView(), resumeAfterRestart: s.resumeAfterRestart || null, resumeIssues: this.resumeIssues(), lastDiag: s.lastDiag || null,
       lastFiles: s.lastFiles || null, parallelRestore: s.parallelRestore || null };
   }
 }

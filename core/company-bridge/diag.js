@@ -406,7 +406,7 @@ function avoidView(e) {
     ...(e.kind === 'model-config' ? { model: e.model || '', have: Array.isArray(e.have) ? e.have : [], probes: Number(e.probes) || 0 } : {}) };
 }
 function creditView(c) { return c && Number.isFinite(Number(c.remaining)) ? { remaining: Number(c.remaining), pct: Number(c.pct), bucket: c.bucket || '', at: c.at || null } : null; }
-function pool(raw, { avoid = {}, credit = {}, aliases: given = null, ...extra } = {}) {
+function pool(raw, { avoid = {}, credit = {}, aliases: given = null, pickBreaker = {}, ...extra } = {}) {
   if (!raw) throw new Error('这台 Hub 读不到号池');
   const aliases = given || poolAliases(raw);
   const pick = (a, alias, key) => ({ alias, state: POOL_STATE[a.state] || String(a.state || '未知'), ready: a.state === 'ready',
@@ -422,6 +422,9 @@ function pool(raw, { avoid = {}, credit = {}, aliases: given = null, ...extra } 
     ...(a.state === 'unreadable' && a.credentialsNote ? { credentialsNote: String(a.credentialsNote).slice(0, 120) } : {}),
     ...(key === 'personal' && a.lastBackup ? { lastBackup: { model: a.lastBackup.model == null ? null : String(a.lastBackup.model), at: String(a.lastBackup.name || '').replace(/^settings\.json\.hub-backup-/, '') } } : {}),
     ...(a.routeSwitched ? { routeSwitched: true } : {}), avoid: avoidView(avoid[key]), credit: creditView(credit[key]),
+    // 自动选模型连续失败的计数与熔断（core/codeagent-auto-pick.js，2026-10-21）：熔断中这个号的自动会话不开模型菜单、直接发问题
+    ...(pickBreaker[key] ? { autoPick: pickBreaker[key].open ? { breaker: true, failures: pickBreaker[key].failures, until: pickBreaker[key].until, note: '连续自动选模型没成功，熔断中：不开模型菜单、直接发问题', lastError: pickBreaker[key].lastError }
+      : { breaker: false, failures: pickBreaker[key].failures, lastError: pickBreaker[key].lastError } } : {}),
     // 号池号默认模型未知 / 写的不在清单里（账号即模型，2026-10-19 审核）：这样的号不参与按模型派活
     ...(key !== 'personal' && a.defaultNote ? { defaultNote: String(a.defaultNote) } : {}),
     // 默认模型和权限不符（个人账号，2026-10-19）：settings.json 里写的值和权限清单，号表据此提示、可远程修正（set-personal-model）
@@ -503,7 +506,8 @@ function hub(bridge, deps, sys, ctx) {
     version: bridge.hubAdmin?.current?.() || deps.currentVersion || null, pid: ctx.hubPid, startedAt: ctx.hubStartedAt || null,
     uptimeMin: ctx.hubStartedAt ? Math.round((now - ctx.hubStartedAt) / 60000) : null, uptimeSec: ctx.hubStartedAt ? Math.round((now - ctx.hubStartedAt) / 1000) : null,
     parallel: bridge.parallelLimitSafe(),
-    care: bridge.careState ? { keepWarmMinutes: bridge.careState.keepWarmMinutes, freePercent: bridge.careState.freePercent, warm: bridge.careState.warm, at: bridge.careState.at } : null,
+    care: bridge.careState ? { keepWarmMinutes: bridge.careState.keepWarmMinutes, freePercent: bridge.careState.freePercent, warm: bridge.careState.warm, at: bridge.careState.at,
+      bloatGB: bridge.careState.bloatGB ?? null, sessions: bridge.careState.sessions || [], bloatSuspended: bridge.careState.bloatSuspended || [] } : null,
     holdingDispatch: (() => { try { return !!bridge.hubAdmin.holdingDispatch(); } catch { return null; } })(),
     adminJob: job ? { id: job.id, op: job.op, phase: job.phase, note: short(job.note, 120) } : null,
     queue: { running: queue.filter(q => q.phase === 'running').length, queued: queue.filter(q => q.phase === 'queued').length, threads: queue },
@@ -754,7 +758,9 @@ async function collect({ bridge, deps = bridge.deps, sections, lines = DEFAULT_L
     // 个人账号实际作答过的模型（set-personal-model 的另一条权限依据）
     let raw = poolRaw;
     if (raw && raw.personal && bridge.personalAnsweredModels) { try { raw = { ...raw, personal: { ...raw.personal, answeredModels: bridge.personalAnsweredModels() } }; } catch { /* 读不到就不带 */ } }
-    return pool(raw, { usePool: !!bridge.settings().usePool, models: bridge.modelTableSafe?.() || null, avoid, credit, aliases: ctx.aliases });
+    let pickBreaker = {};
+    try { pickBreaker = require('../codeagent-auto-pick').snapshot(deps.dataDir); } catch { /* 读不到不挡号池段 */ }
+    return pool(raw, { usePool: !!bridge.settings().usePool, models: bridge.modelTableSafe?.() || null, avoid, credit, aliases: ctx.aliases, pickBreaker });
   });
   if (sections.includes('errors')) await run('errors', () => errorsSection(bridge, ctx.aliases, errorsLimit));
   if (sections.includes('logs')) await run('logs', () => logs(sys, path.join(deps.dataDir, 'logs'), lines));

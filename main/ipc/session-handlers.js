@@ -798,6 +798,24 @@ function registerSessionIpc(ipcMain, deps) {
           source: `codeagent-menu-enter:${reason}`, extra: { file: change.file, restoredTo: change.restoredTo || '(空)', restoreOk: change.ok, ...(change.error ? { restoreError: change.error } : {}) } }, { persist: false }),
         sendToPty: require('../../core/group-chat-watcher').sendToPty });
     } catch (error) { result = { ok: false, message: error && error.message ? error.message : String(error) }; }
+    const automatic = ['company-bridge', 'company-assistant', 'company-forum'].includes(session.purpose);
+    // 自动选模型的熔断计数（core/codeagent-auto-pick.js）：自动会话启动时菜单没选成记一次失败；这个号上任何一次选成就清零。
+    // 不在权限清单里（没开菜单）不算菜单失败。
+    const breakerAccount = session.codeagentPoolAccount || 'personal';
+    let breaker = null;
+    if (result.ok || (automatic && !result.notAllowed)) {
+      try { breaker = require('../../core/codeagent-auto-pick').record(dataDir, breakerAccount, !!result.ok, { error: result.message || '' }); } catch { /* 计数失败不影响这一轮 */ }
+    }
+    if (breaker && breaker.opened) {
+      codeagentModels.appendModelLog(dataDir, { event: 'pick-breaker-open', session: String(sessionId).slice(0, 8), account: account.replace(/\s+/g, ''),
+        failures: breaker.failures, until: new Date(breaker.until).toISOString(), note: '连续自动选模型没成功，4 小时内这个号的自动会话不开模型菜单、直接发问题' });
+    }
+    // 自动会话没人守着：菜单没选上，但菜单已关、输入行可以用（认得出普通输入框，或旧版画面认不出、但已没有菜单和「/model」残留），
+    // 就按 CLI 当前模型照常把问题发出去，失败只记在 pick 日志里，不卡住这一轮；回执里的模型按实际作答的模型（company.js 读原生记录）。
+    const fallback = !result.ok && automatic && (result.inputReady || result.inputUsable);
+    if (!result.ok && automatic && !fallback) {
+      result = { ...result, message: `自动选模型没成功，模型菜单也没能关掉，为了不把问题打进菜单，这一轮没有发出去（原因：${result.message || '未知'}）` };
+    }
     if (result.defaults) {
       guard.recordChange(dataDir, { account, session: String(sessionId).slice(0, 8), before: result.defaults.before || '', after: result.defaults.after || '',
         source: `picker:${reason}`, extra: { verified: result.defaults.verified, changes: result.defaults.changes.length } }, { persist: account === '个人' && result.defaults.changes.length > 0 });
@@ -806,7 +824,8 @@ function registerSessionIpc(ipcMain, deps) {
         want: result.defaults.before || '(空)', now: result.defaults.after || '(空)', reason });
     }
     codeagentModels.appendModelLog(dataDir, { event: 'pick', session: String(sessionId).slice(0, 8), account: account.replace(/\s+/g, ''), reason, model: modelId,
-      ok: result.ok, mode: result.mode, confirmed: result.confirmed, restored: (result.restored || []).join('+'), menu: (result.menu || []).join('+'), error: result.ok ? '' : result.message });
+      ok: result.ok, mode: result.mode, confirmed: result.confirmed, restored: (result.restored || []).join('+'), menu: (result.menu || []).join('+'), error: result.ok ? '' : result.message,
+      fallback: fallback ? 'send-with-cli-model' : '', failures: breaker && !result.ok ? breaker.failures : '' });
     // 菜单里实际能选的模型：新建会话的模型下拉以它为准（core/codeagent-models.js 的 modelOptions）。
     if (result.menu) { try { codeagentModels.recordMenu(getHubDataDir(), result.menu); } catch { /* 只影响下次的模型下拉，不影响本次选择 */ } }
     if (!result.ok && Array.isArray(result.screen)) {
@@ -817,7 +836,7 @@ function registerSessionIpc(ipcMain, deps) {
       } catch { /* 只是排查用的附件 */ }
     }
     // 自动会话没人守着：菜单没选上但普通输入框已恢复时，照旧按 CLI 当前模型把活发出去（和改动前一样），失败只记在上面的 pick 日志里，不卡住这一轮。
-    if (!result.ok && result.inputReady && ['company-bridge', 'company-assistant', 'company-forum'].includes(session.purpose)) {
+    if (fallback) {
       return { ...result, ok: true, fallback: 'cli-default-model' };
     }
     if (result.ok) {

@@ -24,6 +24,11 @@ const GB = 1024 ** 3;
 const SESSION_BYTES = 3.8 * GB;
 const SESSION_MEM_TTL_MS = 60000; // 实测结果缓存 60 秒：一次进程枚举约 0.8 秒（core/process-inspector.js 实测），不能每秒跑
 const MIN_SESSION_SAMPLE_BYTES = 300 * 1024 ** 2; // 进程树不到 300 MB 的是刚起来、还没加载完的会话，不当样本（会把均值拉低、多开会话）
+// 膨胀回收（2026-10-21，Q-1021-05 公司真机三轮只读回执）：CodeAgent CLI 每来一轮追问，serve 就再起一整批 MCP 插件、旧批不关，
+// 一个会话从 2.3–2.7 GB 一路涨到 4.1–4.8 GB，32 GB 的公司电脑并行只剩 1 个。CLI 改不了；休眠后追问按编号 --resume 恢复，只剩一批插件。
+// 所以：答完空闲 2 分钟、进程树实测 ≥ 3.2 GB（新会话一批插件 2.3–2.7 GB，多一批就 ≥ 3.5 GB）的通道会话，不等保温时长就先收起。
+const BLOAT_BYTES = 3.2 * GB;
+const BLOAT_MIN_IDLE_MS = 2 * 60000;
 
 function quantile(values, q) {
   const sorted = values.filter(Number.isFinite).sort((a, b) => a - b);
@@ -57,25 +62,32 @@ function memoryNow(osModule = os) {
   return { total, free, ratio: total > 0 ? free / total : 1 };
 }
 
-// candidates：[{ sessionId, threadId, idleSince, askerActive }]，调用方已排除在途、正在干活的。
-// 返回 [{ sessionId, threadId, reason }]，reason 是写进日志、给人看的一句话。
-function planRelease({ candidates, keepWarmMs, now, memory, sessionBytes = SESSION_BYTES }) {
+// candidates：[{ sessionId, threadId, idleSince, askerActive, bytes? }]，调用方已排除在途、正在干活的。
+//   bytes：这个会话进程树的实测工作集（字节），测不到就不带；带了才参与「膨胀」规则和「收一个腾出多少」的累加。
+// 返回 [{ sessionId, threadId, reason, rule }]：reason 是写进日志、给人看的一句话；rule 是 keep-warm / bloat / memory。
+const validBytes = b => Number.isFinite(b) && b > 0;
+const gbText = b => `${(b / GB).toFixed(1)} GB`;
+function planRelease({ candidates, keepWarmMs, now, memory, sessionBytes = SESSION_BYTES, bloatBytes = BLOAT_BYTES, bloatMinIdleMs = BLOAT_MIN_IDLE_MS }) {
   const out = [], kept = [];
   for (const c of candidates || []) {
     const idle = now - c.idleSince;
     const limit = c.askerActive ? keepWarmMs * 2 : keepWarmMs;
-    if (idle >= limit) out.push({ ...c, reason: `答完 ${Math.round(idle / 60000)} 分钟没人追问（保温 ${Math.round(limit / 60000)} 分钟${c.askerActive ? '，家里发问方仍活跃已加倍' : ''}）` });
-    else kept.push({ ...c, idle });
+    if (idle >= limit) out.push({ ...c, rule: 'keep-warm', reason: `答完 ${Math.round(idle / 60000)} 分钟没人追问（保温 ${Math.round(limit / 60000)} 分钟${c.askerActive ? '，家里发问方仍活跃已加倍' : ''}）` });
+    else if (validBytes(c.bytes) && c.bytes >= bloatBytes && idle >= bloatMinIdleMs) {
+      out.push({ ...c, rule: 'bloat', reason: `进程树 ${gbText(c.bytes)}（CodeAgent 每轮追问多起一批插件、旧的不关），答完 ${Math.round(idle / 60000)} 分钟空闲，先收起，追问时自动续上` });
+    } else kept.push({ ...c, idle });
   }
+  // 收一个腾出多少：有实测按它自己的进程树，没有才按每会话估计值。
+  const freed = c => (validBytes(c.bytes) ? c.bytes : sessionBytes);
   if (memory && memory.total > 0) {
-    let free = memory.free + out.length * sessionBytes;
+    let free = memory.free + out.reduce((sum, c) => sum + freed(c), 0);
     if (free / memory.total < LOW_FREE_RATIO) {
       // 先收最冷的：发问方不活跃的在前，同类里答完越久越冷。
       kept.sort((a, b) => (a.askerActive === b.askerActive ? b.idle - a.idle : a.askerActive ? 1 : -1));
       for (const c of kept) {
         if (free / memory.total >= HIGH_FREE_RATIO) break;
-        out.push({ ...c, reason: `内存紧（可用 ${Math.round(memory.free / memory.total * 100)}%），先收最冷的：答完 ${Math.round(c.idle / 60000)} 分钟` });
-        free += sessionBytes;
+        out.push({ ...c, rule: 'memory', reason: `内存紧（可用 ${Math.round(memory.free / memory.total * 100)}%），先收最冷的：答完 ${Math.round(c.idle / 60000)} 分钟${validBytes(c.bytes) ? `，进程树 ${gbText(c.bytes)}` : ''}` });
+        free += freed(c);
       }
     }
   }
@@ -163,12 +175,21 @@ function sessionMemView(est) {
 }
 
 // measure：async () => [{ id, bytes }] 或 [bytes]，每个在运行的会话一项；不给就一直用默认值。
+// 除均值外还留着最近一次测到的每会话字节数（byId / bytesOf(id)），收会话的「膨胀」规则按它判断；测量失败时为空。
 function createSessionMemEstimator({ measure = null, now = Date.now, ttlMs = SESSION_MEM_TTL_MS, defaultBytes = SESSION_BYTES, minSampleBytes = MIN_SESSION_SAMPLE_BYTES } = {}) {
   const fallback = (reason, error) => ({ bytes: defaultBytes, source: 'default', samples: 0, reason, ...(error ? { error } : {}), at: now() });
   let state = { ...fallback(measure ? 'not-yet' : 'no-measure'), at: 0 };
+  let byId = {};
   let checkedAt = -Infinity, pending = null;
   function settle(list) {
-    const all = (Array.isArray(list) ? list : []).map(x => Number(x && typeof x === 'object' ? x.bytes : x)).filter(Number.isFinite);
+    const items = Array.isArray(list) ? list : [];
+    const nextById = {};
+    for (const x of items) {
+      const b = Number(x && typeof x === 'object' ? x.bytes : NaN);
+      if (x && typeof x === 'object' && x.id && Number.isFinite(b)) nextById[String(x.id)] = b;
+    }
+    byId = nextById;
+    const all = items.map(x => Number(x && typeof x === 'object' ? x.bytes : x)).filter(Number.isFinite);
     const bytes = all.filter(b => b >= minSampleBytes);
     if (!bytes.length) return { ...fallback('no-samples'), seen: all.length };
     return { bytes: Math.round(bytes.reduce((a, b) => a + b, 0) / bytes.length), source: 'measured', samples: bytes.length, at: now() };
@@ -178,7 +199,7 @@ function createSessionMemEstimator({ measure = null, now = Date.now, ttlMs = SES
     if (pending) return pending;
     checkedAt = now();
     pending = (async () => {
-      try { state = settle(await measure()); } catch (error) { state = fallback('failed', error && error.message || String(error)); }
+      try { state = settle(await measure()); } catch (error) { byId = {}; state = fallback('failed', error && error.message || String(error)); }
       return state;
     })().finally(() => { pending = null; });
     return pending;
@@ -186,9 +207,14 @@ function createSessionMemEstimator({ measure = null, now = Date.now, ttlMs = SES
   // 同步读当前估计；缓存过期就在后台重测（这一次仍返回上一次的结果）。
   function current() {
     if (measure && !pending && now() - checkedAt >= ttlMs) void refresh();
-    return { ...state, note: sessionMemNote(state) };
+    return { ...state, byId: { ...byId }, note: sessionMemNote(state) };
   }
-  return { current, refresh };
+  // 某个会话最近一次实测的进程树字节数；没测到返回 null。
+  function bytesOf(id) {
+    const b = byId[String(id)];
+    return Number.isFinite(b) ? b : null;
+  }
+  return { current, refresh, bytesOf };
 }
 
 module.exports = {
@@ -196,5 +222,5 @@ module.exports = {
   learnKeepWarm, followupGaps, memoryNow, planRelease, quantile,
   sessionTreeBytes, codeagentSessionRoots, sessionMemNote, sessionMemView, createSessionMemEstimator,
   DEFAULT_KEEP_WARM_MS, MIN_KEEP_WARM_MS, MAX_KEEP_WARM_MS, LOW_FREE_RATIO, HIGH_FREE_RATIO, PARALLEL_MEM_FLOOR, SESSION_BYTES,
-  SESSION_MEM_TTL_MS, MIN_SESSION_SAMPLE_BYTES,
+  SESSION_MEM_TTL_MS, MIN_SESSION_SAMPLE_BYTES, BLOAT_BYTES, BLOAT_MIN_IDLE_MS,
 };

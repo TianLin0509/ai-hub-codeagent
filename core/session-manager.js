@@ -486,7 +486,20 @@ function buildCodeAgentPtyLaunch(id, kind, opts, cwd, env, config, auth = null) 
   if (EFFORTS.includes(opts.effort)) args.push('--effort', opts.effort);
   args.push('--permission-mode', CLAUDE_PERMISSION_MODES.has(opts.permissionMode) ? opts.permissionMode : 'bypassPermissions');
   if (opts.appendSystemPromptFile) args.push('--append-system-prompt-file', String(opts.appendSystemPromptFile));
-  if (mcp.configPaths && mcp.configPaths.length) args.push('--mcp-config', ...mcp.configPaths);
+  // 通道会话带上成员自己注册的 MCP（2026-10-21 用户拍板，至少 read-KIA；core/codeagent-member-mcp.js）：号的配置目录、个人账号、
+  // ~/.cac.json、工作目录 .mcp.json、local 作用域里登记的，只读收集后写一份到 Hub 数据目录交给 --mcp-config，不改成员的配置文件。
+  // 用户目录取会话环境（真实启动时由 process.env 来）；环境里没有用户目录（单测夹具）就不扫。
+  let memberMcp = null;
+  if (opts.purpose === 'company-bridge') {
+    try {
+      const homeDir = env.USERPROFILE || env.HOME || '';
+      // 个人账号配置目录按 Hub 自己的环境算（会话环境里的配置目录变量已换成这个号的）
+      const personalDir = homeDir ? require('./codeagent-config').resolveCodeAgentConfig(process.env).configDir : '';
+      memberMcp = require('./codeagent-member-mcp').writeMemberMcpConfig({ hubDataDir, cwd, accountDir: config.configDir, personalDir, homeDir });
+    } catch (error) { memberMcp = { file: null, names: [], error: error.message }; }
+  }
+  const mcpPaths = [...(mcp.configPaths || []), ...(memberMcp && memberMcp.file ? [memberMcp.file] : [])];
+  if (mcpPaths.length) args.push('--mcp-config', ...mcpPaths);
   if (mcp.profile !== 'full') args.push('--strict-mcp-config');
   for (const dir of claudeNativeAddDirs(opts.addDirs)) args.push('--add-dir', dir);
   const { findNativeClaudeHistory } = require('./claude-native-history');
@@ -520,6 +533,7 @@ function buildCodeAgentPtyLaunch(id, kind, opts, cwd, env, config, auth = null) 
     ...(opts.purpose ? { purpose: opts.purpose } : {}),
     requested: inheritModel ? '(inherit)' : opts.model || '(default)', model: requestedModel || '(inherit)', resume: identity.length ? identity[0] : '',
     ...(bridge ? { settingSources: 'user' } : {}),
+    ...(memberMcp ? { memberMcp: memberMcp.names.join(',') || '(none)', ...(memberMcp.error ? { memberMcpError: memberMcp.error } : {}) } : {}),
     ...(auth ? { auth: auth.source, inheritedAuthIgnored: auth.ignoredForNewSessions } : {}),
     ...(codeAgentRouteModel(opts) ? { route: codeAgentRouteModel(opts) } : {}),
   });
@@ -1619,7 +1633,22 @@ class SessionManager extends EventEmitter {
       const target = codeagentPool ? codeAgentRouteModel(opts) || codeagentPool.model
           || pool.strictDefaultModel(pool.readSettingsModel(codeagentPool.account.dir), codeagentPool.account.models, { authoritative: !!codeagentPool.account.modelsAuthoritative }).model || ''
         : codeAgentExpectedModel({}, { configDir: codeagentConfig.configDir, single: true });
-      opts = { ...opts, model: target || undefined, codeagentModelPick: !!target, codeagentAccountModel: target || undefined };
+      // 不需要或暂时不该开菜单时直接发问题（2026-10-21 同事公司 Hub：自动选模型 13 次全失败、每次都耽误发问题）：
+      // 号池号默认就是目标且家里没指定、恢复的会话上一轮就是目标模型作答、这个号连续 3 次没选成（4 小时熔断）。见 core/codeagent-auto-pick.js。
+      let skip = null;
+      try {
+        skip = require('./codeagent-auto-pick').skipReason({ dataDir: getHubDataDir(), account: codeagentPool ? codeagentPool.account.id : 'personal',
+          isPool: !!codeagentPool, target, routeModel: codeAgentRouteModel(opts), freshLaunch, actualModel: opts.codeagentActualModel || '',
+          writtenModel: codeagentPool ? pool.readSettingsModel(codeagentPool.account.dir) : '' });
+      } catch (error) { console.warn('[codeagent] 自动选模型的跳过判断出错，照常选：' + error.message); }
+      if (skip) {
+        try { require('./codeagent-models').appendModelLog(getHubDataDir(), { event: 'pick-skipped', session: String(id).slice(0, 8),
+          // 日志会随诊断发回家里：号用代称（号1、号2……），不写号主信息
+          account: require('./codeagent-default-model-guard').accountOf({ codeagentPoolAccount: codeagentPool ? codeagentPool.account.id : undefined }, getHubDataDir()).alias.replace(/\s+/g, ''), purpose: opts.purpose, model: target, reason: skip.reason, note: skip.note }); } catch { /* 只是日志 */ }
+        console.log(`[codeagent] ${String(id).slice(0, 8)} 不开模型菜单（${skip.reason}）：${skip.note}`);
+      }
+      opts = skip ? { ...opts, model: undefined, codeagentModelPick: false, codeagentAccountModel: undefined }
+        : { ...opts, model: target || undefined, codeagentModelPick: !!target, codeagentAccountModel: target || undefined };
     }
 
     if (isClaude) {
@@ -1629,6 +1658,8 @@ class SessionManager extends EventEmitter {
       sessionEnv.CLAUDE_HUB_SESSION_ID = id;
       if (this.hookPort) sessionEnv.CLAUDE_HUB_PORT = String(this.hookPort);
       if (this.hookToken) sessionEnv.CLAUDE_HUB_TOKEN = this.hookToken;
+      // 软压缩：用户目录的提醒钩子看到它，才让 AI 在断点结束本轮留标记（main/soft-compact-controller.js 只管 PTY）。
+      if (require('./agent-runtime-mode').agentRuntimeMode() !== 'native') sessionEnv.CLAUDE_HUB_SOFT_COMPACT = '1';
       // Propagate data-dir override so the statusline script writes its cache
       // into the isolated test dir instead of the production ~/.ai-hub-community.
       if (process.env.CLAUDE_HUB_DATA_DIR) {

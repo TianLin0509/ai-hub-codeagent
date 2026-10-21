@@ -9,6 +9,8 @@
   const { ipcRenderer, shell } = require('electron');
   const productName = distribution.productName || 'AI Hub';
   let state = null, dialog = null;
+  // 点「立即重启」时通道还有在途问题：主进程回 needsConfirm，弹窗里让人选「答完再重启」还是「立即重启」（2026-10-21）。
+  let confirmInfo = null;
 
   const css = `
   .app-update-dialog { position: fixed; inset: 0; margin: auto; height: fit-content; max-height: calc(100vh - 48px); overflow: auto; width: min(560px, calc(100vw - 48px)); padding: 0; border: 1px solid var(--border-subtle, #e3e1ea); border-radius: 14px;
@@ -52,6 +54,8 @@
   .au-msg.ok { background: #ecf7f0; color: #24704a; }
   .au-msg.bad { background: #fbefec; color: #9b3a24; }
   .au-msg.info { background: var(--surface-sunken, #f6f5fa); color: var(--fg-muted, #6b7080); }
+  .au-msg.warn { background: #fff6e5; color: #8a5a00; }
+  .au-wait-list { margin: 4px 0 8px; padding-left: 18px; font-size: 12px; color: var(--fg-muted, #6b7080); }
   .au-foot { display: flex; justify-content: flex-end; gap: 8px; padding: 12px 20px 18px; }
   .au-btn { padding: 7px 16px; border-radius: 8px; border: 1px solid var(--border-subtle, #dcd9e6); background: var(--surface-raised, #fff); color: inherit; font: inherit; font-size: 13px; cursor: pointer; }
   .au-btn:hover { background: var(--surface-sunken, #f6f5fa); }
@@ -112,8 +116,35 @@
       + `<button class="au-btn${state.phase === 'error' ? '' : ' primary'}" data-au="retry">重新检查</button></div></div>`).join('');
   }
 
+  const hhmm = ms => { const d = new Date(ms); return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0'); };
+  const waitItems = items => (items && items.length ? `<ul class="au-wait-list">${items.slice(0, 8).map(x => `<li>${x.kind === 'bridge'
+    ? `通道问题 ${esc(x.thread || '')}${x.round != null ? ` 第 ${esc(x.round)} 轮` : ''}` : `本机会话${x.title ? '「' + esc(x.title) + '」' : ''}`}</li>`).join('')}${items.length > 8 ? `<li>另有 ${items.length - 8} 个</li>` : ''}</ul>` : '');
+  // 正在等通道问题答完再重启（本机点的或家里发的）：说清等谁、等到几点，可以立即重启或取消。
+  function waitBlock(w) {
+    return `<div class="au-msg warn" data-au-wait>${esc(w.text)}。期间新问题先排队，答完立即重启；到点还没答完的先记下、重启后自动接着做。</div>${waitItems(w.items)}`;
+  }
   function render() {
     if (!dialog || !state) return;
+    const w = state.restartWait;
+    if (w || confirmInfo) {
+      const c = confirmInfo, versions0 = `<div class="au-versions"><div class="au-ver"><small>当前版本</small><b>v${esc(state.current)}</b></div>`
+        + (state.latest ? `<span class="au-arrow">→</span><div class="au-ver"><small>新版本</small><b>v${esc((w && w.target) || state.latest.version)}</b></div>` : '') + '</div>';
+      let body0, foot0;
+      if (w) {
+        body0 = versions0 + waitBlock(w);
+        foot0 = `<button class="au-btn" data-au="close">关闭</button>${w.local ? '<button class="au-btn" data-au="wait-cancel">不重启了</button>' : ''}`
+          + `<button class="au-btn primary" data-au="apply-now">立即重启${w.count ? `（打断 ${w.count} 个问题）` : ''}</button>`;
+      } else {
+        body0 = versions0 + `<div class="au-msg warn" data-au-confirm>通道里还有 ${esc(c.text)}在答。现在重启会打断这 ${c.count} 个问题（重启后自动恢复会话接着做，回执照常发回家里）。</div>${waitItems(c.items)}`
+          + `<div class="au-msg info">「答完再重启」：最多等 ${c.graceMinutes} 分钟（预计最晚 ${hhmm(c.deadline)}），期间新问题先排队${c.queued ? `（现有 ${c.queued} 个排队的重启后接着发）` : ''}，答完立即重启。</div>`;
+        foot0 = `<button class="au-btn" data-au="close">稍后</button><button class="au-btn" data-au="apply-now">立即重启（打断 ${c.count} 个问题）</button>`
+          + '<button class="au-btn primary" data-au="apply-wait">答完再重启</button>';
+      }
+      dialog.innerHTML = `<div class="au-head"><img src="../claude-wx.ico" alt=""><div class="au-title"><strong>软件更新</strong><span>${esc(productName)}${distribution.editionBadge ? ' · ' + esc(distribution.editionBadge) : ''}</span></div>`
+        + '<button class="au-close" data-au="close" aria-label="关闭">×</button></div>'
+        + `<div class="au-body">${body0}</div><div class="au-foot">${foot0}</div>`;
+      return;
+    }
     const s = state, latest = s.latest, plan = s.plan;
     const versions = `<div class="au-versions"><div class="au-ver"><small>当前版本</small><b>v${esc(s.current)}</b></div>`
       + (latest && plan && plan.kind !== 'none' ? `<span class="au-arrow">→</span><div class="au-ver"><small>新版本</small><b>v${esc(latest.version)}</b></div>`
@@ -175,7 +206,7 @@
     const action = event.target.closest('[data-au]')?.dataset.au;
     if (!action) return;
     try {
-      if (action === 'close') dialog?.close();
+      if (action === 'close') { confirmInfo = null; dialog?.close(); }
       else if (action === 'retry') { await ipcRenderer.invoke('app-update:check'); }
       else if (action === 'download') {
         // 已经动手更新了，设置上的红点就不用再提醒。
@@ -183,7 +214,12 @@
         await ipcRenderer.invoke('app-update:download');
       }
       else if (action === 'cancel') await ipcRenderer.invoke('app-update:cancel');
-      else if (action === 'apply') await ipcRenderer.invoke('app-update:apply');
+      else if (['apply', 'apply-wait', 'apply-now', 'wait-cancel'].includes(action)) {
+        const mode = { apply: 'auto', 'apply-wait': 'wait', 'apply-now': 'now', 'wait-cancel': 'cancel' }[action];
+        const next = await ipcRenderer.invoke('app-update:apply', { mode });
+        confirmInfo = next && next.needsConfirm ? next.confirm : null;
+        if (next && next.phase) update(next); else render();
+      }
       else if (action === 'manual' && state?.releasePage) shell.openExternal(state.releasePage);
       else if (action === 'allow-open' || action === 'allow-copy') {
         const button = event.target.closest('[data-au]');
@@ -254,7 +290,8 @@
   function renderPill() {
     let pill = document.getElementById('hub-update-pill');
     // 「有新版本」改由弹窗 + 设置红点提醒；标题栏只在下载中 / 已就绪时提示进度和重启。
-    const show = state && ['ready', 'downloading'].includes(state.phase) && state.latest && state.plan?.kind !== 'none';
+    const wait = state && state.restartWait;
+    const show = wait || (state && ['ready', 'downloading'].includes(state.phase) && state.latest && state.plan?.kind !== 'none');
     if (!show) { pill?.remove(); return; }
     if (!pill) {
       pill = document.createElement('button');
@@ -263,7 +300,8 @@
       const anchor = document.getElementById('hub-version');
       if (anchor) anchor.after(pill); else document.getElementById('hub-identity')?.appendChild(pill);
     }
-    pill.textContent = state.phase === 'ready' ? `v${state.latest.version} 已就绪，重启生效` : state.phase === 'downloading' ? `正在下载 v${state.latest.version}` : `有新版本 v${state.latest.version}`;
+    pill.textContent = wait ? (wait.count ? `等 ${wait.count} 个${wait.bridgeCount === wait.count ? '通道问题' : '任务'}答完再重启 · 最晚 ${hhmm(wait.deadline)}` : '马上重启')
+      : state.phase === 'ready' ? `v${state.latest.version} 已就绪，重启生效` : state.phase === 'downloading' ? `正在下载 v${state.latest.version}` : `有新版本 v${state.latest.version}`;
     pill.title = '点击查看更新';
   }
 
@@ -292,6 +330,11 @@
 
   const update = next => { state = next; render(); renderPill(); renderBadge(); renderUnread(); maybePromptOnce(); };
   ipcRenderer.on('app-update:state', (_e, next) => update(next));
+  // 通道状态变了（问题答完、开始等待重启……）：重读一次，标题栏小标签和弹窗里的「等 N 个问题」跟着变；等待中每 30 秒刷新已等时长。
+  let refreshTimer = null;
+  const refresh = () => { if (refreshTimer) return; refreshTimer = setTimeout(() => { refreshTimer = null; ipcRenderer.invoke('app-update:get-state').then(next => { if (next) update(next); }).catch(() => {}); }, 1500); };
+  ipcRenderer.on('bridge:changed', refresh);
+  setInterval(() => { if (state && state.restartWait) refresh(); }, 30000);
   addMenuEntry();
   ipcRenderer.invoke('app-update:get-state').then(initial => {
     update(initial);
