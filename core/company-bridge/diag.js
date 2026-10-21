@@ -555,6 +555,21 @@ async function codeagent(bridge, deps, sys, ctx, poolRaw, poolError) {
       // （之后的远程重启、更新都会把同一份环境带下去）
       startedInside: { hubSession: !!env.CLAUDE_HUB_SESSION_ID, codeagent: !!env.CODEAGENT3_LAUNCHER_PID || Object.keys(env).some(k => /^CODEAGENT_HUB_/.test(k)) } };
   }
+  // 通道会话自学习去重（core/codeagent-member-mcp.js，2026-10-21）：这台 CodeAgent 会自己加载、通道配置里不再重复写的插件，按号给代称、不回路径。
+  if (deps.dataDir) {
+    try {
+      const norm = d => String(d || '').replace(/\//g, '\\').replace(/\\+$/, '').toLowerCase();
+      let personalDir = '';
+      try { personalDir = norm(require('../codeagent-config').resolveCodeAgentConfig(process.env).configDir); } catch { /* 没有个人目录 */ }
+      const label = dir => {
+        if (personalDir && dir === personalDir) return '个人';
+        try { const m = require('../codeagent-pool').poolDirMatch(deps.dataDir, dir); if (m && m.id) return ctx.aliases?.get(m.id) || '号池里的一个号'; } catch { /* 认不出 */ }
+        return '某个号';
+      };
+      const native = require('../codeagent-member-mcp').describeNativeMcp(deps.dataDir, label);
+      if (native.version || native.accounts.length) out.nativeMcp = { version: native.version, accounts: native.accounts.map(a => ({ account: a.account, names: a.names, learnedAt: a.learnedAt, text: a.text })) };
+    } catch (error) { out.nativeMcpError = errText(error); }
+  }
   const accounts = poolRaw?.accounts || [];
   out.pool = { total: accounts.length, ready: accounts.filter(a => a.state === 'ready').length, needLogin: accounts.filter(a => a.state !== 'ready').length };
   // 额度
@@ -792,7 +807,7 @@ function summarize(d) {
     parts.push(`通道 ${h.queue.running} 个在跑、${h.queue.queued} 个排队${par ? `（上限 ${par.cap}，受${par.limitedBy}限制）${par.sessionGB ? `，内存按每个会话 ${par.sessionGB} GB 估算（${par.sessionMemSource === 'measured' ? `实测 ${par.sessionMemSamples} 个会话的平均` : '默认值'}）` : ''}` : ''}`);
   }
   const c = d.codeagent;
-  if (c && !c.error) parts.push(`CodeAgent ${c.version ? 'v' + c.version : '版本没读到'}${(c.quota || []).length ? ' · 额度 ' + c.quota.map(q => `${q.account} ${q.pct}%`).join('、') : ''}`);
+  if (c && !c.error) parts.push(`CodeAgent ${c.version ? 'v' + c.version : '版本没读到'}${(c.quota || []).length ? ' · 额度 ' + c.quota.map(q => `${q.account} ${q.pct}%`).join('、') : ''}${(c.nativeMcp?.accounts || []).length ? ' · ' + c.nativeMcp.accounts.map(a => `${a.account}${a.text}`).join('；') : ''}`);
   if (c && c.personal && c.personal.inPool) parts.push(`个人配置目录和${c.personal.inPoolAlias || '号池'}的目录重叠`);
   if (c?.personal?.inheritedAuthToken?.present) parts.push('Hub 继承了认证令牌；新会话优先使用完整且可登录的账号凭证');
   if (c && c.personal && c.personal.inheritedConfigDir) parts.push(c.personal.inheritedConfigDir.note + (c.personal.inheritedConfigDir.inPool ? `（它指向${c.personal.inheritedConfigDir.inPoolAlias || '号池'}的目录）` : ''));

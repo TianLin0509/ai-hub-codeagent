@@ -533,11 +533,41 @@ function buildCodeAgentPtyLaunch(id, kind, opts, cwd, env, config, auth = null) 
     ...(opts.purpose ? { purpose: opts.purpose } : {}),
     requested: inheritModel ? '(inherit)' : opts.model || '(default)', model: requestedModel || '(inherit)', resume: identity.length ? identity[0] : '',
     ...(bridge ? { settingSources: 'user' } : {}),
-    ...(memberMcp ? { memberMcp: memberMcp.names.join(',') || '(none)', ...(memberMcp.error ? { memberMcpError: memberMcp.error } : {}) } : {}),
+    ...(memberMcp ? { memberMcp: memberMcp.names.join(',') || '(none)', ...(memberMcp.error ? { memberMcpError: memberMcp.error } : {}),
+    ...(memberMcp.skipped && memberMcp.skipped.length ? { nativeMcpSkipped: memberMcp.skipped.join(',') } : {}) } : {}),
     ...(auth ? { auth: auth.source, inheritedAuthIgnored: auth.ignoredForNewSessions } : {}),
     ...(codeAgentRouteModel(opts) ? { route: codeAgentRouteModel(opts) } : {}),
   });
-  return { cmd, sessionId, model: requestedModel };
+  // 学习去重要用（core/codeagent-member-mcp.js learnNativeMcp）：这次写进去的、按记录跳过的
+  const memberMcpLearn = memberMcp && !memberMcp.error && (memberMcp.file || (memberMcp.skipped && memberMcp.skipped.length))
+    ? { accountDir: config.configDir, command: config.command, written: memberMcp.file ? memberMcp.servers || {} : {}, skipped: memberMcp.skippedServers || {} } : null;
+  return { cmd, sessionId, model: requestedModel, ...(memberMcpLearn ? { memberMcpLearn } : {}) };
+}
+
+// 通道会话启动约 75 秒后看一眼它的进程树，学「本机 CodeAgent 会自己加载哪些插件」（2026-10-21 v3.0.2 回归：每个插件起 2 份）。
+// 只记录、写一行日志，不结束任何进程；这一会话里已经起的重复由膨胀回收兜底。失败只影响学习，不影响会话。
+const NATIVE_MCP_LEARN_DELAY_MS = 75_000;
+let nativeMcpInspector = null;
+function scheduleNativeMcpLearn(manager, id, rootPid, learn, delayMs = NATIVE_MCP_LEARN_DELAY_MS) {
+  if (!learn || !(rootPid > 0)) return null;
+  const timer = setTimeout(async () => {
+    const hubDataDir = getHubDataDir();
+    const log = fields => { try { require('./codeagent-models').appendModelLog(hubDataDir, { event: 'native-mcp', session: String(id).slice(0, 8), ...fields }); } catch { /* 只影响日志 */ } };
+    try {
+      const s = manager.sessions && manager.sessions.get(id);
+      if (!s || !s.pty || Number(s.pty.pid) !== Number(rootPid) || (s.info && /^(dormant|closed)$/.test(String(s.info.status || '')))) return;
+      nativeMcpInspector = nativeMcpInspector || require('./process-inspector').createProcessInspector({ ttlMs: 20_000, logger: { warn() {} } });
+      const snapshot = await nativeMcpInspector.snapshot({ force: true });
+      const mod = require('./codeagent-member-mcp');
+      let version = '';
+      try { version = await require('./company-bridge/diag').defaultSys().codeagentVersion(learn.command); }
+      catch { version = mod.readNativeStore(hubDataDir).lastVersion || ''; } // 版本读不出来按上一次的算
+      const r = mod.learnNativeMcp({ hubDataDir, accountDir: learn.accountDir, version, written: learn.written, skipped: learn.skipped, snapshot, rootPid });
+      log({ version: version || '(unknown)', learned: r.learned.join(','), dropped: r.dropped.join(','), note: r.note });
+    } catch (error) { log({ error: error && error.message, note: '学习插件是否重复没做成，不影响会话' }); }
+  }, delayMs);
+  if (timer.unref) timer.unref();
+  return timer;
 }
 
 function applyClaudeSessionEnv(sessionEnv, cv) {
@@ -2083,6 +2113,9 @@ class SessionManager extends EventEmitter {
       conptyInheritCursor: (isCodexRuntime || isKimi || isCodeAgent) ? false : !opts.noInheritCursor,
     });
     } catch (error) { codexEditorInput?.dispose(); antigravityForkCleanup?.(); throw error; }
+    if (codeagentLaunch && codeagentLaunch.memberMcpLearn) {
+      try { scheduleNativeMcpLearn(this, id, Number(ptyProcess && ptyProcess.pid), codeagentLaunch.memberMcpLearn); } catch { /* 只影响学习 */ }
+    }
 
     let currentModel = null;
     if (isClaude) {
@@ -4147,6 +4180,7 @@ module.exports = {
     claudePermissionModeArg,
     buildClaudePtyLaunch,
     buildCodeAgentPtyLaunch,
+    scheduleNativeMcpLearn,
     shouldPickCodeAgentModel,
     codeAgentRouteModel,
     applyClaudeSessionEnv,
