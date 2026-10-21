@@ -109,8 +109,23 @@ function createCompanyAssistantPage({ document, window, ipcRenderer, openSession
       !d.cliFound ? '<button class="ca-link ca-side-copy" data-ca="find-cli">查找</button>' : !online && !renewing ? '<button class="ca-link ca-side-copy" data-ca="login">扫码登录</button>' : '')
       + row('✉', '会议、日程与邮件', mailText, coverages.every(([, c]) => c?.status === 'complete') ? 'ok' : coverages.some(([, c]) => ['failed', 'partial'].includes(c?.status)) ? 'warn' : '', 'settings-tab:welink')
       + row('▣', '手机群', !p.groupId ? '填入群 ID 即可接通' : phone.lastError ? phone.lastError : !p.enabled ? '已暂停' : (p.groupName || '群 ' + p.groupId.slice(-6)), p.enabled && p.groupId && !phone.lastError ? 'ok' : '', 'settings-tab:phone')
+      + toolsRow(row)
       + row('↻', '数据更新时间', d.refreshing ? '正在刷新…' : d.refreshedAt ? when(d.refreshedAt) : '还没取过数据', d.refreshedAt ? 'ok' : '', 'refresh', '<button class="ca-link ca-side-copy" data-ca="refresh" title="刷新数据">刷新</button>')
       + `<p class="ca-next ca-side-copy">下一份简报 · ${d.nextBriefAt ? when(d.nextBriefAt) : '—'}</p>`;
+  }
+  // 会话工具（v3.1.1）：助理会话里查、管其他会话的 hub_sessions 接没接上。没接上时写原因猜测，附「重开助理会话」。
+  let toolsTimer = null;
+  function toolsRow(row) {
+    const t = data.tools;
+    clearTimeout(toolsTimer);
+    if (!t) return '';
+    // 「正在接通」到期（会话起来满 90 秒）时重新取一次状态，到点翻成「未接上」。
+    if (t.state === 'starting' && t.checkAt) toolsTimer = setTimeout(() => { void load().catch(() => {}); }, Math.max(1000, t.checkAt - (data.now || Date.now()) + 500));
+    const color = { linked: 'ok', starting: 'run', missing: 'warn' }[t.state] || '';
+    if (t.state !== 'missing') return row('⇄', '会话工具', t.label, color, 'open-session');
+    // 原因单独一行（沿用「下一份简报」那行的小字样式），侧栏窄也能读全
+    return row('⇄', '会话工具', t.label, color, 'open-session', '<button class="ca-link ca-side-copy" data-ca="reopen-session">重开助理会话</button>')
+      + (t.reason ? `<p class="ca-next ca-side-copy ca-tools-reason">原因：${esc(t.reason)}</p>` : '');
   }
   function messageCoverage() {
     const scope = data.scope;
@@ -142,12 +157,25 @@ function createCompanyAssistantPage({ document, window, ipcRenderer, openSession
   function loginPanel() {
     const f = data.loginFlow;
     if (!f || f.state === 'ok') return '';
+    // 2026-10-22 v3.1.1：真机二维码是字符画，主进程转成 SVG（kind:'blocks'）按原尺寸显示，不缩放免得模块边缘发糊；
+    // 登录网页（f.url）不是图片，只做下面那行「在浏览器打开」。
+    const p = f.progress || {};
+    const failed = f.state === 'failed' || p.phase === 'failed', scanned = !failed && p.phase === 'scanned';
+    // 超时或失败后旧二维码已失效、扫码成功后也用不着了，都不再显示。
     let qr = '';
-    if (f.qr?.kind === 'data' || f.qr?.kind === 'url') qr = `<img class="ca-qr" src="${esc(f.qr.value)}" alt="WeLink 登录二维码">`;
+    if (failed || scanned) { /* 不显示 */ } else if (f.qr?.kind === 'blocks') qr = `<img class="ca-qr ca-qr-blocks" src="${esc(f.qr.value)}" width="${Number(f.qr.px) || ''}" height="${Number(f.qr.px) || ''}" alt="WeLink 登录二维码">`;
+    else if (f.qr?.kind === 'data') qr = `<img class="ca-qr" src="${esc(f.qr.value)}" alt="WeLink 登录二维码">`;
     else if (f.qr?.kind === 'file') qr = `<img class="ca-qr" src="${esc('file:///' + f.qr.value.replace(/\\/g, '/'))}" alt="WeLink 登录二维码">`;
-    const state = { waiting: '用手机 WeLink 扫下面的二维码；扫完这里会自动刷新。', finished: '登录命令已结束，正在核对登录状态…', failed: '登录没成功：' + esc(f.error || ''), ok: '' }[f.state] || '';
-    const raw = !f.qr && f.text ? `<pre class="ca-qr-text">${esc(f.text.slice(-3000))}</pre>` : '';
-    return `<div class="ca-login"><b>扫码登录 WeLink</b><p>${state}</p>${qr}${raw}<div class="ca-row"><button type="button" class="ca-btn" data-ca="close-panel">收起</button>${f.state === 'failed' || f.state === 'finished' ? '<button type="button" class="ca-btn primary" data-ca="login">再试一次</button>' : ''}</div></div>`;
+    const reason = p.phase === 'failed' ? p.reason : f.error;
+    const state = failed ? '登录没成功：' + esc(reason || '') : scanned ? '已扫码，正在登录…'
+      // 字符画已经输出完（进入等待扫码）却没能还原成二维码：同样提示改用链接，下面附上原样输出备查。
+      : { waiting: f.garbled || (!f.qr && p.phase === 'waiting') ? '二维码显示失败，请用下方链接。' : '用手机 WeLink 扫下面的二维码；扫完这里会自动刷新。', finished: '登录命令已结束，正在核对登录状态…', ok: '' }[f.state] || '';
+    const tick = f.state === 'waiting' && !failed && p.phase === 'waiting' ? `<p class="ca-qr-status">等待扫码 · ${Number(p.elapsed) || 0} 秒</p>` : '';
+    const link = !scanned && /^https:\/\//i.test(f.url || '') ? `<p class="ca-qr-link">二维码扫不出来？<button type="button" class="ca-link" data-ca="open-login-url">在浏览器打开</button></p>` : '';
+    // 认不出的输出原样给出来（排查用）；框还在流式输出（obtaining）、判成乱码或已结束时不贴。
+    const raw = !f.qr && f.text && !f.garbled && !failed && !scanned && p.phase !== 'obtaining' ?`<pre class="ca-qr-text">${esc(f.text.slice(-3000))}</pre>` : '';
+    const retry = failed || (f.state === 'finished' && !scanned) ? '<button type="button" class="ca-btn primary" data-ca="login">重新获取二维码</button>' : '';
+    return `<div class="ca-login"><b>扫码登录 WeLink</b><p>${state}</p>${qr}${tick}${link}${raw}<div class="ca-row"><button type="button" class="ca-btn" data-ca="close-panel">收起</button>${retry}</div></div>`;
   }
 
   // 邮件和日历没接入、WeLink 里也读不到邮箱时，在简报上方请用户填一次（只出现这一处，填完就消失）。
@@ -330,6 +358,7 @@ function createCompanyAssistantPage({ document, window, ipcRenderer, openSession
     if (verb === 'source') return openSource(arg, button.dataset.sourceDay);
     if (verb === 'retry') { await call('retry-chat', { id: arg }); await load(); return; }
     if (verb === 'login') { button.disabled = true; const panel = page.querySelector('[data-slot="panel"]'); panel.dataset.kind = 'login'; await call('login'); await load(); return; }
+    if (verb === 'open-login-url') { const url = data.loginFlow?.url || ''; if (/^https:\/\//i.test(url)) await require('electron').shell.openExternal(url); return; }
     if (verb === 'close-panel') { const panel = page.querySelector('[data-slot="panel"]'); panel.hidden = true; panel.innerHTML = ''; panel.dataset.kind = 'closed'; return; }
     if (verb === 'calendar') return openSettings('welink');
     if (verb === 'settings') return openSettings();
@@ -352,6 +381,7 @@ function createCompanyAssistantPage({ document, window, ipcRenderer, openSession
     if (verb === 'setup-mail') return setupMail(page.querySelector('[data-f="setup-email"]'), page.querySelector('[data-f="setup-msg"]'), button);
     if (verb === 'settings-tab') return openSettings(arg);
     if (verb === 'open-session') return window.__companyAssistantOpenSession();
+    if (verb === 'reopen-session') { button.disabled = true; showMessage?.('正在重开助理会话…'); await call('reopen-session'); await load(); showMessage?.('助理会话已重开，会话工具接上后这里会显示「已接上」'); return; }
     const reopenSettings = () => { const p = page.querySelector('[data-slot="panel"]'); if (p.dataset.kind === 'settings' && !p.hidden) openSettings(); };
     if (verb === 'find-cli') { button.disabled = true; await call('find-cli'); await load(); reopenSettings(); showMessage?.(data.cliFound ? '找到 welink-cli 了' : '全盘也没找到 welink-cli，可以点「手动选择…」'); return; }
     if (verb === 'pick-cli') { const r = await call('pick-cli'); if (!r.canceled) { showMessage?.('已用 ' + r.path); await load(); reopenSettings(); } return; }

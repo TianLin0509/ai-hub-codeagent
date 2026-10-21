@@ -69,7 +69,7 @@ function createSessionContextMenuController({
     const session = sessions.get(sessionId);
     const meeting = meetings[sessionId];
     const referenceBtn = contextMenuEl.querySelector('[data-action="reference"]');
-    if (referenceBtn) referenceBtn.style.display = canReference(session) ? '' : 'none';
+    if (referenceBtn) referenceBtn.style.display = (canReference(session) || (meeting && typeof copyText === 'function')) ? '' : 'none';
     if (restartBtn) {
       const restartAllowed = !!(session && session.purpose !== 'xresearch-research');
       restartBtn.style.display = restartAllowed ? '' : 'none';
@@ -138,15 +138,15 @@ function createSessionContextMenuController({
         const meeting = meetings[sid];
 
         if (action === 'reference') {
-          if (!canReference(session)) return;
+          if (!canReference(session) && !(meeting && typeof copyText === 'function')) return;
           showForkToast(document, '正在准备会话引用…');
           try {
-            const result = await ipcRenderer.invoke('session-reference:resolve', { sessionId: sid });
+            const result = await ipcRenderer.invoke('session-reference:resolve', meeting ? { meetingId: sid } : { sessionId: sid });
             if (!result?.ok || !result.path) {
               showNotice('引用失败：' + (result?.message || result?.error || '没有可读取的聊天记录'));
               return;
             }
-            const text = buildReferenceText({ title: session.title || result.title, kind: session.kind, path: result.path });
+            const text = buildReferenceText({ title: (meeting || session).title || result.title, kind: meeting ? 'meeting' : session.kind, path: result.path });
             const copied = await copyText(text, { source: 'session-reference', silent: true });
             if (!copied?.ok) {
               showNotice('引用复制失败：剪贴板暂时不可用，请重试。');

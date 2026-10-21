@@ -2,8 +2,9 @@
 const W = require('./welink');
 const CHECK_MS = 5 * 60000, RETRY_MS = 10 * 60000, SCAN_LIMIT = 2;
 const authFailure = text => /(?:token|session)\s*(?:is\s*)?(?:expired|invalid)|unauthenticated|not\s+logged\s*in|未登录|登录(?:已)?(?:过期|失效)|no\s+token/i.test(String(text || ''));
-// Same recognition as the manual login panel (data URI, image path, URL), plus the prompt wording.
-const needsScan = text => !!W.qrFromLoginOutput(text) || /请.{0,12}扫码|二维码|scan\s+(?:the\s+)?qr|qr\s*code/i.test(String(text || ''));
+// Same recognition as the manual login panel (welink.loginNeedsScan): block-character QR art, data URI,
+// image path, URL, plus the fixed prompt lines of welink-cli 1.0.14 (Q-1021-14).
+const needsScan = text => W.loginNeedsScan(text);
 
 class AuthKeeper {
   constructor(a) {

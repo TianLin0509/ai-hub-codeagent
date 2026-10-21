@@ -155,6 +155,8 @@ function run(args, { cli, timeoutMs = 30000, allowSetup = false, sendGroup = '',
     const timer = setTimeout(() => stop(Object.assign(new Error(`welink-cli 超过 ${Math.round(timeoutMs / 1000)} 秒没返回：${list.slice(0, 2).join(' ')}`), { code: 'WELINK_TIMEOUT' })), timeoutMs);
     signal?.addEventListener('abort', aborted, { once: true });
     const tell = () => { if (onData) { try { onData(out + err); } catch { /* 显示失败不影响命令 */ } } };
+    // 按 UTF-8 解码且跨数据块拼字（二维码的 █▀▄ 各占 3 个字节，按块各自转字符串会把切开的字变成乱码）。
+    child.stdout?.setEncoding?.('utf8'); child.stderr?.setEncoding?.('utf8');
     child.stdout?.on('data', d => { out += d; tell(); });
     child.stderr?.on('data', d => { err += d; tell(); });
     child.on('error', e => { if (done) return; done = true; clearTimeout(timer); clearTimeout(cleanupTimer); signal?.removeEventListener('abort', aborted); reject(e); });
@@ -228,9 +230,108 @@ function groupMembers(text) {
 }
 const calendarNeedsSetup =text => /Exchange server domain not found|mail autodiscover/i.test(String(text || ''));
 
-// auth login 返回二维码（真机输出格式待核对）：图片路径、data URI 或网址都认。
+// ---- 扫码登录的二维码（2026-10-22 v3.1.1，依据公司回执 Q-1021-14：welink-cli 1.0.14 反汇编）----
+// 真机 auth login 不出图片、不出 base64，而是在 stdout 上用 Unicode 半块字符画二维码，外面套一个 +---+ / | | 的框；
+// 每个字符 = 1 列 × 2 行模块：█ 上下都黑，▀ 只有上黑，▄ 只有下黑，空格都白。框后面那个网址是登录网页，不是图片。
+const QR_CELL = Object.freeze({ ' ': [0, 0], '█': [1, 1], '▀': [1, 0], '▄': [0, 1] });
+const QR_MIN = 21; // 最小的二维码（版本 1）是 21×21 模块
+// 最后一个完整的框（两条等长的 +---+ 之间全是等宽的 |…| 行）。二维码刷新时一次输出里会有多个框，以最后一个为准；
+// 流式输出里框只到一半时不算。行内（包括行尾）的空格原样保留：它们是白模块。
+function lastQrBox(text) {
+  let box = null, last = null;
+  for (const line of String(text || '').split(/\r\n|\n|\r/)) {
+    const border = /^\s*\+(-+)\+\s*$/.exec(line);
+    if (border) {
+      if (box && box.rows.length && border[1].length === box.width) { last = box; box = null; } else box = { width: border[1].length, rows: [] };
+      continue;
+    }
+    if (!box) continue;
+    const row = /^\s*\|(.*)\|\s*$/.exec(line);
+    if (!row || row[1].length !== box.width) { box = null; continue; }
+    box.rows.push(row[1]);
+  }
+  return last;
+}
+// 字符画 → 布尔矩阵（true=黑）。只有矩阵完整、每个字符都认得时才返回，否则 null。
+// 奇数行的二维码最后一行字符只用 ▀：多出来的那半行全白，去掉它让矩阵回到正方形。
+function qrMatrixFromBlocks(text) {
+  const box = lastQrBox(text);
+  if (!box) return null;
+  const top = [], bottom = [];
+  for (const line of box.rows) {
+    const t = [], b = [];
+    for (const ch of line) { const cell = QR_CELL[ch]; if (!cell) return null; t.push(!!cell[0]); b.push(!!cell[1]); }
+    top.push(t); bottom.push(b);
+  }
+  const matrix = [];
+  top.forEach((t, i) => { matrix.push(t, bottom[i]); });
+  const width = box.width;
+  if (!bottom[bottom.length - 1].some(Boolean) && matrix.length !== width) matrix.pop();
+  if (width < QR_MIN || matrix.length < QR_MIN || matrix.some(r => r.length !== width)) return null;
+  return matrix;
+}
+// 布尔矩阵 → 半块字符画（与上面的解析互逆；测试和 welink-cli 替身用它按真机格式出图）。
+function qrBlocksFromMatrix(matrix) {
+  const width = matrix[0].length, lines = [];
+  for (let y = 0; y < matrix.length; y += 2) {
+    let s = '';
+    for (let x = 0; x < width; x += 1) { const t = !!matrix[y][x], b = !!(matrix[y + 1] && matrix[y + 1][x]); s += t && b ? '█' : t ? '▀' : b ? '▄' : ' '; }
+    lines.push('|' + s + '|');
+  }
+  const border = '+' + '-'.repeat(width) + '+';
+  return [border, ...lines, border].join('\n');
+}
+// 在主进程里把矩阵画成 SVG，交给页面的是 data: 地址（页面 CSP 只放行 'self' file: data: 图片，不用改 CSP，也不引入二维码库）。
+// 黑 #000、白底、四周留 4 个模块的静区（扫码需要），每个模块 7px，crispEdges 保证边缘不糊。
+function qrSvgDataUri(matrix, { cell = 7, margin = 4 } = {}) {
+  const width = matrix[0].length, height = matrix.length, W = (width + margin * 2) * cell, H = (height + margin * 2) * cell;
+  let d = '';
+  matrix.forEach((row, y) => {
+    for (let x = 0; x < width;) {
+      if (!row[x]) { x += 1; continue; }
+      let end = x; while (end < width && row[end]) end += 1;
+      d += `M${(x + margin) * cell} ${(y + margin) * cell}h${(end - x) * cell}v${cell}h-${(end - x) * cell}z`;
+      x = end;
+    }
+  });
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" shape-rendering="crispEdges"><rect width="${W}" height="${H}" fill="#fff"/><path fill="#000" d="${d}"/></svg>`;
+  return { value: 'data:image/svg+xml;base64,' + Buffer.from(svg, 'utf8').toString('base64'), px: W, modules: width };
+}
+// 输出里有完整的框，却一个 █▀▄ 都没有（或带 U+FFFD 替换符）：多半是编码不对。只报告，不猜着换 GBK。
+function loginOutputGarbled(text) {
+  const s = String(text || '');
+  if (/[█▀▄]/.test(s)) return false;
+  return s.includes('\uFFFD') || !!lastQrBox(s)?.rows.some(r => /\S/.test(r));
+}
+// 「If QR code is not displayed correctly, open this URL to scan:」后面那个登录网页（只认 https），作兜底链接，不当图片。
+function loginUrlFromOutput(text) {
+  const s = String(text || '');
+  const after = /open\s+this\s+url[^\r\n]*[\r\n]+\s*(https:\/\/[^\s"<>]+)/i.exec(s);
+  if (after) return after[1];
+  const any = s.match(/https:\/\/[^\s"<>]+/g);
+  return any ? any[any.length - 1] : null;
+}
+// 登录进度（显示用）：Waiting for scan... (elapsed N seconds) → 等待扫码；Scan successful → 已扫码；timeout/failed → 失败及原因。
+function loginProgress(text) {
+  const lines = String(text || '').split(/\r\n|\n|\r/).map(l => l.trim()).filter(Boolean);
+  let phase = null, elapsed = null, reason = '';
+  for (const line of lines) {
+    if (/^https?:\/\//i.test(line) || /not\s+displayed\s+correctly/i.test(line)) continue;
+    const wait = /Waiting\s+for\s+scan/i.test(line);
+    if (/Scan\s+successful/i.test(line)) { phase = 'scanned'; reason = ''; } else if (/time[d\s-]*out|expired|fail|error|超时|失败|过期/i.test(line)) { phase = 'failed'; reason = line.slice(0, 200); } else if (wait) {
+      phase = 'waiting'; reason = '';
+      const n = /elapsed\s+(\d+)\s*s/i.exec(line); elapsed = n ? Number(n[1]) : elapsed ?? 0;
+    } else if (!phase && /Obtaining\s+QR\s+code/i.test(line)) phase = 'obtaining';
+  }
+  return phase ? { phase, elapsed, reason } : null;
+}
+
+// auth login 的二维码：半块字符画（真机格式，优先）→ data URI → 图片路径 → 网址。
+// kind:'url' 只说明输出里有登录网页；它不是图片，页面不会放进 <img>，扫码面板只把它当「在浏览器打开」的兜底链接。
 function qrFromLoginOutput(text) {
   const s = String(text || '');
+  const matrix = qrMatrixFromBlocks(s);
+  if (matrix) { const svg = qrSvgDataUri(matrix); return { kind: 'blocks', value: svg.value, px: svg.px, modules: svg.modules }; }
   const dataUri = s.match(/data:image\/(?:png|jpe?g|svg\+xml);base64,[A-Za-z0-9+/=]+/);
   if (dataUri) return { kind: 'data', value: dataUri[0] };
   const file = s.match(/[A-Za-z]:\\[^\r\n"<>|]*?\.(?:png|jpe?g|bmp|svg)/i) || s.match(/\/[^\s"<>|]+\.(?:png|jpe?g|svg)/i);
@@ -239,5 +340,13 @@ function qrFromLoginOutput(text) {
   if (url) return { kind: 'url', value: url[0] };
   return null;
 }
+// 登录输出是否在要人扫码：手动扫码面板和自动续期（auth-keeper）共用这一个判断。
+// 认二维码本身（字符画、图片、网址），也认真机这几行固定文字——框还没画完时就能停下自动续期。
+const SCAN_PROMPT = /请.{0,12}扫码|二维码|scan\s+(?:the\s+)?qr|qr\s*code|Please\s+scan|Waiting\s+for\s+scan|WeLink\s+QR\s+Code\s+Login/i;
+function loginNeedsScan(text) {
+  const s = String(text || '');
+  return !!qrFromLoginOutput(s) || SCAN_PROMPT.test(s) || /^\s*\+-{21,}\+\s*$/m.test(s);
+}
 
-module.exports = { READ_ONLY, SETUP, checkArgs, resolveCli, findCliDeep, npmPrefixes, cliUnder, run, parseJson, parseJsonBig, groupMessages, groupMembers, loginState, calendarNeedsSetup, qrFromLoginOutput };
+module.exports = { READ_ONLY, SETUP, checkArgs, resolveCli, findCliDeep, npmPrefixes, cliUnder, run, parseJson, parseJsonBig, groupMessages, groupMembers, loginState, calendarNeedsSetup,
+  qrFromLoginOutput, qrMatrixFromBlocks, qrBlocksFromMatrix, qrSvgDataUri, loginOutputGarbled, loginUrlFromOutput, loginProgress, loginNeedsScan };

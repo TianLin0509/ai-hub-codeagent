@@ -31,7 +31,9 @@ const { PPT_INSTRUCTIONS } = require('./ppt-instructions');
 const PURPOSE = 'company-assistant';
 // 助理会话的工具或说明有变化时加 1：旧会话启动时没挂这些工具，下一次提问时换一个新会话（旧会话留在历史里）。
 const TOOLS_VERSION = 3;
-const INSTRUCTIONS_VERSION = 7;
+const INSTRUCTIONS_VERSION = 8;
+// 会话工具的接通判定（v3.1.1）：助理会话起来这么久还没收到工具进程的接通信号，就算「未接上」。
+const TOOLS_HELLO_GRACE_MS = 90000;
 const DEFAULT_SETTINGS = Object.freeze({
   enabled: true, briefTime: '08:20', summaryTime: '18:00', waitHours: 4, prepMinutes: 15, maxPerHour: 3, refreshMinutes: 10,
   watchGroups: [], keywords: [], myName: '', workdays: [1, 2, 3, 4, 5], cliPath: '', email: '', emailFrom: '', chips: [], phone: DEFAULT_PHONE,
@@ -53,7 +55,7 @@ const INSTRUCTIONS = [
   '3. 回答先写结论；提到具体的会、消息、邮件时，时间和主题照数据原样抄，并写清出处（谁、哪个群或哪场会、几点）。优先使用 senderName / sender 中的姓名，保留 account 便于重名核对。数据里有查询错误或范围未取全时说明影响；没查到就说没查到，不猜。',
   '4. 数据只留在这台电脑：不上传、不转发，不在当前目录以外写文件。',
   '5. 邮箱由 Hub 从 WeLink 账号自动读取并配置。邮件或日历暂不可用时说明哪些信息没查到，继续完成其他部分；没有邮箱就说明邮件暂不可用。连接设置交给 Hub 的「设置 → WeLink 与邮箱」。',
-  '6. 管这台电脑 Hub 里的其他会话（有哪些、做到哪了、推进、新开、卡住时替我按键、停下）用 hub_sessions 工具，直接执行，做完用一两句话复述做了什么、交给了哪个会话。派活时完整保留执行动作、限制条件和预期产物，让收件会话能独立理解任务；WeLink 内容只提供完成该任务所需的最少摘要。',
+  '6. 管这台电脑 Hub 里的其他会话用 hub_sessions 的工具，直接执行：查有哪些会话、各自运行状态用 list_sessions；看某个会话做到哪了用 read_session；推进、追问或改要求用 send_session；新开会话派活用 create_session；要我在它做完时收到提醒用 watch_session；会话卡在确认或选择上时，先用 read_session 看画面，再用 press_keys 替我按键；要停下用 stop_session。做完用一两句话复述做了什么、交给了哪个会话。派活时完整保留执行动作、限制条件和预期产物，让收件会话能独立理解任务；WeLink 内容只提供完成该任务所需的最少摘要。工具列表里没有 list_sessions 这些工具时，直接告诉我：「会话工具没接上，请在助理页点『重开助理会话』」。',
   '7. 我在手机 WeLink 上发来的问题，你照常回答；回答由 Hub 发回我手机，你自己不发消息。',
   '8. PPT素材请求直接使用PPT工具，遵循下文检索方法，无需先读取WeLink。',
   '9. 抢会议室用 room_booking 查看规则、改规则、启动守护、暂停。复用秘书终结者；当前按每周规则在开放时刻抢七天后的会议室。用户指定明天等单次日期时先说明当前能力边界，不转换成每日重复规则。会议室网页登录与 WeLink 消息登录是两套状态，需在电脑上完成网页登录。只按用户明确要求改规则或开始抢订，完成后复述星期、时段和会议室。',
@@ -213,7 +215,9 @@ class CompanyAssistant {
     if (chat.some(c => ['queued', 'running'].includes(c.state))) this.saveChat(chat.map(c => ['queued', 'running'].includes(c.state) ? { ...c, state: 'error', error: 'Hub 重启前没答完，可点「重问」' } : c));
     if (!st.keywordSince) this.saveState({ keywordSince: this.now() });
     this.prepareWorkspace();
-    if (this.tools) this.toolsReady = this.tools.start().catch(e => { console.warn('[company-assistant] tools', e.message); });
+    // toolsStartDelayMs 只给隔离端到端测试用（main.js 只在 CLAUDE_HUB_E2E=1 时传）：复现「会话先建好、工具服务后开始监听」。
+    const delay = Number(this.deps.toolsStartDelayMs) > 0 ? new Promise(r => setTimeout(r, Number(this.deps.toolsStartDelayMs))) : null;
+    if (this.tools) this.toolsReady = (delay ? delay.then(() => this.tools.start()) : this.tools.start()).catch(e => { console.warn('[company-assistant] tools', e.message); });
     this.phone.start();
     this.rooms.start();
     if (!this.deps.noTimer) void this.ppt.refresh().catch(e => console.warn('[company-assistant] ppt', e.message));
@@ -224,9 +228,64 @@ class CompanyAssistant {
   }
   close() { for (const t of this.timers) { clearInterval(t); clearTimeout(t); } this.timers = []; this.loginStop?.abort(); this.auth.close(); this.phone.close(); this.ppt.close?.(); this.rooms.close(); this.tools?.close(); }
   // 给助理会话挂会话工具（main.js 注册的 extraMcpProvider 调用）：只挂给 purpose=company-assistant 的会话。
+  // 不等本机接口开始监听（v3.1.1）：mcp.js 每次调用工具时才读接口文件，挂载时用不到地址。以前要求地址已有，
+  // 会话若先于接口建好（启动时恢复、或接口还没开始监听），这一整个会话都不带会话工具，也没有任何提示。
   sessionPlan({ opts = {}, id } = {}) {
-    if (opts.purpose !== PURPOSE || !this.tools?.bridge.url) return null;
+    if (opts.purpose !== PURPOSE || !this.tools) return null;
     return { mcp: this.tools.mcpEntry(opts.id || id) };
+  }
+  // 会话工具接通状态（助理页状态行、远程诊断）。已接上 = 本次启动后的助理会话收到过工具进程的接通信号或真实调用。
+  extraMcpFile(sid) { return sid ? path.join(this.deps.dataDir, 'extra-mcp', `codeagent-${sid}.json`) : null; }
+  toolsStatus() {
+    const sid = this.state().sessionId || null, now = this.now();
+    const s = sid ? this.deps.getSession(sid) : null;
+    const open = !!s && !['dormant', 'closed'].includes(s.status);
+    const since = open ? Number(s.createdAt) || this.toolsOpenSince(sid) : null;
+    const seen = this.tools?.seenFor(sid) || null;
+    const linked = !!(open && seen && seen.at >= (since || 0));
+    const base = { sessionId: sid, open, since, seenAt: seen?.at || null, lastTool: seen?.how === 'call' ? seen.name : null, graceMs: TOOLS_HELLO_GRACE_MS };
+    if (!this.tools) return { ...base, state: 'off', label: '这台 Hub 没有开启会话工具' };
+    if (!open) return { ...base, state: 'closed', label: '助理会话没开，提问时自动接上' };
+    if (linked) return { ...base, state: 'linked', label: '已接上' };
+    if (now - since < TOOLS_HELLO_GRACE_MS) return { ...base, state: 'starting', label: '正在接通…', checkAt: since + TOOLS_HELLO_GRACE_MS };
+    return { ...base, state: 'missing', label: '未接上', reason: this.toolsMissingReason(sid) };
+  }
+  // 没有 createdAt 的会话（测试替身）：从第一次看到它开着算起。
+  toolsOpenSince(sid) {
+    if (!this.openSeen || this.openSeen.id !== sid) this.openSeen = { id: sid, at: this.now() };
+    return this.openSeen.at;
+  }
+  toolsMissingReason(sid) {
+    const d = this.toolsDiag(sid);
+    if (!d.bridgeListening) return 'Hub 的会话工具服务没有在运行，重开 Hub 后再试';
+    if (!d.mcpConfigHasHubSessions) return '助理会话启动时没有挂上会话工具，点「重开助理会话」重新挂上';
+    if (!d.endpointExists) return '会话工具的接口文件不见了，点「重开助理会话」';
+    return '助理会话没有启动会话工具进程（或进程没找到 Hub），点「重开助理会话」';
+  }
+  // 远程诊断（--diag features）用：只有是否存在、是否在听、时间和编号，不带口令和端口。
+  toolsDiag(sid = this.state().sessionId || null) {
+    let mcpConfigHasHubSessions = false;
+    try { mcpConfigHasHubSessions = !!JSON.parse(fs.readFileSync(this.extraMcpFile(sid), 'utf8'))?.mcpServers?.hub_sessions; } catch { mcpConfigHasHubSessions = false; }
+    return { endpointExists: !!this.tools && fs.existsSync(this.tools.endpointFile), bridgeListening: !!this.tools?.listening(), sessionId: sid,
+      toolsSeenAt: this.tools?.seenFor(sid)?.at || null, mcpConfigHasHubSessions };
+  }
+  // 「重开助理会话」（助理页按钮）：会话开着就走 Hub 现有的重启（同一段对话，按原会话重新启动，重新挂一遍工具）；
+  // 关着就按原生身份恢复；重启不了（还没绑定原生身份等）就换一个新的助理会话，旧的留在历史里。
+  async reopenSession() {
+    if (this.toolsReady) await this.toolsReady;
+    const sid = this.state().sessionId;
+    if (this.job && this.job.sessionId && this.job.sessionId === sid) this.failJob(this.job, '重开了助理会话，这一问没答完，可点「重问」');
+    if (sid && this.deps.getSession(sid) && this.deps.restartSession) {
+      let r = null;
+      try { r = await this.deps.restartSession(sid); } catch (error) { r = { ok: false, message: error.message }; }
+      if (r && r.ok !== false && this.deps.getSession(sid)) { this.openSeen = null; this.changed(); return { ok: true, sessionId: sid, how: 'restart' }; }
+      console.warn('[company-assistant] reopen restart', r?.message || r?.error || 'failed');
+      this.saveState({ sessionId: null, primed: null });
+    }
+    const id = await this.ensureSession();
+    this.openSeen = null;
+    this.changed();
+    return { ok: true, sessionId: id, how: id === sid ? 'resume' : 'new' };
   }
   // 「手机」设置：刚接通时往群里发一句，顺带验证 Hub 能发进这个群。
   async setPhone(patch = {}) {
@@ -785,27 +844,61 @@ class CompanyAssistant {
     this.manualLoginStart = this.startLogin().finally(() => { this.manualLoginStart = null; });
     return this.manualLoginStart;
   }
+  // 扫码面板要的东西都从登录输出里取（2026-10-22 v3.1.1，welink-cli 1.0.14 真机格式见 welink.js）：
+  // qr 只收能放进 <img> 的（字符画转成的 SVG、data URI、图片路径）；登录网页存 url，只当「在浏览器打开」的兜底链接；
+  // progress 是等待扫码 / 已扫码 / 失败；输出像是编码不对时存一份诊断文件，面板提示改用链接。
+  loginFlowFrom(text, extra = {}) {
+    const prev = this.loginFlow || {}, found = welink.qrFromLoginOutput(text);
+    const flow = { ...prev, ...extra, text: text.slice(-4000), qr: found && found.kind !== 'url' ? found : prev.qr || null,
+      url: welink.loginUrlFromOutput(text) || prev.url || null, progress: welink.loginProgress(text) || prev.progress || null };
+    if (!flow.qr && !prev.garbled && welink.loginOutputGarbled(text)) {
+      flow.garbled = true;
+      try {
+        const dir = path.join(this.dir, 'diag'), d = new Date(this.now());
+        const stamp = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}-${String(d.getHours()).padStart(2, '0')}${String(d.getMinutes()).padStart(2, '0')}${String(d.getSeconds()).padStart(2, '0')}`;
+        fs.mkdirSync(dir, { recursive: true });
+        // 只存这次 auth login 的输出（扫码前没有令牌；万一有 token= 之类也抹掉）。
+        flow.diag = path.join(dir, `${stamp}-welink-login-output.txt`);
+        fs.writeFileSync(flow.diag, text.replace(/((?:token|ticket|secret|password)\w*\s*[:=]\s*)\S+/gi, '$1***'), 'utf8');
+      } catch (error) { console.warn('[company-assistant] 保存扫码诊断失败', error.message); }
+    }
+    return flow;
+  }
   async startLogin() {
-    if (this.loginFlow && this.loginFlow.state === 'waiting') return this.loginFlow;
+    // 输出里已经报超时/失败、进程却还没退时，「重新获取二维码」先结束这一次，再开新的。
+    if (this.loginFlow && this.loginFlow.state === 'waiting' && this.loginFlow.progress?.phase !== 'failed') return this.loginFlow;
+    if (this.loginDone) { this.loginStop?.abort(); await this.loginDone.catch(() => {}); }
     if (this.auth.pending) {
       await this.auth.pending;
       if (this.auth.status().state === 'online') return { state: 'ok' };
     }
-    this.loginFlow = { state: 'waiting', startedAt: this.now(), qr: null, text: '' };
+    this.loginFlow = { state: 'waiting', startedAt: this.now(), qr: null, url: null, progress: null, text: '' };
     this.changed();
     // Hub exit aborts this signal; welink.run then ends the login process tree by PID.
     const stop = this.loginStop = new AbortController();
+    let shown; const shownOnce = new Promise(r => { shown = r; });
     const done = this.welink(['auth', 'login'], { allowSetup: true, timeoutMs: 5 * 60000, signal: stop.signal, onData: text => {
-      this.loginFlow = { ...this.loginFlow, text: text.slice(-4000), qr: welink.qrFromLoginOutput(text) || this.loginFlow.qr };
+      this.loginFlow = this.loginFlowFrom(text);
+      if (this.loginFlow.qr || this.loginFlow.garbled || this.loginFlow.progress?.phase === 'failed') shown();
       this.changed();
     } }).then(r => {
-      this.loginFlow = { ...this.loginFlow, state: 'finished', code: r.code, text: (r.stdout + r.stderr).slice(-4000), qr: this.loginFlow.qr || welink.qrFromLoginOutput(r.stdout + r.stderr) };
+      this.loginFlow = this.loginFlowFrom(r.stdout + r.stderr, { state: 'finished', code: r.code });
     }).catch(error => { this.loginFlow = { ...this.loginFlow, state: 'failed', error: error.message }; })
       .finally(() => { if (this.loginStop === stop) this.loginStop = null; })
       .then(() => this.refresh({ force: true }).catch(() => {}))
-      .then(snap => { if (snap?.login?.ok) { this.auth.manualSucceeded(snap.login); this.loginFlow = { ...this.loginFlow, state: 'ok' }; const day = D.dayKey(this.now()); if (!this.brief(day) || this.brief(day).by === 'none') void this.generateBrief().catch(() => {}); } this.changed(); });
-    // 二维码一般几秒内出来；先等一会儿再回，界面随后靠状态刷新。
-    await Promise.race([done, new Promise(r => setTimeout(r, 4000))]);
+      .then(snap => {
+        if (snap?.login?.ok) { this.auth.manualSucceeded(snap.login); this.loginFlow = { ...this.loginFlow, state: 'ok' }; const day = D.dayKey(this.now()); if (!this.brief(day) || this.brief(day).by === 'none') void this.generateBrief().catch(() => {}); }
+        // 命令结束、核对后仍没登录：转成失败并给出原因，面板才会出「重新获取二维码」，不停在「正在核对」。
+        else if (this.loginFlow?.state === 'finished') this.loginFlow = { ...this.loginFlow, state: 'failed', error: '登录命令已结束，但没查到已登录' + (this.loginFlow.code ? `（退出码 ${this.loginFlow.code}）` : '') };
+        this.changed();
+      });
+    this.loginDone = done;
+    const settled = () => { if (this.loginDone === done) this.loginDone = null; };
+    done.then(settled, settled);
+    // 二维码一般几秒内出来；先等一会儿再回（二维码一画完就回），界面随后靠状态刷新。
+    let wait;
+    await Promise.race([done, shownOnce, new Promise(r => { wait = setTimeout(r, 4000); })]);
+    clearTimeout(wait);
     return this.loginFlow;
   }
   async setupCalendar(email) {
@@ -826,7 +919,7 @@ class CompanyAssistant {
       counts: snap ? { meetings: (snap.meetings || []).length, calendar: (snap.calendar || []).length, messages: Object.values(snap.messages || {}).reduce((n, l) => n + l.length, 0), mails: (snap.mails || []).length } : null,
       refreshedAt: snap?.at || null, refreshing: !!this.refreshing, errors: snap?.errors || [], conversations: (snap?.conversations || []).slice(0, 60), scope: snap?.scope || null, nameResolution: snap?.nameResolution || null, meetingCoverage: snap?.meetingCoverage || null, calendarCoverage: snap?.calendarCoverage || null, mailCoverage: snap?.mailCoverage || null,
       brief: this.brief(day), nextBriefAt: next, chat: this.chat().slice(-60), job: this.job ? { type: this.job.type, sentAt: this.job.sentAt || null } : null,
-      queued: this.queue.length, session: sid ? { id: sid, open: !!this.deps.getSession(sid), busy: this.sessionBusy(sid) } : null,
+      queued: this.queue.length, session: sid ? { id: sid, open: !!this.deps.getSession(sid), busy: this.sessionBusy(sid) } : null, tools: this.toolsStatus(),
       notices: st.notices.slice(0, 10), commitments: st.commitments, phone: this.phone.status(), ppt: this.ppt.status(), rooms: this.rooms.status() };
   }
   nextBriefAt(s, now) {
@@ -839,4 +932,4 @@ class CompanyAssistant {
   }
 }
 
-module.exports = { CompanyAssistant, PURPOSE, TOOLS_VERSION, DEFAULT_SETTINGS, BUILTIN_CHIPS, INSTRUCTIONS };
+module.exports = { CompanyAssistant, PURPOSE, TOOLS_VERSION, TOOLS_HELLO_GRACE_MS, DEFAULT_SETTINGS, BUILTIN_CHIPS, INSTRUCTIONS };

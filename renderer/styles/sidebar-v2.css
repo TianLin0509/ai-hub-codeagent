@@ -102,6 +102,8 @@
 #session-list .session-item.slim.meeting .sl-line1.with-arrow { grid-template-columns: auto minmax(20px, max-content) minmax(0, 1fr) auto; }
 #session-list .sl-group-logos { display: flex; justify-self: center; margin-inline: 3.5px; padding: 0; }
 #session-list .sl-group-logos .ai-logo + .ai-logo { margin-left: -5px; box-shadow: 0 0 0 1px var(--surface-canvas); }
+#session-list .sl-group-logos [data-sub-id] { cursor: pointer; }
+#session-list .sl-group-logos [data-sub-id]:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
 #session-list .sl-group-progress { position: absolute; height: 2px; left: 20px; right: 6px; bottom: 0; background: var(--border-subtle); }
 #session-list .sl-group-progress i { display: block; height: 100%; background: var(--brand); }
 /* Member shortcuts remain available without changing row geometry. */

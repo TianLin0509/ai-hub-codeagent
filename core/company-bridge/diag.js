@@ -13,7 +13,7 @@
 // 二期（2026-10-18 追加，只读）：
 //   codeagent CodeAgent 版本、个人账号登录状态、额度剩余（各会话屏幕右侧 Stats 面板的 Credit，同 renderer/codeagent-quota-bar.js 的来源，主进程读）；
 //   airview   仿真相关进程（按进程名白名单，不回传命令行）；代码目录与仿真结果目录下最近更新的结果文件元信息（相对路径、大小、修改时间，前 30 个，不读内容）；
-//   features  论坛、简报、手机对话、桌宠形象下载各自最后一次成功时间与最后一次错误。
+//   features  论坛、简报、手机对话、桌宠形象下载各自最后一次成功时间与最后一次错误；助理会话工具（hub_sessions）是否接上。
 // 底线：只读；不读源码，不回传文件内容（日志尾部除外，已脱敏）；sections 只认白名单，不执行对端传来的任何命令。
 // 回报整条消息（HTTP 正文 {to,mid,blob}）严格小于 60000 字节：超了按段降级（先截日志，再把进程截到前 10……），始终一条发完。
 const fs = require('node:fs');
@@ -701,6 +701,11 @@ function features(deps) {
       lastSuccessAt: b && !failed && b.total ? b.generatedAt || null : null, lastError: failed ? short(b.note, 160) : null };
     const ph = a.phone || {};
     out.phone = { active: !!ph.active, lastPollAt: ph.lastPollAt || null, lastSuccessAt: ph.lastOkAt || null, lastError: ph.lastError ? short(ph.lastError, 160) : null };
+    // 助理会话的会话工具（hub_sessions）接没接上（v3.1.1）：白名单字段，不带口令、端口。
+    const t = a.tools;
+    if (t && t.error) out.assistantTools = { error: short(t.error, 160) };
+    else if (t) out.assistantTools = { state: String(t.state || ''), endpointExists: !!t.endpointExists, bridgeListening: !!t.bridgeListening, sessionId: t.sessionId ? String(t.sessionId) : null,
+      sessionOpen: !!t.open, sessionStartedAt: Number(t.since) || null, toolsSeenAt: Number(t.toolsSeenAt) || null, mcpConfigHasHubSessions: !!t.mcpConfigHasHubSessions, reason: t.reason ? short(t.reason, 160) : null };
   }
   const pet = raw.pet;
   if (pet === null) out.pet = { note: '桌宠没启动' };
@@ -867,5 +872,5 @@ const STEP_LABELS = STEPS.map(s => s[0]);
 module.exports = {
   STEP_LABELS, analyzeOptions, cmdTokens, entryScript, isCodeAgentProc, isHubScript, SUSPECT_MIN_AGE_MS,
   SECTIONS, SECTION_LABEL, MIN_INTERVAL_MS, MESSAGE_LIMIT, PROCESS_TIMEOUT_MS, DEFAULT_LOG_LINES, MAX_LOG_LINES, LOGS,
-  parseSections, parseLines, parseErrorsLimit, errorsSection, DEFAULT_ERRORS, MAX_ERRORS, encode, decode, makeRedactor, deepRedact, analyzeProcesses, poolAliases, pool, machine, logs, hub, collect, summarize, fit, defaultSys,
+  parseSections, parseLines, parseErrorsLimit, errorsSection, DEFAULT_ERRORS, MAX_ERRORS, encode, decode, makeRedactor, deepRedact, analyzeProcesses, poolAliases, pool, machine, logs, hub, collect, summarize, fit, defaultSys, features,
 };

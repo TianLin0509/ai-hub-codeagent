@@ -2367,7 +2367,9 @@ try {
             // 不调 status()（它要找 welink-cli、整理会话列表，慢）：只读设置、今天的简报、当天数据的登录与错误、手机通道状态
             const a = companyAssistantService, snap = a.snapshot(), b = a.brief(), ph = a.phone?.status?.() || null;
             out.assistant = { enabled: a.settings().enabled, login: snap?.login || null, refreshedAt: snap?.at || null, errors: snap?.errors || [], brief: b ? { generatedAt: b.generatedAt, by: b.by, total: b.total, organizing: b.organizing, note: b.note } : null,
-              phone: ph ? { active: ph.active, lastPollAt: ph.lastPollAt, lastOkAt: ph.lastOkAt, lastError: ph.lastError } : null };
+              phone: ph ? { active: ph.active, lastPollAt: ph.lastPollAt, lastOkAt: ph.lastOkAt, lastError: ph.lastError } : null,
+              // 会话工具接通情况（v3.1.1）：只有是否存在、是否在听、时间和会话编号，不带口令。
+              tools: (() => { try { const t = a.toolsStatus(); return { ...a.toolsDiag(t.sessionId), state: t.state, open: t.open, since: t.since || null, reason: t.reason || null }; } catch (error) { return { error: error.message }; } })() };
           }
         } catch (error) { out.assistant = { error: error.message }; }
         try {
@@ -2449,6 +2451,11 @@ try {
       getSession: id => sessionManager.getSession(id),
       getSessionMetadata: loadMeta,
       resumeSession: async id => { const meta = require('./core/session-store').loadSessionFile(id, { strict: true }); return meta ? resumeSession({ ...meta, hubId: id }) : null; },
+      // 「重开助理会话」走 Hub 现有的重启（休眠 → 按原会话恢复），恢复时重新经过 extraMcpProvider 挂会话工具。
+      restartSession: id => sessionOperations.restartSession(id),
+      // 只给隔离端到端测试：推迟会话工具接口开始监听，复现「会话先于接口建好」。
+      ...(process.env.CLAUDE_HUB_E2E === '1' && process.env.CLAUDE_HUB_DATA_DIR && Number(process.env.CLAUDE_HUB_E2E_ASSISTANT_TOOLS_DELAY_MS) > 0
+        ? { toolsStartDelayMs: Number(process.env.CLAUDE_HUB_E2E_ASSISTANT_TOOLS_DELAY_MS) } : {}),
       isAgentTurnActive: id => sessionManager.isAgentTurnActive(id),
       // CodeAgent 的原生记录是 Claude 格式，按 Claude 读最终回答。
       readFinals: meta => { const r = live.read({ ...meta, id: meta.id || meta.hubId, kind: 'claude' }); return r && r.available ? r.records : []; },

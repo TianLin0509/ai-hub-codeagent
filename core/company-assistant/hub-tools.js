@@ -31,6 +31,7 @@ class HubTools {
     fs.renameSync(tmp, this.endpointFile);
   }
   close() { this.bridge.close(); }
+  listening() { return !!this.bridge.server?.listening && !!this.bridge.url; }
   // 挂给助理会话的 MCP（session-manager 的 extraMcpProvider 调用）。Hub 程序以 Node 方式运行 mcp.js（公司版脚本在 app.asar 里）。
   mcpEntry(sessionId) {
     return { name: 'hub_sessions', command: this.deps.nodeExecutable || process.execPath, args: [path.join(__dirname, 'mcp.js')],
@@ -71,9 +72,22 @@ class HubTools {
   }
 
   // ---- 工具 ----
+  // 接通记录（v3.1.1）：会话编号 → 工具进程最近一次找到 Hub 的时间。助理页「会话工具：已接上 / 未接上」和远程诊断用它判断。
+  noteSeen(sessionId, how, name = '') {
+    if (!sessionId) return;
+    this.seen ||= new Map();
+    this.seen.set(sessionId, { at: this.a.now(), how, name });
+    if (this.seen.size > 20) this.seen.delete(this.seen.keys().next().value);
+    this.a.changed();
+  }
+  seenFor(sessionId) { return (sessionId && this.seen?.get(sessionId)) || null; }
+
   async invoke({ name, arguments: args = {}, callerSessionId }) {
+    // 接通信号：MCP 握手后发来；口令已核对过，只记下是哪个会话的工具进程起来了。
+    if (name === '__hello') { this.noteSeen(callerSessionId, 'hello'); return { ok: true }; }
     const me = this.a.state().sessionId;
     if (!me || callerSessionId !== me) throw new Error('只有公司助理会话能用这些工具');
+    this.noteSeen(me, 'call', name);
     if (name === 'welink_inbox') return this.a.query.inbox(args);
     if (name === 'welink_message') return this.a.query.message(args);
     if (name === 'welink_meetings') return this.a.query.meetings(args);

@@ -334,14 +334,18 @@ function _logoKind(kind, modelId = '') {
 //   扫列表时真正要一眼分辨的只是"哪家 CLI"，具体型号是二级信息 → 退到 tooltip
 //   （会话行的无障碍标签也包含完整 displayName）。
 //   拿不到图标的 kind 回落成原来的文字列，避免这一列直接消失。
-function _sessionKindHtml(kind, modelTxt, state = 'idle', stateTip = '', modelId = '') {
+function _sessionKindHtml(kind, modelTxt, state = 'idle', stateTip = '', modelId = '', targetSessionId = '') {
   const k = _logoKind(kind, modelId);
   if (!k) return `<span class="sl-model">${escapeHtml(modelTxt || '')}</span>`;
   const labelKind = String(kind || '').replace(/-resume$/, '') === 'codeagent' ? 'codeagent' : k;
   const label = String(modelTxt || '').startsWith('ChatGPT') ? 'ChatGPT' : (KIND_LABELS[labelKind] || labelKind);
   const tip = label === 'ChatGPT' ? modelTxt : modelTxt ? `${label} · ${modelTxt}` : label;
   const status = stateTip || STATUS_LABELS[state] || STATUS_LABELS.idle;
-  return `<span class="sl-kind ai-logo logo-${k}" data-state="${state}" role="img" aria-label="${escapeHtml(label + ' · ' + status)}" title="${escapeHtml(tip + ' · ' + status)}"></span>`;
+  const action = targetSessionId ? ' · 点击查看该成员的卡片' : '';
+  const navigation = targetSessionId
+    ? `role="button" tabindex="0" data-sub-id="${escapeHtml(targetSessionId)}" data-sidebar-control="group-logo-${escapeHtml(targetSessionId)}"`
+    : 'role="img"';
+  return `<span class="sl-kind ai-logo logo-${k}" data-state="${state}" ${navigation} aria-label="${escapeHtml(label + ' · ' + status + action)}" title="${escapeHtml(tip + ' · ' + status + action)}"></span>`;
 }
 
 const STATUS_LABELS = { wait: '等你响应', error: '运行异常', run: '运行中', start: '唤醒中', unread: '未读', dorm: '休眠', idle: '就绪', unknown: '状态未知' };
@@ -636,6 +640,12 @@ function _sessionWarningText(session) {
 
 sessionListEl.addEventListener('keydown', event => {
   if (event.altKey || event.ctrlKey || event.metaKey || event.isComposing) return;
+  const shortcut = event.target?.closest?.('[data-sub-id]');
+  if (shortcut && (event.key === 'Enter' || event.key === ' ')) {
+    event.preventDefault(); event.stopPropagation();
+    activateNavigationIntent(navigationIntentFromTarget(shortcut));
+    return;
+  }
   const row = event.target?.closest?.('.session-item');
   if (!row) return;
   if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
@@ -884,7 +894,7 @@ sessionListEl.addEventListener('keydown', event => {
         if (!member) return '';
         let state = partitionSidebarSessions([member], { sessionMap, groupMemberIds: new Set([id]) }).states.get(id) || 'idle';
         if (getSessionRuntimeTruth(member).state === RUNTIME_DORMANT && !member._resumePending && state !== 'error') state = 'dorm';
-        return _sessionKindHtml(member.kind, member.currentModel ? modelShort(member.currentModel) : '', state, '', require('../core/codeagent-models').iconModelId(member));
+        return _sessionKindHtml(member.kind, member.currentModel ? modelShort(member.currentModel) : '', state, '', require('../core/codeagent-models').iconModelId(member), id);
       }).join('');
       div.innerHTML = '<div class="sl-line1">'
         + '<span class="sl-group-logos" data-state="' + dotCls + '" aria-label="群聊 · ' + STATUS_LABELS[dotCls] + '">'

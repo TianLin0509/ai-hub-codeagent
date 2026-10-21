@@ -1,6 +1,7 @@
 'use strict';
 // 公司助理会话的 MCP（stdio 上的 JSON-RPC）：把工具调用原样转给 Hub 的本机接口（hub-tools.js）。
 // 口令在 Hub 写的接口文件里，会话编号在环境变量里；两者都不出现在工具返回里。这里不执行任何命令。
+// v3.1.1（2026-10-22）：Hub 接口没准备好时工具返回一句人话而不是让进程退出；握手后发一次接通信号 __hello，助理页据此显示「已接上」。
 const readline = require('node:readline');
 const fs = require('node:fs');
 const schema = (properties, required = []) => ({ type: 'object', properties, required, additionalProperties: false });
@@ -43,23 +44,60 @@ const tools = [
   { name: 'stop_session', description: '停止一个正在运行的会话这一轮（同电脑上的停止键）。只在用户明确要求停下时用。', inputSchema: schema({ sessionId: id }, ['sessionId']) },
 ];
 
+// 接口文件读不出来、Hub 的本机接口连不上或口令已换（Hub 刚重启）时，工具返回这句话，进程照常运行。
+const NOT_READY = 'Hub 会话工具还没准备好或 Hub 刚重启，请稍后重试；仍不行请在助理页点『重开助理会话』';
+class NotReady extends Error {}
+// 把一次请求转给 Hub。接口文件每次现读：Hub 重启后端口和口令都会换。
+async function post(name, args, timeoutMs) {
+  let endpoint;
+  try { endpoint = JSON.parse(fs.readFileSync(process.env.HUB_COMPANY_TOOLS_ENDPOINT, 'utf8')); }
+  catch (error) { throw new NotReady('接口文件读不出来：' + (error.code || error.message)); }
+  let response;
+  try {
+    response = await fetch(endpoint.url, { method: 'POST', headers: { Authorization: 'Bearer ' + endpoint.token, 'Content-Type': 'application/json', 'X-Hub-Company-Assistant-Session': process.env.HUB_COMPANY_ASSISTANT_SESSION_ID || '' },
+      body: JSON.stringify({ name, arguments: args || {} }), signal: AbortSignal.timeout(timeoutMs) });
+  } catch (error) { throw new NotReady('连不上 Hub 的本机接口：' + (error.cause?.code || error.name || error.message)); }
+  try { return await response.json(); } catch { throw new NotReady(`Hub 的本机接口没有接受这次请求（HTTP ${response.status}）`); }
+}
+// 接通信号：握手后尽力告诉 Hub「工具进程起来了」，不影响握手；没发成就静默，稍后和下一次工具调用时再补。
+let helloDone = false, helloPending = null, helloRetries = 0;
+function hello() {
+  if (helloDone || helloPending) return helloPending;
+  helloPending = post('__hello', {}, 5000).then(data => { if (data && data.ok) helloDone = true; }, () => {})
+    .finally(() => {
+      helloPending = null;
+      if (!helloDone && helloRetries < 3) { const t = setTimeout(hello, [5000, 20000, 60000][helloRetries++]); t.unref?.(); }
+    });
+  return helloPending;
+}
 async function handle(request) {
   if (request.method === 'initialize') return { protocolVersion: request.params?.protocolVersion || '2024-11-05', capabilities: { tools: {} }, serverInfo: { name: 'hub-sessions', version: '1.0.0' } };
   if (request.method === 'ping') return {};
   if (request.method === 'tools/list') return { tools };
   if (request.method === 'tools/call') {
     if (!tools.some(t => t.name === request.params?.name)) throw new Error('未知工具');
-    const endpoint = JSON.parse(fs.readFileSync(process.env.HUB_COMPANY_TOOLS_ENDPOINT, 'utf8'));
-    const response = await fetch(endpoint.url, { method: 'POST', headers: { Authorization: 'Bearer ' + endpoint.token, 'Content-Type': 'application/json', 'X-Hub-Company-Assistant-Session': process.env.HUB_COMPANY_ASSISTANT_SESSION_ID || '' },
-      body: JSON.stringify({ name: request.params.name, arguments: request.params.arguments || {} }), signal: AbortSignal.timeout(120000) });
-    const data = await response.json();
+    if (!helloDone) void hello();
+    let data;
+    try { data = await post(request.params.name, request.params.arguments, 120000); }
+    catch (error) {
+      if (!(error instanceof NotReady)) throw error;
+      return { content: [{ type: 'text', text: JSON.stringify({ error: NOT_READY, detail: error.message }) }], isError: true };
+    }
     return { content: [{ type: 'text', text: JSON.stringify(data.ok ? data.result : { error: data.error }) }], isError: !data.ok };
   }
   throw new Error('未知方法');
 }
+// 任何意外都只写到 stderr：MCP 进程一退出，这个助理会话就再也用不上会话工具。
+process.on('uncaughtException', error => { try { process.stderr.write('[hub-sessions] ' + (error && error.stack || error) + '\n'); } catch { /* 无处可写 */ } });
+process.on('unhandledRejection', error => { try { process.stderr.write('[hub-sessions] ' + (error && error.stack || error) + '\n'); } catch { /* 无处可写 */ } });
 const lines = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });
 lines.on('line', async line => {
   let request;
-  try { request = JSON.parse(line); if (request.id == null) return; const result = await handle(request); process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: request.id, result }) + '\n'); }
+  try {
+    request = JSON.parse(line); if (request.id == null) return;
+    const result = await handle(request);
+    process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: request.id, result }) + '\n');
+    if (request.method === 'initialize' || request.method === 'tools/list') void hello();
+  }
   catch (error) { process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: request?.id ?? null, error: { code: -32000, message: error.message } }) + '\n'); }
 });

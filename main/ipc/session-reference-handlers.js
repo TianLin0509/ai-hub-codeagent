@@ -119,9 +119,9 @@ function registerSessionReferenceIpc(ipcMain, deps = {}) {
     }
   }
 
-  async function resolveMeeting(meetingId) {
+  async function resolveMeeting(meetingId, member = null) {
     const meeting = getMeeting(meetingId);
-    const title = (meeting && meeting.title) || '';
+    const title = member ? member.title || '' : (meeting && meeting.title) || '';
     let state = null;
     try {
       const statePath = path.join(getHubDataDir(), 'arena-prompts', `${meetingId}-groupchat.json`);
@@ -131,16 +131,26 @@ function registerSessionReferenceIpc(ipcMain, deps = {}) {
       return { ok: false, error: 'group-state-unreadable', message: `读取群聊记录失败：${error && error.message}` };
     }
     if (!state) {
-      const legacy = await resolveLegacyMeeting(meetingId, title);
+      const legacy = !member && await resolveLegacyMeeting(meetingId, title);
       if (legacy) return legacy;
       return { ok: false, error: 'transcript-missing', message: '这个群聊还没有可读取的记录：至少要有一轮发言' };
+    }
+    const memberId = member && String(member.hubId || member.id);
+    if (member) {
+      state = { ...state, messages: (state.messages || []).filter(m =>
+        groupTranscript.isUserSpeech(m)
+        || (groupTranscript.isAssistantSpeech(m) && String(m.sid || '') === memberId)) };
+      if (!state.messages.some(m => groupTranscript.isAssistantSpeech(m))) {
+        return { ok: false, error: 'transcript-missing', message: '这个成员还没有正式发言，暂时没有可引用的内容' };
+      }
     }
     if (!hasGroupSpeech(state)) {
       return { ok: false, error: 'transcript-missing', message: '这个群聊还没有发言，暂时没有可引用的内容' };
     }
-    const filePath = groupReferencePath(getTranscriptDir(), meetingId);
+    const filePath = groupReferencePath(getTranscriptDir(), member ? `${meetingId}-member-${memberId}` : meetingId);
     try {
-      writeUtf8Atomic(filePath, groupTranscript.renderTranscriptMarkdown({ ...state, meetingId }, { title }));
+      const memberHeader = member ? `- Hub 会话：${memberId}\n- 引用范围：群聊成员记录，仅含用户与该成员正式发言\n\n` : '';
+      writeUtf8Atomic(filePath, memberHeader + groupTranscript.renderTranscriptMarkdown({ ...state, meetingId }, { title }));
     } catch (error) {
       return { ok: false, error: 'transcript-write-failed', message: `生成群聊记录失败：${error && error.message}` };
     }
@@ -155,6 +165,15 @@ function registerSessionReferenceIpc(ipcMain, deps = {}) {
     }
     const id = String(sessionId || '');
     if (!id) return { ok: false, error: 'missing-session', message: '没有指定要引用的会话' };
+    const member = (getSearchSnapshot()?.sessions || []).find(s => String(s.hubId || s.id) === id);
+    if (member?.meetingId) {
+      if (!/^[\w-]+$/.test(String(member.meetingId)) || !/^[\w-]+$/.test(id)) {
+        return { ok: false, error: 'bad-meeting', message: '群聊或成员 ID 不合法' };
+      }
+      const resolved = await resolveMeeting(String(member.meetingId), member);
+      if (resolved.ok) { try { deps.onResolved?.(resolved.path, id); } catch {} }
+      return resolved;
+    }
     if (!searchService || typeof searchService.transcriptFor !== 'function') {
       return { ok: false, error: 'search-unavailable', message: '会话索引不可用，无法生成聊天记录' };
     }

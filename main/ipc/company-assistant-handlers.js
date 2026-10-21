@@ -53,6 +53,8 @@ function registerCompanyAssistantIpc(ipcMain, service) {
       const id = await service.ensureSession();
       return { ok: true, sessionId: id };
     },
+    // 「重开助理会话」（v3.1.1，助理页「会话工具：未接上」旁的按钮）：按原会话重新启动，重新挂上会话工具。
+    'reopen-session': () => service.reopenSession(),
   };
   Object.assign(handlers, require('../../core/company-assistant/ppt-ipc').createPptHandlers(service));
   for (const [name, handler] of Object.entries(handlers)) {

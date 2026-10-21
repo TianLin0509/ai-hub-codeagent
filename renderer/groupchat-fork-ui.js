@@ -126,6 +126,7 @@ function openSessionPicker({ document, rows, title, hint, onPick, emptyLabel }) 
     const matched = rows.filter(row => !needle
       || String(row.title || '').toLowerCase().includes(needle)
       || String(row.kind || '').toLowerCase().includes(needle)
+      || String(row.meetingTitle || '').toLowerCase().includes(needle)
       || (row.kind === 'meeting' && '群聊'.includes(needle))
       || String(row.cwd || '').toLowerCase().includes(needle));
     body.textContent = '';
