@@ -8,6 +8,7 @@ const { spawn } = require('child_process');
 const { validateManifest, planUpdate, currentRuntime, compareVersions } = require('../core/app-update/manifest');
 const { checkManifests, downloadWithFallback } = require('../core/app-update/downloader');
 const { stageIncremental, stagingPaths, launchHelper, takeLastResult } = require('../core/app-update/apply');
+const { verifyLocalFiles } = require('../core/app-update/payload');
 
 const STARTUP_CHECK_DELAY_MS = 20000;
 const PERIODIC_CHECK_MS = 6 * 60 * 60 * 1000;
@@ -63,15 +64,27 @@ function createAppUpdateController({ app, config, dataDir, currentVersion, sendT
       if (!best) return emit({ phase: silent ? 'idle' : 'error', checks, checkedAt: new Date().toISOString(),
         error: '所有更新源都连不上，暂时查不到新版本', silentFailure: silent });
       manifest = best.manifest;
+      // 能核对本机文件时才走小包（开发运行、没打包又没指定 resources 时无从核对）。
+      const resDir = isPackaged || env.AI_HUB_UPDATE_RESOURCES ? (env.AI_HUB_UPDATE_RESOURCES || resourcesPath) : null;
       let runtime;
-      try { runtime = currentRuntime({ resourcesPath: isPackaged || env.AI_HUB_UPDATE_RESOURCES ? (env.AI_HUB_UPDATE_RESOURCES || resourcesPath) : null }); }
+      try { runtime = currentRuntime({ resourcesPath: resDir }); }
       catch (_) { runtime = { electron: process.versions.electron, native: {} }; }
       if (!isPackaged && !env.AI_HUB_UPDATE_RESOURCES) runtime = { ...runtime, native: { ...manifest.runtime.native } };
       plan = planUpdate(manifest, { version: currentVersion, runtime });
-      const asset = plan.kind === 'incremental' ? manifest.incremental : plan.kind === 'full' ? manifest.installer : null;
+      let variant = null;
+      if (plan.kind === 'incremental') {
+        const delta = manifest.incrementalDelta;
+        if (delta && resDir && verifyLocalFiles(delta.requires, resDir).ok) variant = 'delta';
+        else if (manifest.incremental) {
+          variant = 'complete';
+          // 小包的前提是本机那些没变的文件确实还是上一版的样子；对不上就退回完整更新包，仍然一步升到最新版。
+          if (delta) plan = { ...plan, reason: '本机有些程序文件和这一版对不上，改为下载完整更新包（仍是一步升到最新版）' };
+        } else plan = { kind: 'full', reason: '这一版只提供变化的程序文件，本机的程序文件对不上，需要完整安装包' };
+      }
+      const asset = plan.kind === 'incremental' ? (variant === 'delta' ? manifest.incrementalDelta : manifest.incremental) : plan.kind === 'full' ? manifest.installer : null;
       return emit({ phase: plan.kind === 'none' ? 'none' : 'available', checks, checkedAt: new Date().toISOString(), error: null,
         latest: { version: manifest.version, notes: manifest.notes, publishedAt: manifest.publishedAt, sourceName: best.name },
-        plan: { kind: plan.kind, reason: plan.reason, bytes: asset ? asset.bytes : 0, file: asset ? asset.file : null } });
+        plan: { kind: plan.kind, variant, reason: plan.reason, bytes: asset ? asset.bytes : 0, file: asset ? asset.file : null } });
     })().catch(error => emit({ phase: silent ? 'idle' : 'error', error: `检查更新失败：${error.message}` }))
       .finally(() => { checking = null; });
     return checking;
@@ -80,7 +93,9 @@ function createAppUpdateController({ app, config, dataDir, currentVersion, sendT
   async function download() {
     if (!manifest || !plan || plan.kind === 'none') throw new Error('还没有可下载的新版本，请先检查更新');
     if (state.phase === 'downloading') return state;
-    const asset = plan.kind === 'incremental' ? manifest.incremental : manifest.installer;
+    const asset = plan.kind === 'incremental'
+      ? (plan.variant === 'delta' ? manifest.incrementalDelta : manifest.incremental)
+      : manifest.installer;
     const p = stagingPaths(dataDir);
     const dest = path.join(p.downloads, asset.file);
     abort = new AbortController();
@@ -104,6 +119,9 @@ function createAppUpdateController({ app, config, dataDir, currentVersion, sendT
         staged = { installer: dest };
       }
     } catch (error) {
+      // 下载到解包之间程序文件被改动过（很少见）：让用户再检查一次，下一次会自动改用完整更新包。
+      if (error.code === 'stale-local') return emit({ phase: 'error', attempts: result.attempts,
+        error: `本机程序文件在下载期间被改动过（${error.stale?.[0]?.path || '未知文件'}），请重新检查更新，这次会自动改用完整更新包` });
       return emit({ phase: 'error', attempts: result.attempts, error: `更新包解开或校验失败：${error.message}` });
     }
     return emit({ phase: 'ready', attempts: result.attempts, readySource: result.source.name });

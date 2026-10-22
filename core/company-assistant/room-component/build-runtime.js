@@ -1,6 +1,8 @@
 'use strict';
-// Build-time only. The signed official binary stays out of Git; every company
-// installer must carry the exact pinned binary, including its incremental payload.
+// Build-time only. The signed official binary stays out of Git.
+// 2026-10-22（v3.1.3）：安装包不再自带这个 exe，第一次用「抢会议室」时由
+// core/company-assistant/room-runtime-download.js 按签名清单现下。这个脚本只留给
+// e2e（真实 exe 走本地那条路）和离线自测，不再挂在打包钩子上。
 const fs = require('node:fs'), path = require('node:path');
 const { randomUUID } = require('node:crypto');
 const { manifest, verified } = require('../room-component');
@@ -11,7 +13,7 @@ function stageRuntime({ appDir = path.resolve(__dirname, '..', '..', '..'), sour
   const dest = path.join(bundle, 'runtime', baseline.exe.file);
   if (verified(dest, baseline.exe)) return { file: dest, bytes: baseline.exe.size, sha256: baseline.exe.sha256, reused: true };
   if (fs.existsSync(dest)) throw new Error('会议室运行时校验失败，拒绝打包：' + dest);
-  if (!source) throw new Error('公司安装包必须自带会议室运行时。请将 AI_HUB_ROOM_RUNTIME_SOURCE 指向官方 ' + baseline.exe.file + '；源代码导出可不带，安装包不能缺失。');
+  if (!source) throw new Error('请把 AI_HUB_ROOM_RUNTIME_SOURCE（或 --source）指向官方 ' + baseline.exe.file + '；v3.1.3 起安装包不再自带运行时，这里只用于 e2e 与离线自测。');
   if (!verified(path.resolve(source), baseline.exe)) throw new Error('AI_HUB_ROOM_RUNTIME_SOURCE 与签名清单不符，拒绝打包');
   fs.mkdirSync(path.dirname(dest), { recursive: true });
   const temp = dest + '.' + randomUUID() + '.tmp';

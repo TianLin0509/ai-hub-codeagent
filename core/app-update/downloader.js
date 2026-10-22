@@ -87,12 +87,19 @@ async function downloadOne({ source, url, expect, dest, fetchImpl, signal, onPro
   const part = dest + '.part';
   fs.mkdirSync(path.dirname(dest), { recursive: true });
   const { response, controller } = await openResponse(fetchImpl, url, signal, connectTimeoutMs);
-  if (!response.ok) throw fail(response.status === 404 ? '源上没有这个文件（HTTP 404）' : `服务器返回 HTTP ${response.status}`);
+  if (!response.ok) {
+    try { await response.body?.cancel(); } catch (_) {}
+    throw fail(response.status === 404 ? '源上没有这个文件（HTTP 404）' : `服务器返回 HTTP ${response.status}`);
+  }
   const contentType = response.headers && response.headers.get ? response.headers.get('content-type') : '';
   const declared = Number(response.headers && response.headers.get ? response.headers.get('content-length') : NaN);
   const hash = createHash('sha256');
   const out = fs.openSync(part, 'w');
-  let received = 0, head = null, idleTimer = null, idleHit = false;
+  let received = 0, head = null, idleTimer = null, idleHit = false, reader = null, renamed = false;
+  // openResponse 只把取消信号接到「拿到响应头」为止；下载正文期间也要能取消（2026-10-22 修：
+  // 会议室运行时 77MB，用户点取消后原来还会把整个文件收完）。
+  const onAbort = () => controller.abort();
+  if (signal) { if (signal.aborted) controller.abort(); else signal.addEventListener('abort', onAbort, { once: true }); }
   const startedAt = Date.now();
   let lastTick = startedAt, lastBytes = 0, speed = 0;
   const armIdle = () => { clearTimeout(idleTimer); idleTimer = setTimeout(() => { idleHit = true; controller.abort(); }, idleTimeoutMs); };
@@ -104,7 +111,7 @@ async function downloadOne({ source, url, expect, dest, fetchImpl, signal, onPro
       throw fail(`文件大小不对：应为 ${fmtBytes(expect.bytes)}，服务器给的是 ${fmtBytes(declared)}`);
     }
     if (!response.body || typeof response.body.getReader !== 'function') throw fail('服务器没有返回文件内容');
-    const reader = response.body.getReader();
+    reader = response.body.getReader();
     armIdle();
     for (;;) {
       let chunk;
@@ -131,21 +138,25 @@ async function downloadOne({ source, url, expect, dest, fetchImpl, signal, onPro
           etaSec: speed > 0 ? Math.max(0, Math.round((expect.bytes - received) / speed)) : null });
       }
     }
-  } finally {
-    clearTimeout(idleTimer);
-    fs.closeSync(out);
-  }
-  try {
+    // 取消信号落在「读完最后一块」之后也不能转正：用户点了取消就当这次没下过。
+    if (signal && signal.aborted) throw fail('已取消');
     if (received !== expect.bytes) {
       if (received < 64 * 1024 && looksLikeWebPage(contentType, head)) throw blockedFail(`收到 ${fmtBytes(received)} 的网页而不是更新包，可能被公司代理拦截`);
       throw fail(`文件不完整：应为 ${fmtBytes(expect.bytes)}，只收到 ${fmtBytes(received)}`);
     }
     if (hash.digest('hex') !== expect.sha256) throw fail('文件校验不一致（内容在传输中被改动或源上的文件不对）');
     fs.renameSync(part, dest);
+    renamed = true;
     return { bytes: received, ms: Date.now() - startedAt };
-  } catch (error) {
-    try { fs.rmSync(part, { force: true }); } catch (_) {}
-    throw error;
+  } finally {
+    clearTimeout(idleTimer);
+    if (signal) signal.removeEventListener('abort', onAbort);
+    // 没读完的响应体要显式取消，否则连接会挂到回收（换源重试时叠加）。
+    try { await reader?.cancel(); } catch (_) {}
+    fs.closeSync(out);
+    // 取消、20 秒没数据、写盘失败、校验不过都走这里：一律不留 .part。
+    // 77MB 的半个文件既占盘，也会让下次重试从脏状态开始。
+    if (!renamed) { try { fs.rmSync(part, { force: true }); } catch (_) {} }
   }
 }
 

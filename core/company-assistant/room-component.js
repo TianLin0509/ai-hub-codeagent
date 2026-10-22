@@ -27,7 +27,7 @@ const exec = (file, args, options = {}) => new Promise((resolve, reject) => {
 // Python process; a cold start on a busy office PC can take well over 10 s.
 const PROBE_TIMEOUT_MS = 120000;
 const NEED_CONNECT = '请先在助理设置 → 抢会议室里接通';
-const RUNTIME_MISSING = '安装包缺少会议室组件，请使用包含会议室组件的完整安装包修复；不需要另装秘书终结者';
+const RUNTIME_MISSING = '会议室组件还没下载到这台电脑；请在「助理 → 设置 → 抢会议室」里点「下载会议室组件」，不需要另装秘书终结者';
 // Ends only the process tree this module started (by PID), never by name.
 function killTree(child) {
   return new Promise(resolve => {
@@ -64,33 +64,64 @@ async function probe(a, exe, { spawnFn = spawn, timeoutMs = PROBE_TIMEOUT_MS, ki
   }
 }
 function fileKey(exe) { const st = fs.statSync(exe); return { exe: path.resolve(exe), size: st.size, mtimeMs: st.mtimeMs }; }
+// 打包后 __dirname 是 ...\resources\app.asar\core\company-assistant。3.1.3 起安装包的 asar 里不再有
+// runtime/，但 3.1.2 及更早装过的机器上，旧副本还留在 app.asar.unpacked 下；asar 路径下已经没有条目，
+// 只有换成 unpacked 才找得到。老的安装包只是没用过会议室的那批人，不该为这 77MB 重下一遍。
+function runtimeSourcePaths(bundle, file) {
+  const primary = path.join(bundle, 'runtime', file), paths = [primary], asar = `app.asar${path.sep}`;
+  if (primary.includes(asar)) paths.push(primary.replace(asar, `app.asar.unpacked${path.sep}`));
+  return paths;
+}
 function bundledRuntime(bundle = BUNDLE) {
   const baseline = manifest(path.join(bundle, 'baseline.json'));
-  const source = path.join(bundle, 'runtime', baseline.exe.file);
-  return { baseline, source };
-}
-function runtimeAvailable(bundle = BUNDLE) {
-  try { const { baseline, source } = bundledRuntime(bundle); return fs.statSync(source).size === baseline.exe.size; }
-  catch { return false; }
+  const sources = runtimeSourcePaths(bundle, baseline.exe.file);
+  const source = sources.find(file => fs.existsSync(file)) || sources[0];
+  return { baseline, source, sources };
 }
 // Keep running executables outside the installation tree: Windows must be able to
 // replace app.asar.unpacked during a Hub update, including while a booking runs.
-function prepareRuntime(a, { bundle = BUNDLE } = {}) {
-  const { baseline, source } = bundledRuntime(bundle);
-  if (!fs.existsSync(source)) throw new Error(RUNTIME_MISSING);
-  if (!verified(source, baseline.exe)) throw new Error('随包会议室组件校验失败，请修复 Hub 安装包');
-  const exe = path.join(a.dir, 'room-runtime', baseline.exe.sha256, baseline.exe.file);
-  fs.mkdirSync(path.dirname(exe), { recursive: true });
-  if (!fs.existsSync(exe)) {
+function runtimeCachePath(a, baseline) { return path.join(a.dir, 'room-runtime', baseline.exe.sha256, baseline.exe.file); }
+// 本机现状：数据目录缓存（下载或从旧安装包拷来的）、安装目录自带的旧副本、都没有。
+// 这里只比字节数：状态几秒刷一次，不能每次都把 77MB 全读一遍算哈希；真要启动前
+// prepareRuntime 会完整核对 sha256。
+const sizeOk = (file, asset) => { try { return fs.statSync(file).size === asset.size; } catch { return false; } };
+function runtimeInfo(a, { bundle = BUNDLE } = {}) {
+  const { baseline, sources } = bundledRuntime(bundle);
+  const cached = runtimeCachePath(a, baseline);
+  return { bytes: baseline.exe.size, sha256: baseline.exe.sha256,
+    cached: sizeOk(cached, baseline.exe), bundled: sources.some(file => sizeOk(file, baseline.exe)), baseline };
+}
+// 2026-10-22：安装包不再默认带 76.8MB 的运行时。顺序是 本机缓存（下载过的 / 旧安装包拷过来的）→
+// 安装目录里的旧副本（3.1.2 及更早装的）→ 按签名清单现下（downloader 由 rooms 传入）。
+async function prepareRuntime(a, { bundle = BUNDLE, downloader = null } = {}) {
+  const { baseline, sources } = bundledRuntime(bundle);
+  const exe = runtimeCachePath(a, baseline);
+  if (fs.existsSync(exe)) {
+    // 缓存被改过/传坏了：删掉重来（可能重新下载）。删不掉说明正被占用，照旧报错不硬来。
+    if (verified(exe, baseline.exe)) return { exe, baseline };
+    try { fs.rmSync(exe, { force: true }); }
+    catch (_) { throw new Error('本机会议室组件校验失败，未启动'); }
+  }
+  const copies = sources.filter(file => fs.existsSync(file));
+  if (copies.length) {
+    const good = copies.find(file => verified(file, baseline.exe));
+    // 有旧副本但内容不对：既不能跑，也不该拿它当「没下载」去悄悄联网。
+    if (!good) throw new Error('随包会议室组件校验失败，请修复 Hub 安装包');
+    fs.mkdirSync(path.dirname(exe), { recursive: true });
     const temp = exe + '.' + crypto.randomUUID() + '.tmp';
     try {
-      fs.copyFileSync(source, temp);
+      fs.copyFileSync(good, temp);
       if (!verified(temp, baseline.exe)) throw new Error('会议室组件复制后校验失败');
       fs.renameSync(temp, exe);
     } finally { if (fs.existsSync(temp)) fs.unlinkSync(temp); }
+    return { exe, baseline };
   }
-  if (!verified(exe, baseline.exe)) throw new Error('本机会议室组件校验失败，未启动');
-  return { exe, baseline };
+  if (downloader) {
+    await downloader.ensure();
+    if (!verified(exe, baseline.exe)) throw new Error('会议室组件下载后校验失败，未启动');
+    return { exe, baseline };
+  }
+  throw Object.assign(new Error(RUNTIME_MISSING), { code: 'runtime-missing' });
 }
 async function foreignInstances(exe, { listProcesses } = {}) {
   if (!listProcesses && (process.platform !== 'win32' || process.env.MSZ_HUB_TEST_INSTANCE)) return [];
@@ -112,9 +143,16 @@ function initializeHome(home) {
     const temp = file + '.hub.tmp'; fs.writeFileSync(temp, JSON.stringify(next, null, 2), 'utf8'); fs.renameSync(temp, file);
   }
 }
-// Compatibility IPC aliases; these no longer search for or download another app.
-async function discover(a, options) { const { source } = bundledRuntime(options?.bundle); return fs.existsSync(source) ? source : ''; }
-async function install(a, options) { return prepareRuntime(a, options).exe; }
+// Compatibility IPC aliases; these no longer search for another installed app.
+async function discover(a, options) {
+  // 只返回真能用的路径：缓存优先；只有安装目录里的旧副本时返回那份旧副本，不报一个还不存在的缓存路径。
+  try {
+    const info = runtimeInfo(a, options);
+    if (info.cached) return runtimeCachePath(a, info.baseline);
+    return info.bundled ? bundledRuntime(options?.bundle).source : '';
+  } catch { return ''; }
+}
+async function install(a, options) { return (await prepareRuntime(a, options)).exe; }
 async function stage(a, exe, home, { probe: allowProbe = false, probeOptions, baseline, bundle = BUNDLE } = {}) {
   const m = manifest(path.join(bundle, 'control.json')), source = path.join(bundle, m.code.file);
   if (!verified(source, m.code)) throw new Error('秘书控制组件校验不通过');
@@ -152,4 +190,4 @@ async function stage(a, exe, home, { probe: allowProbe = false, probeOptions, ba
   return { installed: true, version: m.version };
 }
 module.exports = { manifest, verified, discover, install, stage, probe, killTree, PROBE_TIMEOUT_MS, NEED_CONNECT,
-  bundledRuntime, runtimeAvailable, prepareRuntime, foreignInstances, initializeHome, RUNTIME_MISSING };
+  bundledRuntime, runtimeSourcePaths, runtimeInfo, runtimeCachePath, prepareRuntime, foreignInstances, initializeHome, RUNTIME_MISSING };

@@ -4,6 +4,7 @@ const path = require('node:path');
 const { randomUUID, createHash } = require('node:crypto');
 const { spawn } = require('node:child_process');
 const component = require('./room-component');
+const { createRuntimeDownload } = require('./room-runtime-download');
 
 const RULES = ['主题', '开始时间', '时长小时', '时长分钟', '优先会议室', '抢订日'];
 function readJson(file, fallback) {
@@ -30,9 +31,42 @@ function slotText(r = {}) {
 class RoomBooking {
   constructor(a, deps = {}) {
     this.a = a; this.deps = deps; this.timer = null; this.starting = null; this.ticking = false;
-    this.error = ''; this.preparationError = ''; this.lastStart = 0; this.child = null;
+    this.error = ''; this.preparationError = ''; this.lastStart = 0; this.child = null; this.runtime = null;
   }
   saved() { const exe = this.settings().exePath; return !!(exe && fs.existsSync(exe)); }
+  // 会议室运行时（77MB 的秘书终结者）第一次用时才下载：这里只做一次性的准备，不联网。
+  runtimeDownloader() {
+    if (this.deps.roomCommand) return null;
+    if (this.runtime && this.runtime.bundle === this.deps.roomBundle) return this.runtime.downloader;
+    let downloader = null, error = '';
+    try {
+      const { baseline } = component.bundledRuntime(this.deps.roomBundle);
+      // 'roomDownloader' in deps：测试要能明确说「这台机器不联网」，传 null 就别再建下载器。
+      downloader = 'roomDownloader' in this.deps ? this.deps.roomDownloader
+        : createRuntimeDownload({ dataDir: this.a.dir, baseline, sources: this.deps.roomRuntimeSources,
+          fetchImpl: this.deps.roomFetch,
+          // 下载器每 250ms 报一次进度，不能每次都把整页重画（下面还有 3 秒轮询）：1 秒最多推一次；
+          // 结束态（成功/失败/取消）立即推，让界面马上换按钮。
+          onState: state => {
+            const now = Date.now();
+            if (state.phase === 'downloading' && now - (this.runtime?.pushedAt || 0) < 1000) return;
+            if (this.runtime) this.runtime.pushedAt = now;
+            this.a.changed();
+          } });
+    } catch (e) { error = e.message; }
+    this.runtime = { bundle: this.deps.roomBundle, downloader, error, pushedAt: 0 };
+    return downloader;
+  }
+  runtimeState() {
+    const dl = this.runtimeDownloader(), status = dl ? dl.status() : null;
+    let info = { cached: false, bundled: false, bytes: null, sha256: null, error: '' };
+    try {
+      const now = component.runtimeInfo(this.a, { bundle: this.deps.roomBundle });
+      info = { cached: now.cached, bundled: now.bundled, bytes: now.bytes, sha256: now.sha256, error: '' };
+    } catch (error) { info = { ...info, error: error.message }; }
+    return { ...info, ...(status || {}), installed: info.cached || info.bundled || !!(status && status.installed),
+      phase: status ? status.phase : 'unavailable', error: (status && status.error) || info.error || this.runtime?.error || '' };
+  }
   settings() { return this.a.settings().rooms || {}; }
   home() { return this.deps.roomHome || this.settings().home || path.join(this.a.dir, 'meeting-room'); }
   file(...parts) { return path.join(this.home(), ...parts); }
@@ -42,7 +76,8 @@ class RoomBooking {
     try { helper = this.helper(); } catch (e) { this.error = e.message; }
     const live = !this.blockedExternal && helper?.protocol === 1 && (!helper.pid || processAlive(helper.pid))
       && this.a.now() - helper.at < 30000 && helper.at <= this.a.now() + 5000;
-    return { available: !!this.deps.roomCommand || component.runtimeAvailable(this.deps.roomBundle), embedded: true, preparing: !!this.starting,
+    const runtime = this.runtimeState();
+    return { available: !!this.deps.roomCommand || runtime.installed, download: runtime, embedded: true, preparing: !!this.starting,
       connected: !!live, running: !!(live && helper.running), mode: live ? helper.mode : null,
       loginNeeded: !!helper?.loginNeeded, loginBusy: !!(live && helper.loginBusy),
       rules: helper?.rules || null, phases: live ? helper.phases : {}, nextOpen: helper?.nextOpen,
@@ -72,7 +107,8 @@ class RoomBooking {
   async ensure({ user = false } = {}) {
     if (this.starting) return this.starting;
     this.starting = (async () => {
-      const runtime = this.deps.roomCommand ? null : component.prepareRuntime(this.a, { bundle: this.deps.roomBundle });
+      const runtime = this.deps.roomCommand ? null
+        : await component.prepareRuntime(this.a, { bundle: this.deps.roomBundle, downloader: this.runtimeDownloader() });
       const command = this.deps.roomCommand || [runtime.exe];
       if (!command[0] || !fs.existsSync(command[0])) throw new Error('会议室组件不可用，请修复 Hub 安装包');
       if (!this.deps.roomCommand) {

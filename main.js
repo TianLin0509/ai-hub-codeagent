@@ -2484,6 +2484,9 @@ try {
       },
       // 电脑前有没有人：键盘鼠标多少秒没动（「其他会话卡住」只在人不在电脑前时推到手机）。
       systemIdleSeconds: () => require('electron').powerMonitor.getSystemIdleTime(),
+      // 会议室组件（77MB）第一次用时才下载：走 Electron 的网络栈，系统代理/PAC 才生效
+      // （Node 内置 fetch 不读代理，公司网络里直连 GitHub 会 10 秒后失败；2026-09-23 实测）。
+      roomFetch: (...args) => net.fetch(...args),
     });
     require('./core/company-assistant/notice-bus').noticeBus().on('notice', notice => {
       sendToRenderer('company-assistant:notice', notice);

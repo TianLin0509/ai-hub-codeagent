@@ -573,11 +573,85 @@ function createCompanyAssistantPage({ document, window, ipcRenderer, openSession
     if (busy) setTimeout(() => { if (body.isConnected && !panel.hidden && panel.dataset.tab === 'ppt') void mountPptTab(panel); }, 1500);
   }
 
+  // 会议室运行时（约 77MB）从 3.1.3 起不再随安装包发：打开这个页只先看本机有没有，
+  // 没有就给一个下载按钮，不在一打开时偷偷下 77MB。
+  function roomDownloadText(d = {}) {
+    if (d.phase === 'downloading') {
+      const total = d.total || d.bytes || 0, received = d.received || 0;
+      const pct = total ? Math.min(100, Math.round(received / total * 100)) : 0;
+      const speed = d.speed ? `，${(d.speed / 1048576).toFixed(1)} MB/s` : '';
+      const eta = d.etaSec ? `，约剩 ${d.etaSec} 秒` : '';
+      return `正在下载会议室组件：${pct}%（${(received / 1048576).toFixed(1)} / ${(total / 1048576).toFixed(1)} MB${speed}${eta}）`;
+    }
+    if (d.phase === 'installed') return '会议室组件已下载完成，正在接通…';
+    if (d.phase === 'cancelled') return '下载已取消，可以点下面的按钮重新下载。';
+    return '';
+  }
+  function mountRoomDownload(body, panel, r) {
+    const d = r.download || {}, mb = Math.round(Number(d.bytes || 0) / 1048576) || 77;
+    const busy = d.phase === 'downloading' || !!r.preparing;
+    // 公司代理第一次访问一个网址会先出确认页：把要放行的网址直接给用户，别让他自己猜。
+    const blocked = (d.attempts || []).find(a => a.blocked && a.url);
+    body.innerHTML = `<fieldset class="col"><legend>抢会议室</legend>
+      <p class="ca-note">会议室组件（约 ${mb} MB）还没下载到这台电脑。下载后只放在本机数据目录，按随包的签名清单核对文件；不需要另装秘书终结者。</p>
+      <p class="ca-note${busy ? ' run' : ''}" data-slot="room-dl" role="status">${esc(roomDownloadText(d))}</p>
+      ${d.phase === 'error' && d.error ? `<p class="ca-note bad">${esc(d.error)}</p>` : ''}
+      ${d.phase === 'error' && blocked ? `<p class="ca-note">如果是公司代理要求确认：在浏览器里打开 ${esc(blocked.url)} 并点「允许」，再回来点重试。</p>` : ''}
+      <div class="ca-row"><button class="ca-btn primary" data-room-install${busy ? ' disabled' : ''}>${d.phase === 'error' ? '重新下载会议室组件' : `下载会议室组件（约 ${mb} MB）`}</button></div></fieldset>
+      <p class="ca-note" data-slot="room-msg" aria-live="polite"></p>`;
+    let acting = false;
+    body.onclick = async event => {
+      const button = event.target.closest('[data-room-install]');
+      if (!button || acting || button.disabled) return;
+      acting = true; button.disabled = true;
+      const msg = body.querySelector('[data-slot="room-msg"]');
+      msg.textContent = '开始下载…';
+      try { await call('room-install'); await mountRoomsTab(panel); }
+      catch (error) { msg.textContent = error.message; acting = false; if (button.isConnected) button.disabled = false; }
+    };
+    clearInterval(roomsTimer);
+    let polling = false;
+    roomsTimer = setInterval(async () => {
+      // 上一次还没回来就跳过这一拍：两次重叠会各画一次页面，还会留下两个定时器。
+      if (polling) return;
+      if (panel.hidden || panel.dataset.tab !== 'rooms' || !body.isConnected) { clearInterval(roomsTimer); roomsTimer = null; return; }
+      polling = true;
+      try {
+        const latest = (await call('room-status')).rooms;
+        if (latest.available) { clearInterval(roomsTimer); roomsTimer = null; await mountRoomsTab(panel); return; }
+        const slot = body.querySelector('[data-slot="room-dl"]');
+        const state = latest.download || {};
+        if (slot) { slot.textContent = roomDownloadText(state); slot.className = 'ca-note' + (state.phase === 'downloading' ? ' run' : ''); }
+        // 下载失败（或本机文件被删）：整页按最新状态重画，出错原因和重试按钮一起出现。
+        if (state.phase === 'error' && state.error) {
+          const shown = body.querySelector('.ca-note.bad');
+          if (!shown || shown.textContent !== state.error) { clearInterval(roomsTimer); roomsTimer = null; mountRoomDownload(body, panel, { ...latest, download: state }); }
+        }
+      } catch (error) {
+        // 不能静默吞掉：否则进度停在旧数字、按钮一直转不动，看着像卡死。
+        const msg = body.querySelector('[data-slot="room-msg"]');
+        if (msg) msg.textContent = '状态刷新失败：' + error.message + '；可以稍后再点一次下载或重试。';
+        const button = body.querySelector('[data-room-install]');
+        if (button) button.disabled = false;
+      } finally { polling = false; }
+    }, 3000);
+  }
   async function mountRoomsTab(panel) {
     clearInterval(roomsTimer); roomsTimer = null;
     const body = panel.querySelector('.ca-tab-body');
-    body.innerHTML = '<p class="ca-note run" role="status">正在准备抢会议室功能，首次可能需要约 2 分钟。可以先使用助理的其他功能。</p>';
+    body.innerHTML = '<p class="ca-note run" role="status">正在检查抢会议室组件…</p>';
     let r;
+    try { r = (await call('room-status')).rooms; }
+    catch (error) {
+      if (body.isConnected && panel.dataset.tab === 'rooms') {
+        body.innerHTML = `<p class="ca-note bad">检查未完成：${esc(error.message)}</p><button class="ca-btn" data-room-retry>重试</button>`;
+        body.querySelector('[data-room-retry]').onclick = () => { void mountRoomsTab(panel); };
+      }
+      return;
+    }
+    if (!body.isConnected || panel.dataset.tab !== 'rooms') return;
+    if (!r.available && !r.connected && !r.download?.installed) { mountRoomDownload(body, panel, r); return; }
+    body.innerHTML = '<p class="ca-note run" role="status">正在准备抢会议室功能，首次可能需要约 2 分钟。可以先使用助理的其他功能。</p>';
     try { r = (await call('room-connect')).rooms; }
     catch (error) {
       if (body.isConnected && panel.dataset.tab === 'rooms') {

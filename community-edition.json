@@ -35,13 +35,13 @@
     "releasePage": "https://github.com/TianLin0509/ai-hub-codeagent/releases"
   },
   "releaseNotes": [
-    "号池里的号按自己的模型权限派活：不会再因为配置里留着没权限的模型而一直避让，派活时自动用这个号能用的模型。",
-    "助理回答里的 PPT 出处由 Hub 自动核对文件与页码；从「PPT 素材库」入口提问时只查素材库，不先查 WeLink。",
-    "助理预置了一条「无线领域」偏好（可改、可删），找素材时会按无线术语扩搜。",
-    "若干稳定性和测试修复。"
+    "新装或更新不再默认下载 76.8MB 的会议室组件：第一次进「抢会议室」时点一下就下，下完自动接上；3.1.2 及更早装过的电脑直接复用本机那份，不重下。",
+    "更新包只装变化的文件：这一版约 9MB（原来 86.7MB）；3.1.2 及更早的客户端更新也只用下约 9MB。",
+    "安装包去掉了调试用的 source map，安装体积更小。",
+    "修了下载取消不生效、取消后可能留下半个文件的问题；被公司代理拦截时会给出需要放行的网址。"
   ],
-  "version": "3.1.2",
-  "upstreamVersion": "1.6.577",
-  "upstreamCommit": "0108dfa29d7a747812fcfedcd3403daf2097b603",
+  "version": "3.1.3",
+  "upstreamVersion": "1.6.579",
+  "upstreamCommit": "7de3b5c43752eea9e38d6e76e2b50a8b6d2e9be2",
   "upstreamDirty": false
 }

@@ -6,11 +6,16 @@
 //   "schema": 1, "product": "AI Hub Community", "version": "1.0.1", "publishedAt": "...", "notes": ["..."],
 //   "runtime": { "electron": "41.2.0", "native": { "node-pty": "1.1.0" } },
 //   "incremental": { "file": "AIHubHuawei-1.0.1-update.gz", "bytes": 7467767, "sha256": "..." },
+//   "incrementalDelta": { "file": "…-update-delta.gz", "bytes": 9000000, "sha256": "…",
+//                         "requires": [{ "path": "app.asar.unpacked/…exe", "bytes": 80568759, "sha256": "…" }] },
 //   "installer":   { "file": "AIHubHuawei-Setup-1.0.1.exe", "bytes": 94000000, "sha256": "..." }
 // }
 //
 // 增量包只换 app.asar 和 app.asar.unpacked 里不属于依赖的文件；Electron 或原生依赖的版本变了
 // （runtime 对不上）就只能走完整安装包。
+// incrementalDelta（v3.1.3）：只带这一版变了的文件，requires 列出「本机应该已经是这个样子」的文件。
+// 客户端下载前先按 requires 核对本机，全部对上才下小包，否则回到 incremental（完整更新包）。
+// old 客户端只认 incremental，所以它必须始终是完整的（schema 1）。
 const fs = require('fs');
 const path = require('path');
 
@@ -36,6 +41,21 @@ function checkAsset(asset, label) {
   return { file: asset.file, bytes: asset.bytes, sha256: asset.sha256 };
 }
 
+// 增量小包里的文件名只能是程序自己的文件（app.asar 或解包目录，不含 node_modules）。
+const REL = /^app\.asar(\.unpacked\/(?!node_modules\/)[A-Za-z0-9._@%+()\[\]-]+(\/[A-Za-z0-9._@%+()\[\]-]+)*)?$/;
+
+function checkDelta(asset) {
+  const base = checkAsset(asset, '增量小包');
+  const list = asset.requires;
+  if (!Array.isArray(list) || list.length > 200) throw new Error('清单里增量小包的核对项不合规');
+  const requires = list.map(item => {
+    if (!item || !REL.test(String(item.path || '')) || !SHA.test(String(item.sha256 || ''))
+      || (item.bytes !== undefined && (!Number.isInteger(item.bytes) || item.bytes < 0))) throw new Error('清单里增量小包的核对项不合规');
+    return { path: item.path, sha256: item.sha256, ...(item.bytes !== undefined ? { bytes: item.bytes } : {}) };
+  });
+  return { ...base, requires };
+}
+
 function validateManifest(raw) {
   const m = typeof raw === 'string' ? JSON.parse(raw) : raw;
   if (!m || m.schema !== 1) throw new Error('版本清单的格式不认识');
@@ -50,6 +70,7 @@ function validateManifest(raw) {
     notes: Array.isArray(m.notes) ? m.notes.map(String).slice(0, 30) : [],
     runtime: { electron: String(runtime.electron), native: runtime.native && typeof runtime.native === 'object' ? { ...runtime.native } : {} },
     incremental: m.incremental ? checkAsset(m.incremental, '增量包') : null,
+    incrementalDelta: m.incrementalDelta ? checkDelta(m.incrementalDelta) : null,
     installer: checkAsset(m.installer, '完整安装包'),
   };
 }
@@ -76,15 +97,17 @@ function sameRuntime(a, b) {
   return true;
 }
 
-// 该怎么更新：none（已是最新）/ incremental（只换 app.asar）/ full（完整安装包），附一句人话原因。
+// 该怎么更新：none（已是最新）/ incremental（只换 app.asar 和解包文件）/ full（完整安装包），附一句人话原因。
+// v3.1.3 起：只要清单里有 incrementalDelta，就先按它走小包（下载前核对 requires，对不上再回完整更新包）；
+// 无论从哪一版过来都直接升到最新版，不需要逐版升级。
 function planUpdate(manifest, { version, runtime }) {
   if (compareVersions(manifest.version, version) <= 0) return { kind: 'none', reason: `已是最新：v${version}` };
-  if (!manifest.incremental) return { kind: 'full', reason: '这一版只提供完整安装包' };
+  if (!manifest.incremental && !manifest.incrementalDelta) return { kind: 'full', reason: '这一版只提供完整安装包' };
   if (!sameRuntime(manifest.runtime, runtime)) {
     const why = manifest.runtime.electron !== runtime.electron ? `底层运行时从 Electron ${runtime.electron} 升到 ${manifest.runtime.electron}` : '终端组件等原生依赖有变化';
     return { kind: 'full', reason: `${why}，需要完整安装包` };
   }
-  return { kind: 'incremental', reason: '只需下载变化的程序文件' };
+  return { kind: 'incremental', reason: manifest.incrementalDelta ? '只下载这一版变化的程序文件，直接升到最新版，不用逐版升级' : '只需下载变化的程序文件' };
 }
 
 module.exports = { parseVersion, compareVersions, validateManifest, currentRuntime, sameRuntime, planUpdate };
