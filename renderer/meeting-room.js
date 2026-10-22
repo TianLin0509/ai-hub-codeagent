@@ -6520,8 +6520,8 @@ if (typeof document !== 'undefined') (function () {
     // 只保留部分 AI 的发行版（公司纯净版只留 CodeAgent）：只列允许的；主仓库与公开版列表不变。
     const { allowedKinds, kindAllowed } = require('../core/distribution');
     const availableKinds = (meeting.groupChat
-      ? ['claude', 'codex', 'deepseek-claude', 'qwen', 'glm', 'gemini', ...(allowedKinds ? ['codeagent'] : [])]
-      : ALL_AI_KINDS.filter(k => k !== 'deepseek' && k !== 'deepseek-acp')).filter(kindAllowed);
+      ? ['claude', 'codex', 'deepseek-acp', 'qwen', 'glm', 'gemini', ...(allowedKinds ? ['codeagent'] : [])]
+      : ALL_AI_KINDS.filter(k => k !== 'deepseek' && k !== 'deepseek-claude')).filter(kindAllowed);
     const kinds = availableKinds.map(k => ({
       kind: k,
       label: _CLI_SUFFIX[k] || getKindLabel(k),

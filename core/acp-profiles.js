@@ -105,6 +105,7 @@ function buildAcpOptions(kind, opts, config, dataDir, baseEnv = process.env) {
       modelProviders: { openai: models.map(({id}) => ({ id, name: id, baseUrl: baseURL, envKey: 'OPENAI_API_KEY' })) },
     });
   } else if (kind === 'deepseek-acp') {
+    if (process.platform === 'win32') args.unshift('--require', path.join(__dirname, 'dsh-windows-link-retry.cjs'));
     if(!entry.bridgePath)throw new Error('DeepSeek 完整交互需要配置 ACP 扩展包目录');
     env.DSH_HOME = path.join(home, '.dsh');
     env.BAILIAN_API_KEY = key;
@@ -142,6 +143,10 @@ function buildAcpOptions(kind, opts, config, dataDir, baseEnv = process.env) {
       routePatches.push({ insert:[{id:'hub-acp-bridge',name:path.join(__dirname,'acp-dsh-stdio.mjs')}] });
       env.AI_HUB_DSH_BRIDGE = entry.bridgePath;
     }
+    // Keep the native tool and explicit user decisions available; ordinary
+    // implementation choices belong to the agent in Hub's delegated workflow.
+    routePatches.push({ id: 'system-prompt', config: { personaSuffix:
+      '你正在 AI Hub 中协作。对用户已经授权的任务持续执行到可交付；先通过读取项目和工具查清可查证的信息。常规实现细节由你选择合理方案并执行，汇报必要的假设与取舍。仅当缺少用户独有的信息、选择会实质改变目标或造成显著返工、或用户规则要求审批时，使用 ask_user_question 等待回答。用户明确要求比较或选择时正常提问。需要用户决定的事项由用户亲自回答。' } });
     writeJson(patch, routePatches);
     args.push('--profile', 'acp', '--patch', patch);
   } else {

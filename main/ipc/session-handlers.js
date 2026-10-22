@@ -774,8 +774,10 @@ function registerSessionIpc(ipcMain, deps) {
     const dataDir = getHubDataDir();
     const guard = require('../../core/codeagent-default-model-guard');
     // 自动会话（通道、公司助理、论坛）只在启动和原地重拉时由 Hub 选成这个号该用的模型（2026-10-20 用户：照真人从启动中心新建），
-    // 会话中途不切换（2026-10-19 账号即模型）。
-    if (['company-bridge', 'company-assistant', 'company-forum'].includes(session.purpose) && reason !== 'launch' && reason !== 'relaunch') {
+    // 会话中途不切换（2026-10-19 账号即模型）；例外只有一个 model-config-fix（2026-10-22 用户）：通道的会话报出「模型配置有误」后，
+    // 当场在同一个会话里用 /model 切到清单里的模型再把这一轮重发一次。
+    if (['company-bridge', 'company-assistant', 'company-forum'].includes(session.purpose)
+      && reason !== 'launch' && reason !== 'relaunch' && reason !== 'model-config-fix') {
       codeagentModels.appendModelLog(dataDir, { event: 'pick', session: String(sessionId).slice(0, 8), reason, model: modelId, ok: false, error: 'automatic-session' });
       return { ok: false, inputReady: true, message: '自动会话用账号自己的默认模型，不切换模型' };
     }
@@ -786,29 +788,42 @@ function registerSessionIpc(ipcMain, deps) {
     let before = '';
     try { before = String(JSON.parse(require('fs').readFileSync(require('path').join(configDir, 'settings.json'), 'utf8')).model || ''); } catch { before = ''; }
     // 菜单回车（CodeAgent 写）和改回原值（Hub 写）都是这次选择引起的：先登记，看护看到时认得出来源，这里自己记日志。
-    guard.noteHubWrite(configDir, modelId, `codeagent-menu-enter:${reason}`, { logged: true, session: String(sessionId).slice(0, 8) });
     guard.noteHubWrite(configDir, before, `picker-restore:${reason}`, { logged: true, session: String(sessionId).slice(0, 8) });
-    let result;
-    try {
-      result = await codeagentPicker.pickModel({ manager: sessionManager, sid: sessionId, kind: session.kind, modelId,
-        configDir, allowedModels: permitted.authoritative ? permitted.models : null,
-        // 启动和原地重拉：等 CLI 画出普通输入框再敲 /model（太早敲回车会丢，见 pickModel 的 readyFirstMs）
-        readyFirstMs: reason === 'launch' || reason === 'relaunch' ? 45000 : 0,
-        onDefaultChange: change => guard.recordChange(dataDir, { account, session: String(sessionId).slice(0, 8), before: change.restoredTo || '', after: change.written || '',
-          source: `codeagent-menu-enter:${reason}`, extra: { file: change.file, restoredTo: change.restoredTo || '(空)', restoreOk: change.ok, ...(change.error ? { restoreError: change.error } : {}) } }, { persist: false }),
-        sendToPty: require('../../core/group-chat-watcher').sendToPty });
-    } catch (error) { result = { ok: false, message: error && error.message ? error.message : String(error) }; }
+    // 开一次模型菜单选中 want（同一个会话可能要开两次：第一次的目标不在权限清单里时改选清单里的模型，见下面的兜底）
+    const driveMenu = async want => {
+      guard.noteHubWrite(configDir, want, `codeagent-menu-enter:${reason}`, { logged: true, session: String(sessionId).slice(0, 8) });
+      try {
+        return await codeagentPicker.pickModel({ manager: sessionManager, sid: sessionId, kind: session.kind, modelId: want,
+          configDir, allowedModels: permitted.authoritative ? permitted.models : null,
+          // 启动和原地重拉：等 CLI 画出普通输入框再敲 /model（太早敲回车会丢，见 pickModel 的 readyFirstMs）
+          readyFirstMs: reason === 'launch' || reason === 'relaunch' ? 45000 : 0,
+          onDefaultChange: change => guard.recordChange(dataDir, { account, session: String(sessionId).slice(0, 8), before: change.restoredTo || '', after: change.written || '',
+            source: `codeagent-menu-enter:${reason}`, extra: { file: change.file, restoredTo: change.restoredTo || '(空)', restoreOk: change.ok, ...(change.error ? { restoreError: change.error } : {}) } }, { persist: false }),
+          sendToPty: require('../../core/group-chat-watcher').sendToPty });
+      } catch (error) { return { ok: false, message: error && error.message ? error.message : String(error) }; }
+    };
+    let result = await driveMenu(modelId);
+    let picked = modelId;
     const automatic = ['company-bridge', 'company-assistant', 'company-forum'].includes(session.purpose);
-    // 兜底（2026-10-22 B）：自动会话发第一条问题之前，核对这次会用的模型在这个号的权限清单里。
-    // 不在清单里时**只记一行诊断、不拦这一轮**：拦截会让通道一轮轮重试（notSent 不计次数）而家里收不到回执，
-    // 个人账号的「模型配置有误」避让与修正卡片也再没机会触发。号池号的配置由启动前的权限兜底（A）和报错后的
-    // 当场修正（B）处理；个人账号照旧走避让 + 修正卡片。
+    // 兜底（2026-10-22）：自动会话发第一条问题之前，核对这次会用的模型在这个号的权限清单里；不在清单里就开菜单改选清单里的模型，
+    // 不再只是记一行日志照发（2026-10-22 用户：明明是 DeepSeek 号却按 GLM 起来、请求没权限的模型）。
+    // 改选只在菜单这次确实能用（result.ok）时做：菜单本来就选不动时再开一次只会更耽误这一轮，照旧走「能发就发、报错后修正」。
     const willUse = result.ok ? modelId : before;
     const offPermission = automatic && permitted.authoritative && permitted.models.length && willUse
       && !permitted.models.some(m => String(m).toLowerCase() === String(willUse).toLowerCase());
-    if (offPermission) {
+    if (offPermission && result.ok) {
+      // 清单里的第一个（号池的号通常只有一个模型）。菜单里的实际条目以 permitted.models 为准，不按配置里的默认模型猜。
+      const target = String(permitted.models[0]);
+      codeagentModels.appendModelLog(dataDir, { event: 'pick', session: String(sessionId).slice(0, 8), account: account.replace(/\s+/g, ''), reason, model: modelId,
+        ok: false, error: `off-permission：${modelId} 不在这个号的权限清单里，改选清单里的 ${target}` });
+      const again = await driveMenu(target);
+      if (again.ok) { result = again; picked = target; }
+      else { result = { ...again, offPermissionPicked: target, message: `${again.message || '没选上'}（本来是 ${modelId}，不在这个号的权限清单里）` }; }
+    }
+    if (offPermission && !result.ok) {
+      // 菜单这次没能用上（上面的改选也没成）：照旧发，交给报错后的当场修正 / 避让，只是记一行诊断。
       codeagentModels.appendModelLog(dataDir, { event: 'pick', session: String(sessionId).slice(0, 8), account: account.replace(/\s+/g, ''), reason, model: willUse,
-        ok: false, error: 'off-permission：会请求的模型不在权限清单里，照旧发出，交给报错后的配置修正 / 避让',
+        ok: false, error: 'off-permission：会请求的模型不在权限清单里，菜单没能用上，照旧发出，交给报错后的配置修正 / 避让',
         fallback: session.codeagentPoolAccount ? 'pool-model-fix' : 'model-config-avoid' });
     }
     // 自动选模型的熔断计数（core/codeagent-auto-pick.js）：自动会话启动时菜单没选成记一次失败；这个号上任何一次选成就清零。
@@ -835,7 +850,7 @@ function registerSessionIpc(ipcMain, deps) {
       if (!result.defaults.verified) codeagentModels.appendModelLog(dataDir, { event: 'default-model-restore-failed', session: String(sessionId).slice(0, 8), account: account.replace(/\s+/g, ''),
         want: result.defaults.before || '(空)', now: result.defaults.after || '(空)', reason });
     }
-    codeagentModels.appendModelLog(dataDir, { event: 'pick', session: String(sessionId).slice(0, 8), account: account.replace(/\s+/g, ''), reason, model: modelId,
+    codeagentModels.appendModelLog(dataDir, { event: 'pick', session: String(sessionId).slice(0, 8), account: account.replace(/\s+/g, ''), reason, model: picked,
       ok: result.ok, mode: result.mode, confirmed: result.confirmed, restored: (result.restored || []).join('+'), menu: (result.menu || []).join('+'), error: result.ok ? '' : result.message,
       fallback: fallback ? 'send-with-cli-model' : '', failures: breaker && !result.ok ? breaker.failures : '' });
     // 菜单里实际能选的模型：新建会话的模型下拉以它为准（core/codeagent-models.js 的 modelOptions）。
@@ -852,12 +867,40 @@ function registerSessionIpc(ipcMain, deps) {
       return { ...result, ok: true, fallback: 'cli-default-model' };
     }
     if (result.ok) {
-      const updated = sessionManager.updateSessionMeta(sessionId, { currentModel: { id: modelId, displayName: codeagentModels.modelLabel(modelId) }, codeagentRequestedModel: undefined, codeagentModelPick: false,
+      const updated = sessionManager.updateSessionMeta(sessionId, { currentModel: { id: picked, displayName: codeagentModels.modelLabel(picked) }, codeagentRequestedModel: undefined, codeagentModelPick: false,
         // 用户明确选中过的模型：CLI 自己退出、Hub 原地重拉时据此再选一次（core/session-manager.js 的 relaunch）。
-        codeagentUserModel: modelId });
+        codeagentUserModel: picked });
       if (updated) sendToRenderer('session-updated', { session: updated });
     }
-    return result;
+    return { ...result, model: result.ok ? picked : result.model };
+  }
+  // 通道的模型兜底（2026-10-22 用户）：会话里报出「模型配置有误」之后，在同一个会话里用 /model 切到这个号权限清单里的模型，
+  // 切成了通道把这一轮重发一次（core/company-bridge/company.js 的 fixModelInSession），不必换号新开会话。
+  // 目标是清单里第一个不是刚报错那个的模型；清单以 Hub 探测到的为准（guard.permittedModels），不按配置里写的猜。
+  async function fixCodeAgentModel(sessionId, { avoidModel = '' } = {}) {
+    const session = sessionManager.getSession(sessionId);
+    if (!session) return { ok: false, error: 'session-closed', message: '会话已经关闭' };
+    if (codeagentPicker.isPicking(sessionId)) return { ok: false, error: 'busy', message: '正在切换模型，请稍候' };
+    const { getHubDataDir } = require('../../core/data-dir');
+    const dataDir = getHubDataDir();
+    const guard = require('../../core/codeagent-default-model-guard');
+    const configDir = codeagentPicker.normalizeConfigDir(guard.sessionConfigDir(session, { dataDir }));
+    const permitted = guard.permittedModels(session, configDir, { dataDir });
+    const list = permitted.authoritative ? permitted.models : [];
+    const target = list.find(m => String(m).toLowerCase() !== String(avoidModel).toLowerCase()) || '';
+    if (!target) {
+      const message = list.length ? `这个号的权限清单里只有刚报错的 ${avoidModel || '（未知）'}，没有可换的模型` : '读不到这个号的权限清单';
+      return { ok: false, error: 'no-model', message };
+    }
+    const result = await codeagentPicker.schedulePick(sessionId, () => runCodeAgentPick(sessionId, target, 'model-config-fix'));
+    // result.fallback：菜单没选上、只是没把问题挡住（自动会话「能发就发」的老兜底）。这一条路不能算切成了——
+    // 会话还是原来的模型，通道据此重发只会再撞同一条报错。
+    if (!result || !result.ok || result.fallback) {
+      const why = (result && result.message) || '没能在 CodeAgent 里切到清单里的模型';
+      return { ok: false, error: 'pick-failed', model: target,
+        message: result && result.fallback ? `${why}；模型菜单没能用上，会话还是当前模型` : why };
+    }
+    return { ok: true, model: result.model || target, mode: result.mode, confirmed: !!result.confirmed };
   }
   if (typeof sessionManager.on === 'function') sessionManager.on('codeagent-model-pick', ({ sessionId, modelId, reason } = {}) => {
     if (!sessionId || !modelId) return;
@@ -1015,7 +1058,7 @@ function registerSessionIpc(ipcMain, deps) {
     return fresh;
   }
 
-  return { lastResizeBySid, createSession, restartSession };
+  return { lastResizeBySid, createSession, restartSession, fixCodeAgentModel };
 }
 
 module.exports = {

@@ -91,7 +91,7 @@ function createAssistantPanel({ document, ipcRenderer, getSession, getActiveSess
         const old=document.querySelector('.assistant-backend-menu');if(old){old.remove();return;}
         const menu=document.createElement('div');menu.className='assistant-backend-menu';
         menu.setAttribute('role','menu');
-        const {BACKENDS,getKindLabel}=require('../core/hub-assistant/backends');
+        const {SELECTABLE_BACKENDS:BACKENDS,getKindLabel}=require('../core/hub-assistant/backends');
         menu.innerHTML=BACKENDS.map(kind=>`<button type="button" data-assistant-backend="${esc(kind)}">${esc(getKindLabel(kind))}</button>`).join('');
         const rect=picker.getBoundingClientRect();menu.style.left=rect.left+'px';menu.style.top=rect.bottom+6+'px';
         menu.addEventListener('click', event=>{const choice=event.target.closest('[data-assistant-backend]');if(choice){menu.remove();void switchBackend(choice.dataset.assistantBackend);}});

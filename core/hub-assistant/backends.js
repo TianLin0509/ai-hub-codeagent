@@ -4,6 +4,8 @@ const path = require('node:path');
 const { ALL_AI_KINDS, isCodexCliKind, getKindLabel } = require('../ai-kinds');
 // 助理的 DeepSeek 后端仍是 Codex 运行时（依赖 Codex 的 MCP 注入）；DeepSeek on Claude Code 不作为助理后端单列。
 const BACKENDS = ALL_AI_KINDS.filter(kind => kind !== 'deepseek-claude');
+// 新选择只展示 DSH；BACKENDS 保留旧助理恢复能力。
+const SELECTABLE_BACKENDS = BACKENDS.filter(kind => kind !== 'deepseek');
 function backendKind(kind) {
   if (!BACKENDS.includes(kind)) throw new Error('请选择 Hub 支持的 AI 会话后端');
   return kind;
@@ -81,4 +83,4 @@ function providerLaunchOptions(service, kind, id) {
   // Claude 助理把成长记忆（USER.md / MEMORY.md）放进系统提示，每轮生效、不占每轮附带的 2048 字。
   return {mcpProfile:'lean', mcpConfigFile:file, autonomous:true, ...(service.memory ? {appendSystemPromptFile:service.memory.writePrompt()} : {})};
 }
-module.exports = {BACKENDS, backendKind, bindings, reserve, activate, retire, unretire, launchOptions, getKindLabel};
+module.exports = {BACKENDS, SELECTABLE_BACKENDS, backendKind, bindings, reserve, activate, retire, unretire, launchOptions, getKindLabel};

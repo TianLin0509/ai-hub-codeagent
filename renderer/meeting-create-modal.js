@@ -8,15 +8,15 @@ const { MODEL_OPTIONS_BY_KIND, modelOptionsFor } = require('../core/model-option
 
 const MODEL_KINDS = new Set(Object.keys(MODEL_OPTIONS_BY_KIND).filter(require('../core/distribution').kindAllowed));
 const deepseekProfile = require('../core/deepseek-claude-profile.js');
-// 2026-10-11：新建入口里 DeepSeek 一律跑 Claude Code（kind = deepseek-claude）；旧 Codex / 旧 Harness
+// 2026-10-22：新建入口里 DeepSeek 默认使用 DSH；旧 Codex / Claude Code
 // 接入只留给历史会话恢复，ChatGPT 网页路由也不再作为新建成员出现。
-const LEGACY_DEEPSEEK_KINDS = new Set(['deepseek', 'deepseek-acp']);
-const HIDDEN_CREATE_KINDS = new Set(['chatgpt', 'deepseek', 'deepseek-acp']);
+const LEGACY_DEEPSEEK_KINDS = new Set(['deepseek', 'deepseek-claude']);
+const HIDDEN_CREATE_KINDS = new Set(['chatgpt', 'deepseek', 'deepseek-claude']);
 
 const DEFAULT_SLOTS = [
   { kind: 'claude' },
   { kind: 'codex' },
-  { kind: 'deepseek-claude' },
+  { kind: 'deepseek-acp' },
 ];
 // Claude + Codex are the durable default pair. DeepSeek is an explicit third
 // member rather than a cost/latency-bearing default in every room.
@@ -228,9 +228,9 @@ function _deepseekRouteFor(spec) {
 }
 
 function _normalizeSlotSpec(spec = {}) {
-  const requestedKind = LEGACY_DEEPSEEK_KINDS.has(spec.kind) ? 'deepseek-claude' : spec.kind;
+  const requestedKind = LEGACY_DEEPSEEK_KINDS.has(spec.kind) ? 'deepseek-acp' : spec.kind;
   const kind = MODEL_KINDS.has(requestedKind) && requestedKind !== 'chatgpt' ? requestedKind : 'claude';
-  // 旧 DeepSeek 成员模板换到 Claude Code 后，旧的 Codex 模型名不能带过去。
+  // 旧 DeepSeek 成员模板换到 DSH 后，旧的 Codex 模型名不能带过去。
   const sameRuntime = kind === spec.kind;
   const followDefault = sameRuntime ? (spec.followDefault ?? !spec.model) : true;
   const tuning = window.WorkspaceController.resolveSessionTuning(kind, followDefault ? undefined : spec.model,

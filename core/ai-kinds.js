@@ -20,15 +20,15 @@
 //   新增 AI 时只需追加这个数组 + 补 KIND_LABELS。
 //   不含 'powershell' 等非 AI 类型。
 // ---------------------------------------------------------------------------
-// 'deepseek-claude'（2026-10-11）：DeepSeek 跑在 Claude Code 上，新建 DeepSeek 会话一律用它；
+// 'deepseek-claude'（2026-10-11）：DeepSeek 跑在 Claude Code 上，保留历史会话恢复；
 //   旧的 'deepseek'（Codex 运行时 / 迁移前 Claude 兼容）只为恢复历史会话保留。见 core/deepseek-claude-profile.js。
 const ALL_AI_KINDS = ['claude', 'gemini', 'codex', 'deepseek', 'kimi', 'qwen', 'deepseek-acp', 'glm', 'codeagent', 'deepseek-claude'];
 // Offered by the group-creation and writing-member pickers.
 // 2026-10-12: Antigravity (gemini kind) rejoins as a full member: bracketed-paste
 // submit, PreInvocation/Stop hooks, pre-trusted folders and native branches.
 // 发行目标只保留部分 AI 时（公司纯净版只留 CodeAgent），选成员时只列这些。
-// 2026-10-11：新建 DeepSeek 成员一律跑 Claude Code（deepseek-claude）。
-const GROUP_MEMBER_KINDS = ['claude', 'codex', 'deepseek-claude', 'qwen', 'deepseek-acp', 'glm', 'codeagent', 'gemini']
+// 2026-10-22：新建 DeepSeek 成员默认使用 DSH（deepseek-acp）。
+const GROUP_MEMBER_KINDS = ['claude', 'codex', 'deepseek-acp', 'qwen', 'glm', 'codeagent', 'gemini']
   .filter(require('./distribution').kindAllowed);
 const WEB_STYLE_KINDS = [];
 // DeepSeek V4.1 Flash / V4 Pro 原生支持 Responses API，并适配 Codex 0.144.0+。
@@ -54,14 +54,14 @@ const KIND_LABELS = {
   deepseek: 'DeepSeek',
   kimi: 'Kimi',
   qwen: '千问',
-  'deepseek-acp': 'DeepSeek 原生',
+  'deepseek-acp': 'DeepSeek · DSH',
   glm: '智谱',
   codeagent: 'CodeAgent',
   'deepseek-claude': 'DeepSeek',
 };
 
 // Initial titles used by provider harnesses, shared with auto-title eligibility.
-const HARNESS_LABELS = { qwen: '千问 · Qwen Code', 'deepseek-acp': 'DeepSeek · 原生 Harness', glm: '智谱 · ZCode' };
+const HARNESS_LABELS = { qwen: '千问 · Qwen Code', 'deepseek-acp': 'DeepSeek · DSH (DeepSeek Harness)', glm: '智谱 · ZCode' };
 
 // ---------------------------------------------------------------------------
 // Claude 家族（共享 Claude Code CLI 引擎）：

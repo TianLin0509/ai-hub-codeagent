@@ -1674,12 +1674,12 @@ class SessionManager extends EventEmitter {
           || pool.strictDefaultModel(pool.readSettingsModel(codeagentPool.account.dir), codeagentPool.account.models, { authoritative: !!codeagentPool.account.modelsAuthoritative }).model || ''
         : codeAgentExpectedModel({}, { configDir: codeagentConfig.configDir, single: true });
       // 不需要或暂时不该开菜单时直接发问题（2026-10-21 同事公司 Hub：自动选模型 13 次全失败、每次都耽误发问题）：
-      // 号池号默认就是目标且家里没指定、恢复的会话上一轮就是目标模型作答、这个号连续 3 次没选成（4 小时熔断）。见 core/codeagent-auto-pick.js。
+      // 恢复的会话上一轮就是目标模型作答、这个号连续 3 次没选成（4 小时熔断）。见 core/codeagent-auto-pick.js。
+      // 配置里写的默认模型不再作为跳过的依据（2026-10-22 用户：明明是 DeepSeek 号却按 GLM 起来，写着的值不可信）。
       let skip = null;
       try {
         skip = require('./codeagent-auto-pick').skipReason({ dataDir: getHubDataDir(), account: codeagentPool ? codeagentPool.account.id : 'personal',
-          isPool: !!codeagentPool, target, routeModel: codeAgentRouteModel(opts), freshLaunch, actualModel: opts.codeagentActualModel || '',
-          writtenModel: codeagentPool ? pool.readSettingsModel(codeagentPool.account.dir) : '' });
+          isPool: !!codeagentPool, target, freshLaunch, actualModel: opts.codeagentActualModel || '' });
       } catch (error) { console.warn('[codeagent] 自动选模型的跳过判断出错，照常选：' + error.message); }
       if (skip) {
         try { require('./codeagent-models').appendModelLog(getHubDataDir(), { event: 'pick-skipped', session: String(id).slice(0, 8),

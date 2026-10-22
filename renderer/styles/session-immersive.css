@@ -60,7 +60,7 @@ body.session-immersive-active #app-toolbar { visibility: hidden; }
 .mr-group-composer.voice-enabled > .mr-send-actions { grid-column: 4; }
 .mr-group-composer.voice-enabled:has(.prompt-polish-tools) > .mr-send-actions { grid-column: 5; }
 .mr-group-composer:has(#mr-input-tuning.models-on-own-row) > .mr-send-actions { grid-row: 4; }
-:root body .composer-is-collapsed > :not(.composer-expand) { display: none !important; }
+:root body .composer-is-collapsed > :not(.composer-expand):not(.codex-native-controls:has(form.codex-native-request[data-request-id])) { display: none !important; }
 :root body .floating-input-bar.visible.composer-is-collapsed,
 :root body #mr-input-row.composer-is-collapsed,
 :root body .ap-composer.composer-is-collapsed,

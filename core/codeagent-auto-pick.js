@@ -71,11 +71,11 @@ const eq = (a, b) => !!a && !!b && String(a).trim().toLowerCase() === String(b).
 
 // 自动会话启动时要不要开 /model 菜单。返回 null（照常选）或 { reason, note }（跳过、直接发问题）。
 //   - breaker：这个号熔断中（连续 3 次没选成）；
-//   - resume-same-model：休眠后恢复的会话，上一轮实际作答的就是目标模型（号池号）；
-//   - account-default：家里没指定模型，号池号配置里写的默认模型就是目标模型。
-// 个人账号只认熔断，不按配置跳过：公司真机 Q-1020-14 里个人号启动后被写回 deepseek（配置里写的不可信），
-// 只有菜单选择确定管用（core/session-manager.js 自动会话选型处的注释）。
-function skipReason({ dataDir, account, isPool, target, routeModel = '', freshLaunch, actualModel = '', writtenModel = '', now = Date.now(), fsModule = fs } = {}) {
+//   - resume-same-model：休眠后恢复的会话，上一轮实际作答的就是目标模型（号池号）。
+// 只认「真实证据」跳过：上一轮实际作答的模型（读原生记录，不是配置）。配置里写的默认模型不算证据——
+// 个人账号 Q-1020-14、号池号 Q-1022-* 都验过：settings.json 里写的是对的，CLI 启动后照样按内置默认（GLM）起来。
+// 2026-10-22 用户：号池号也取消「按配置跳过」（原 account-default 分支），一律走菜单选；只有菜单连不开时才靠熔断兜底。
+function skipReason({ dataDir, account, isPool, target, freshLaunch, actualModel = '', now = Date.now(), fsModule = fs } = {}) {
   if (!target) return null;
   const open = openFor(dataDir, account, { now, fsModule });
   if (open) {
@@ -83,7 +83,6 @@ function skipReason({ dataDir, account, isPool, target, routeModel = '', freshLa
   }
   if (!isPool) return null;
   if (!freshLaunch && eq(actualModel, target)) return { reason: 'resume-same-model', note: `恢复的会话上一轮就是 ${target} 作答，不再选模型` };
-  if (freshLaunch && !routeModel && eq(writtenModel, target)) return { reason: 'account-default', note: `号的默认模型就是 ${target}，家里也没指定模型，不开模型菜单` };
   return null;
 }
 

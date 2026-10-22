@@ -872,6 +872,45 @@ class CompanyBridge {
     this.notify('没能开始', `${t.id}：${short(why, 80)}`);
     this.changed();
   }
+  // 「模型配置有误」的当场兜底（2026-10-22 用户）：在同一个会话里用 /model 切到这个号权限清单里的模型（main 从探测到的权限清单里挑
+// 第一个不是刚报错那个的），然后把这一轮退回排队重发一次——不必换号新开会话，上下文照旧。返回 true 表示已经重发。
+// 动手前先确认「切了能接着往下走」：会话不在忙、这个号此刻不因整号避让或它配置里的模型在避让中
+// （那种情况下重发仍会被 checkAccountRequest 换号，白开一次菜单）；每轮只试一次（modelFixTried，rehome 时会清掉）。
+  async fixModelInSession(t, r, hit) {
+    if (r.modelFixTried || !this.deps.pickModel || !t.sessionId) return false;
+    const sessionId = t.sessionId;
+    if (!this.deps.getSession(sessionId) || this.sessionBusy(sessionId)) return false;
+    const account = (this.routeAccounts() || []).find(a => a.key === hit.key);
+    if (!account || route.avoidFor(account, t.model || '')) return false;
+    const tried = { modelFixTried: this.now(), modelFixTriedModel: String(hit.model || '') };
+    let fix = null;
+    try { fix = await this.deps.pickModel(sessionId, { avoidModel: hit.model || '', reason: 'model-config-fix' }); }
+    catch (error) { fix = { ok: false, message: error && error.message ? error.message : String(error) }; }
+    if (!fix || !fix.ok) {
+      this.bridgeLog(`model-fix ${t.id}#${r.round} session=${String(sessionId).slice(0, 8)} 没切动（${(fix && fix.message) || '未知'}），照旧换号 / 报错`);
+      this.patchRound(this.thread(t.id) || t, r.round, tried);
+      this.changed();
+      return false;
+    }
+    // 重发这一轮：清掉上一次发送留下的痕迹（baseline / landed / 指纹等），dispatch 会按当前最后一条回答重新取基线再发。
+    // 不算「换号重做」，rehomed 不动；reasent 也不动——那一轮没答出来，重发一次算第一次发。
+    // 号的配置本身没写错（写的模型在权限清单里）时，把「这个号请求了 X」这条避让记录清掉：会话已经改用清单里的模型，
+    // 新开会话也不会再请求 X，留着只会让「账号与号池」和直查以为这个号坏了。配置真写错（清单里没有它写的值）时留着，
+    // 让新会话别一窝蜂撞同一个错。
+    try {
+      if ((account.models || []).some(m => Q.modelKey(m) === Q.modelKey(account.configModel))) Q.clearModelAvoid(this.deps.dataDir, hit.key, hit.model);
+    } catch { /* 清不掉不影响这一轮 */ }
+    this.bridgeLog(`model-fix ${t.id}#${r.round} session=${String(sessionId).slice(0, 8)} ${hit.model || '?'} → ${fix.model}，这一轮重发一次`);
+    this.patchRound(this.thread(t.id) || t, r.round, { ...tried, modelFix: fix.model, sentAt: null, baseline: null, landed: null, sendUncertain: null,
+      receiptIssue: null, promptFingerprint: null, notReadySince: null, retryAt: null, error: null,
+      // 这一次模型配置报错已经处理过了：重发就在报错后几秒内发生，不记下来的话下一次 collect 还会拿同一条报错走下面的换号分支。
+      quotaHitIgnored: hit.at });
+    this.notify('模型配置有误，当场换模型重发', `${t.id} 第 ${r.round} 轮：用 ${fix.model} 重发一次`, sessionId, { quiet: true });
+    void this.link.send('status', { thread: t.id, gen: t.gen, round: r.round, state: 'received',
+      note: this.scrubText(`${this.aliasOf(hit.key)}请求的模型不在权限清单里，已在这个会话里改用 ${fix.model}，这一轮重发一次`) }).catch(() => {});
+    this.changed();
+    return true;
+  }
   // 换号新开会话：hit（撞到额度，这一轮在途）时把这一轮退回排队、记一次重做；否则（排队的追问）只换会话。
   // 旧会话不动（不发按键、不关），保温规则照常让它休眠；新会话的提问带原问题、前几轮问答和上一会话的进展（promptFor）。
   // kind='choice'：原会话停在选择菜单上（不是换号），新会话的提问另带原问题和那道选择题（rehomeContext）。
@@ -882,6 +921,7 @@ class CompanyBridge {
     const prevSessions = [...(t.prevSessions || []), { sessionId: t.sessionId, account: fromKey, at: this.now(), why: short(why, 80) }].slice(-5);
     const rounds = t.rounds.map(x => x.round !== r.round ? x : {
       ...x, sentAt: null, baseline: null, landed: null, resent: null, sendUncertain: null, receiptIssue: null, promptFingerprint: null, hijacked: 0,
+      modelFixTried: null, modelFix: null,
       notReadySince: null, retryAt: null, queueNote: null, rewrite: false, rewriteAsked: false, resumePending: null, resumedAt: null,
       ...(hit ? { rehomed: (Number(x.rehomed) || 0) + 1, account: undefined, requestedAccount: x.account || x.requestedAccount || undefined } : {}),
       rehome: { from: fromAlias, why: short(why, 120), progress, at: this.now(), kind: hit ? (hit.kind === 'model-config' ? 'model-config' : 'quota') : choice ? 'choice' : 'switch' },
@@ -1241,6 +1281,9 @@ class CompanyBridge {
         this.bridgeLog(`rehome-skip ${t.id}#${r.round} 撞额度后原会话自己答出来了，不换号`);
       } else {
         if (this.sessionBusy(t.sessionId) && this.now() - hit.at < REHOME_GRACE_MS) return;
+        // 模型配置有误的当场兜底（2026-10-22 用户）：先在同一个会话里用 /model 切到这个号权限清单里的模型，切成了就把这一轮重发一次。
+        // 每轮只试一次；会话在忙、没有可换的模型、或切不动时，照旧走下面的换号 / 报错。
+        if (hit.kind === 'model-config' && await this.fixModelInSession(t, r, hit)) return;
         // 模型配置有误、又没有别的号能接这一题：不换号重做（换了也只会排队 6 小时），直接如实报回并给出修法（审核 2026-10-19）
         if (hit.kind === 'model-config' && !this.otherAccountUsable(t, hit.key)) {
           return this.failRound(t, r, this.scrubText(this.modelConfigFailText(hit.key, hit.model)));

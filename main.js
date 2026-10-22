@@ -2263,6 +2263,9 @@ try {
     companyBridgeService = new CompanyBridge({ ...bridgeDeps,
       // 剪贴板图片在 sendToPty 往 CodeAgent 粘贴前统一清掉（core/company-bridge/clipboard-guard.js）。
       sendPrompt: (sessionId, text, clientSubmissionId) => bridgeDeps.sendPrompt(sessionId, text, clientSubmissionId),
+      // 「模型配置有误」的当场兜底（2026-10-22 用户）：让 Hub 在同一个会话里用 /model 切到这个号权限清单里的模型
+      // （main/ipc/session-handlers.js 的 fixCodeAgentModel，和界面上「切换模型」走同一条路）；切成了通道把这一轮重发一次。
+      pickModel: (sessionId, opts) => sessionOperations.fixCodeAgentModel(sessionId, opts),
       // 答完的通道会话按追问规律和内存余量休眠（core/company-bridge/session-care.js）；底线由 suspendSession 的排除项保证。
       // CodeAgent 会话休眠时补杀进程树残余（core/session-tree-sweep.js）：node-pty 只结束挂在伪终端上的进程，带独立 conhost 的 MCP 插件会变孤儿。
       // 休眠前从最近一次进程快照（量会话内存时留下的）取整棵树，根结束 8 秒后重新枚举，PID + 启动时间对得上的按 PID 结束。

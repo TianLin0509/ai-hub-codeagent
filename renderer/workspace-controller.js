@@ -22,7 +22,7 @@
     gemini: 'Antigravity CLI',
     codex: 'Codex CLI',
     deepseek: 'DeepSeek',
-    // 2026-10-11：新建 DeepSeek 会话一律跑 Claude Code（旧的 Codex / 旧 Harness 接入从新建入口移除）。
+    // 旧 Claude Code 标签仅用于兼容；新建 DeepSeek 统一映射到 DSH。
     'deepseek-claude': 'DeepSeek · Claude Code',
     kimi: 'Kimi Code · K3',
     codeagent: 'CodeAgent · 公司内网',
@@ -44,7 +44,7 @@
   // CodeAgent 不在内：它的 CLI 挡不住用户级 MCP（2026-10-15 公司真机实测 --strict-mcp-config 无效），
   // 选「精简 / 无」只会把 Hub 自己的工具关掉，用户级 MCP 照样全部加载；所以不给它这个下拉，一律按完整挂载。
   const MCP_KINDS = new Set(['claude', 'codex', 'deepseek', 'deepseek-claude']);
-  // 新建面板上只有一个「DeepSeek」按钮；历史上的 deepseek / deepseek-acp 入口都落到 Claude Code。
+  // 新建面板上只有一个「DeepSeek」按钮；DeepSeek 新建别名统一使用 DSH。
   const DEEPSEEK_PANEL_KINDS = new Set(['deepseek', 'deepseek-acp', 'deepseek-claude']);
   const deepseekProfile = require('../core/deepseek-claude-profile.js');
   // 这个开关只表示 Claude Code 的 fastMode；Codex 的 fast 是另一套
@@ -110,7 +110,7 @@
   let deepseekRoutes = null;
   let deepseekRouteTouched = false;
   function panelKind(kind) {
-    if (DEEPSEEK_PANEL_KINDS.has(kind)) return 'deepseek-claude';
+    if (DEEPSEEK_PANEL_KINDS.has(kind)) return 'deepseek-acp';
     return KIND_LABELS[kind] ? kind : null;
   }
   // 缺 Key 的一条：置灰并写原因。读不到配置时不预判（创建时主进程会如实报错）。
