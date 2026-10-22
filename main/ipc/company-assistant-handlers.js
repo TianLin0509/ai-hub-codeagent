@@ -6,7 +6,7 @@ function registerCompanyAssistantIpc(ipcMain, service) {
     status: () => service.status(),
     refresh: async () => { await service.refresh({ force: true }); return service.status(); },
     'brief-now': async () => { await service.generateBrief({ force: true }); return service.status(); },
-    ask: request => ({ ok: true, item: service.ask(String(request?.text || '')) }),
+    ask: request => ({ ok: true, item: service.ask(String(request?.text || ''), { entry: request?.entry === 'ppt' ? 'ppt' : '' }) }),
     'retry-chat': request => ({ ok: true, item: service.retryChat(String(request?.id || '')) }),
     'mark-done': request => service.markDone(String(request?.source || ''), request?.done !== false),
     source: request => service.sourceContext(String(request?.source || ''), request?.day),

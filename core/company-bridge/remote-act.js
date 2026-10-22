@@ -28,6 +28,9 @@ const MIN_INTERVAL_MS = { 'kill-orphans': 60000, 'set-personal-model': 60000 };
 const DEFAULT_INTERVAL_MS = 10000;
 const DIAG_FRESH_MS = 5 * 60000;
 const MAX_KILL = 20;
+// 一次 kill-orphans 的总时长上限（v3.1.2）：单个进程最多等 5 秒确认退出，20 个就可能让对端等近 2 分钟。
+// 到点后不再处理剩下的（如实回报），对端可以再执行一次，避免远程维护把连接拖死。
+const KILL_BUDGET_MS = 30000;
 const PARALLEL_KEYS = ['memFloorPct', 'maxParallel', 'maxParallelIdle'];
 const THREAD_ID = /^[A-Za-z0-9-]{3,40}$/;
 
@@ -177,8 +180,10 @@ class RemoteAct {
     const alive = this.deps.processAlive || (pid => { try { process.kill(pid, 0); return true; } catch (error) { return error.code === 'EPERM'; } });
     const before = this.memView();
     const results = [];
+    const started = this.now(), budget = Number.isFinite(Number(this.deps.killBudgetMs)) ? Number(this.deps.killBudgetMs) : KILL_BUDGET_MS;
     for (const t of targets) {
       const one = { pid: t.pid, startedAt: t.startedAt };
+      if (this.now() - started >= budget) { results.push({ ...one, ok: false, why: `本次结束已到 ${Math.round(budget / 1000)} 秒上限，剩下的没处理，可以再执行一次` }); continue; }
       const prev = listed.get(t.pid), cur = byPid.get(t.pid);
       if (!prev || prev.startedAt !== t.startedAt) { results.push({ ...one, ok: false, why: '和最近一次直查的「可结束」清单对不上（PID 或启动时间不一致）' }); continue; }
       if (!cur) { results.push({ ...one, ok: true, already: true, why: '已经不在了' }); continue; }

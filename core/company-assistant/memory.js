@@ -5,6 +5,8 @@ const D = require('./data');
 const TYPES = ['person', 'group', 'preference', 'routine'];
 const MAX_ITEMS = 15; // 每类，按 Claude v3.1 设计
 const MAX_CONTEXT = 1200;
+// 预置的「无线领域」偏好（v3.1.2）：在记忆里放一条普通偏好，用户可改、可删；删掉后不再自动加回。
+const DOMAIN_SEED = { key: '领域', kind: 'preference', text: '无线通信（5G/6G、RRM、MSG、LTE/NR、3GPP）；找 PPT 时按这些术语扩展' };
 const clean = (v, n) => String(v || '').replace(/\s+/g, ' ').trim().slice(0, n);
 function terms(text) {
   const s = String(text || '').toLowerCase();
@@ -15,6 +17,11 @@ class AssistantMemory {
   constructor(assistant) { this.a = assistant; }
   owner() { return this.a.auth?.status()?.login?.uid || this.a.snapshot()?.login?.uid || 'local'; }
   all() { const data = this.a.read('memory.json', { version: 1, items: [] }); return Array.isArray(data.items) ? data.items : []; }
+  // 只换 items，保留同一文件里的其他字段（预置记录的 seeds 等）。
+  write(items) {
+    const data = this.a.read('memory.json', { version: 1, items: [] });
+    this.a.write('memory.json', { ...data, version: 1, items });
+  }
   active() { const now = this.a.now(), owner = this.owner(); return this.all().filter(x => x.owner === owner && !x.deletedAt && (!x.expiresAt || x.expiresAt > now)); }
   public(x) { const { owner, revisions, deletedAt, ...item } = x; return item; }
   search(query = '', limit = 6) {
@@ -48,15 +55,25 @@ class AssistantMemory {
     if (!chat) throw new Error('保存记忆需要当前用户对话或已核实的 sourceId');
     return { kind: 'user', ref: chat.id, at: chat.askedAt };
   }
+  // 每个号主第一次提问时放一条「无线领域」偏好，按号主记一次；删掉后不再加回（v3.1.2）。
+  seedDefaults() {
+    const data = this.a.read('memory.json', { version: 1, items: [] }), items = Array.isArray(data.items) ? data.items : [];
+    const owner = this.owner(), now = this.a.now(), seeds = data.seeds || {}, seen = seeds.domain || {};
+    if (seen[owner]) return null;
+    const exists = items.some(x => x.owner === owner && !x.deletedAt && x.kind === DOMAIN_SEED.kind && x.key === DOMAIN_SEED.key);
+    const item = exists ? null : { id: randomUUID(), owner, ...DOMAIN_SEED, source: { kind: 'default', ref: 'preset-domain', at: now }, createdAt: now, updatedAt: now, lastUsed: now, expiresAt: null, revisions: 0 };
+    this.a.write('memory.json', { version: 1, items: item ? [...items, item] : items, seeds: { ...seeds, domain: { ...seen, [owner]: now } } });
+    return item;
+  }
   touch(text) {
     const items = this.all(); let changed = false;
     for (const item of items) if (item.owner === this.owner() && String(text || '').includes(item.key)) { item.lastUsed = this.a.now(); changed = true; }
-    if (changed) this.a.write('memory.json', { version: 1, items });
+    if (changed) this.write(items);
   }
   touchIds(ids) {
     const items = this.all(); let changed = false;
     for (const item of items) if (item.owner === this.owner() && ids.has(item.id)) { item.lastUsed = this.a.now(); changed = true; }
-    if (changed) this.a.write('memory.json', { version: 1, items });
+    if (changed) this.write(items);
   }
   execute(args = {}, { fromSettings = false } = {}) {
     const op = ({ add: 'save', update: 'save', remove: 'forget' })[args.op] || args.op || 'search';
@@ -70,7 +87,7 @@ class AssistantMemory {
       const item = items.find(x => x.id === args.id && x.owner === owner && !x.deletedAt);
       if (!item) throw new Error('找不到这条记忆；先 list 或 search');
       // 删除文字，不在历史里暗留用户要求遗忘的内容。
-      this.a.write('memory.json', { version: 1, items: items.filter(x => x !== item) });
+      this.write(items.filter(x => x !== item));
       return { ok: true, forgotten: item.id };
     }
     if (op !== 'save') throw new Error('记忆操作只能是 search/list/save/forget');
@@ -95,7 +112,7 @@ class AssistantMemory {
     const evicted = (!existing || existing.kind !== kind) && sameKind.length >= MAX_ITEMS ? sameKind.sort((a, b) => (a.lastUsed || a.updatedAt) - (b.lastUsed || b.updatedAt))[0] : null;
     const item = { id: existing?.id || randomUUID(), owner, key, kind, text, source, createdAt: existing?.createdAt || now, updatedAt: now, lastUsed: now, expiresAt,
       revisions: existing ? Number(existing.revisions || 0) + 1 : 0 };
-    this.a.write('memory.json', { version: 1, items: [...items.filter(x => x.id !== item.id && x.id !== evicted?.id), item] });
+    this.write([...items.filter(x => x.id !== item.id && x.id !== evicted?.id), item]);
     return { ok: true, item: this.public(item), updated: !!existing, evicted: evicted ? this.public(evicted) : null };
   }
 }

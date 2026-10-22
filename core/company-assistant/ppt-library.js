@@ -84,6 +84,8 @@ class PptLibrary {
         } catch (error) { errors.push({ source: source.label, message: error.message }); }
       }
       if (!results.length) throw new Error(errors.map(e => `${e.source}：${e.message}`).join('；'));
+      // 缓存“文稿 → 页数”，给回答后的出处核对用（只读，不额外调用 Python）。
+      this.documents = new Map([...documents.values()].map(d => [normalizedPath(d.path), { name: path.basename(d.path), path: d.path, pages: Number(d.page_count) || 0 }]));
       return { ok: true, sources: results, errors, indexed_files: documents.size, indexed_pages: [...documents.values()].reduce((n, r) => n + r.page_count, 0),
         file_status_counts: [{ ext: '.pptx/.ppt', status: 'ok', files: documents.size }], warnings: results.flatMap(r => r.warnings || []), scope: { read_only: true, images: 'not inspected' } };
     }
@@ -196,12 +198,12 @@ class PptLibrary {
     if (this.reading) return this.reading;
     if (!force && this.current.checkedAt && this.a.now() - this.current.checkedAt < 10 * 60000) return Promise.resolve(this.status());
     if ((this.config().roots || []).length && !this.indexJob && this.a.now() - (this.indexState.completedAt || this.indexState.startedAt || 0) > 10 * 60000) this.startIndex();
-    if (!this.sources().length) { this.current = { available: false, files: 0, pages: 0, error: '', checkedAt: this.a.now() }; return Promise.resolve(this.status()); }
+    if (!this.sources().length) { this.current = { available: false, files: 0, pages: 0, error: '', checkedAt: this.a.now() }; this.documents = new Map(); return Promise.resolve(this.status()); }
     this.reading = this.execute('status').then(result => {
       this.current = { available: true, files: result.file_status_counts.reduce((n, r) => n + (r.status === 'ok' ? r.files : 0), 0),
         pages: result.indexed_pages, sources: result.sources, warnings: result.warnings, error: result.errors.map(e => `${e.source}：${e.message}`).join('；'), checkedAt: this.a.now() };
       return this.status();
-    }).catch(error => { this.current = { available: false, files: 0, error: error.message, checkedAt: this.a.now() }; return this.status(); })
+    }).catch(error => { this.current = { available: false, files: 0, error: error.message, checkedAt: this.a.now() }; this.documents = new Map(); return this.status(); })
       .finally(() => { this.reading = null; this.a.changed(); });
     return this.reading;
   }
@@ -223,6 +225,16 @@ class PptLibrary {
     return this.status();
   }
   close() { this.indexChild?.kill(); this.indexChild = null; }
+  // 回答后的出处核对（v3.1.2）：模型没调用 ppt_library op=report 时，按索引里的文稿与页数
+  // 核对回答里写的「文件名 + 第 N 页」。没有索引、没有 Python 或没有引用时一句都不加。
+  async citationNote(text) {
+    const { extractCitations, checkCitations, renderCitationCheck } = require('./citation-check');
+    const citations = extractCitations(text);
+    if (!citations.length) return '';
+    if (!this.documents || !this.documents.size) await this.refresh().catch(() => {});
+    if (!this.documents || !this.documents.size) return '';
+    return renderCitationCheck(checkCitations(citations, this.documents));
+  }
   async open(id) {
     const result = await this.execute('read', { ids: [id] }), ref = result.pages?.[0];
     if (!ref || ref.source_state === 'source_unavailable') throw new Error('索引中的源文件目前不可用');

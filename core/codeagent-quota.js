@@ -243,7 +243,7 @@ function prune(state, now) { for (const [k, e] of Object.entries(state.accounts)
 // 试探又报同样的错就重新开始计 6 小时；这个号用这个模型正常答出来（quota-watch 从原生记录看到）、手动恢复派活、
 // 远程修正了个人账号默认模型时解除。
 const modelKey = m => String(m || '').trim().toLowerCase() || '*';
-function markModelAvoid(dataDir, key, { model = '', reason = '', sample = '', ruleId = null, session = null, have = [], probeMs = MODEL_PROBE_MS } = {}, now = Date.now(), fsModule = fs) {
+function markModelAvoid(dataDir, key, { model = '', reason = '', sample = '', ruleId = null, session = null, have = [], probeMs = MODEL_PROBE_MS, fix = null } = {}, now = Date.now(), fsModule = fs) {
   if (!validKey(key)) throw new Error('账号编号无效');
   const state = readState(dataDir, fsModule);
   const mk = modelKey(model);
@@ -256,6 +256,10 @@ function markModelAvoid(dataDir, key, { model = '', reason = '', sample = '', ru
     since: prev ? prev.since : now, lastHitAt: now, probeAt: now + probeMs, until: null,
     hits: (prev ? Number(prev.hits) || 0 : 0) + 1, probes: prev ? Number(prev.probes) || 0 : 0,
     ...(ruleId ? { ruleId } : {}), ...(session ? { session: String(session).slice(0, 8) } : {}), ...(sample ? { sample: String(sample).slice(0, MAX_SAMPLE) } : {}),
+    // fix（2026-10-22）：这一次已经把号的配置改对了（quota-watch 的自动修正）。记下时间：同一个号同一个模型 6 小时内不再自动修，
+    // 修了还报同样的错说明不是配置写错，照旧按 6 小时试探避让。
+    ...(fix ? { fixAt: now, fixFrom: String(fix.from || ''), fixTo: String(fix.to || '') }
+      : prev && prev.fixAt ? { fixAt: prev.fixAt, ...(prev.fixFrom ? { fixFrom: prev.fixFrom } : {}), ...(prev.fixTo ? { fixTo: prev.fixTo } : {}) } : {}),
   };
   // 新标记、或原来在试探窗口里（已放行）又撞到：算「变化」，通道据此提示并推号表
   const changed = !prev || Number(prev.probeAt) <= now;
@@ -401,7 +405,9 @@ function describeAvoid(entry, now = Date.now()) {
     const have = Array.isArray(entry.have) && entry.have.length ? entry.have.join('、') : '（权限清单未知）';
     const asked = entry.model && entry.model !== '*' ? entry.model : '（报错里没写模型）';
     const probe = Number(entry.probeAt) > now ? `${clock(entry.probeAt)} 起允许试一次` : '现在允许试一次';
-    return `模型配置有误：请求了 ${asked}，该号只有 ${have}；配置不变就一直避让，${probe}${modelConfigHint(entry)}`;
+    // fixAt：这次报错后 Hub 已经把号的配置改成清单里的模型（quota-watch 自动修正），下一次启动就按新配置走。
+    const fixed = entry.fixAt && entry.fixTo ? `；号的默认模型已自动改成 ${entry.fixTo}` : '';
+    return `模型配置有误：请求了 ${asked}，该号只有 ${have}；配置不变就一直避让，${probe}${fixed}${fixed ? '' : modelConfigHint(entry)}`;
   }
   const what = entry.source === 'manual' ? '手动暂停' : `${KINDS[entry.kind] || '额度'}（${SOURCES[entry.source] || entry.source}）`;
   const until = entry.until == null ? '直到手动恢复' : `预计 ${clock(entry.until)} 恢复`;

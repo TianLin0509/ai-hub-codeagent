@@ -1526,6 +1526,13 @@ class SessionManager extends EventEmitter {
         else require('./codeagent-models').appendModelLog(dataDir, { event: 'route-marker-drop', account: alias.replace(/\s+/g, ''), model: before || '(空)', original: original || '(空)', reason });
       } });
     if (sync.errors.length) console.warn(`[codeagent-pool] ${account.id} 同步配置：${sync.errors.join('；')}`);
+    // A（2026-10-22 公司真机 v3.1.1）：号自己写的默认模型不在权限清单里，启动前已经改成清单里的模型。
+    // 记一行，直查和模型日志里能看出「这个号什么时候被改对过」，不再靠 /model 菜单兜。
+    if (sync.modelFix) {
+      const alias = require('./codeagent-default-model-guard').accountOf({ codeagentPoolAccount: account.id }, dataDir).alias.replace(/\s+/g, '');
+      require('./codeagent-models').appendModelLog(dataDir, { event: 'pool-model-fix', account: alias, before: sync.modelFix.from, after: sync.modelFix.to,
+        note: '号写的默认模型不在权限清单里，启动前改成清单里的模型' });
+    }
     if (typeof this.deployCodeAgentHooks === 'function') {
       try { this.deployCodeAgentHooks(account.dir); } catch (error) { console.warn(`[codeagent-pool] ${account.id} hook：${error.message}`); }
     }

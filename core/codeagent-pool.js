@@ -284,6 +284,48 @@ function describeDefaultNote(note, written = '') {
   if (note === 'not-in-list') return `默认模型未知（settings.json 写的 ${written || '模型'} 不在权限清单里）`;
   return '';
 }
+// 号自己写的默认模型不在权限清单里时，换成清单里的模型（2026-10-22 公司真机 v3.1.1 的根因）：
+// 导入号池时会把源 .cac 目录 settings 的 model 抄进新号（下面的 importLocal），公司那个目录常年写着 GLM-5.2-WX-Auto，
+// 只有 DeepSeek 权限的号因此每轮通道会话都去请求 GLM → 后端报「模型不存在或配置有误」→ 记成模型配置避让，
+// 这个避让不自动到期（6 小时才放行一次试探），看起来就是「一直避让」。
+// 只在清单权威（探测文件或企业清单）且只有一个模型时改；清单有多个或未知时不动——该用哪个无法判断，
+// 交给 /model 菜单和「发第一条问题前核对实际模型」那道兜底（main/ipc/session-handlers.js）。
+function permissionSafeModel(written, known) {
+  const value = typeof written === 'string' ? written.trim() : '';
+  const list = (known && Array.isArray(known.models) ? known.models : []).map(String).filter(Boolean);
+  if (!value || !known || !known.authoritative || !list.length) return { changed: false, model: written };
+  if (list.some(m => m.toLowerCase() === value.toLowerCase())) return { changed: false, model: written };
+  if (list.length === 1) return { changed: true, model: list[0], from: value };
+  return { changed: false, model: written };
+}
+// 把一个号池号的默认模型改成它权限清单里的模型（只动 settings.json 的 model 一个键，其余内容原样保留）。
+// 只给「号写的模型不在权限清单里」用：号池的号由 Hub 管配置；个人账号是号主自己日常用的配置，不走这里
+// （要改走经授权的远程维护 set-personal-model，core/codeagent-personal-model.js）。
+// 返回 { ok, from, to } 或 { ok:false, reason }：no-single-model（清单不权威或有多个模型，不知道该用哪个）、
+// in-list（配置本来就是权限内的模型，问题不在配置）、read-error / write-error。
+function fixPoolModel(dataDir, id, { fsModule = fs } = {}) {
+  if (!dataDir || !id) return { ok: false, reason: 'no-account' };
+  const dir = accountDir(dataDir, id);
+  const known = accountModels(dir, fsModule);
+  const list = (known.models || []).map(String).filter(Boolean);
+  if (!known.authoritative || list.length !== 1) return { ok: false, reason: 'no-single-model' };
+  const file = path.join(dir, 'settings.json');
+  let value;
+  try { value = JSON.parse(fsModule.readFileSync(file, 'utf8').replace(/^﻿/, '')); } catch { return { ok: false, reason: 'read-error' }; }
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return { ok: false, reason: 'read-error' };
+  const from = typeof value.model === 'string' ? value.model.trim() : '';
+  const want = list[0];
+  if (from && from.toLowerCase() === want.toLowerCase()) return { ok: false, reason: 'in-list', from };
+  const temp = `${file}.hub-fix-${process.pid}.tmp`;
+  try {
+    fsModule.writeFileSync(temp, JSON.stringify({ ...value, model: want }, null, 2) + '\n', 'utf8');
+    fsModule.renameSync(temp, file);
+  } catch (error) {
+    try { fsModule.unlinkSync(temp); } catch { /* 临时文件已不在 */ }
+    return { ok: false, reason: 'write-error', detail: error && error.message ? error.message : String(error) };
+  }
+  return { ok: true, from, to: want };
+}
 function readSettingsModel(dir, fsModule = fs) {
   try { const v = JSON.parse(fsModule.readFileSync(path.join(dir, 'settings.json'), 'utf8')); return v && typeof v.model === 'string' ? v.model.trim() : ''; }
   catch { return ''; }
@@ -335,6 +377,7 @@ function plannedModel(dir, { idle = false, fsModule = fs } = {}) {
 function syncSharedConfig(personalDir, targetDir, fsModule = fs, { routeModel = '', idle = false, routeSwitch = require('./codeagent-model-route').routeSwitchEnabled(), onRouteRestore = null } = {}) {
   const errors = [];
   let model = '';
+  let modelFix = null;
   // 来源和目标是同一个目录（或互相包含）时一个字都不写（2026-10-19 公司真机：个人目录被继承的环境变量指到了号 1 的目录，
   // 每次号 1 开会话都把号 1 的模型写回「个人」settings.json）。
   if (require('./codeagent-config').dirsOverlap(personalDir, targetDir, { fsModule })) {
@@ -377,6 +420,10 @@ function syncSharedConfig(personalDir, targetDir, fsModule = fs, { routeModel = 
     } else if (marker && idle) {
       try { fsModule.rmSync(markerFile, { force: true }); } catch { /* 删不掉下次再删 */ }
     }
+    // 权限兜底（2026-10-22）：写进配置的模型必须在这个号的权限清单里，否则新会话一开就报「模型不存在」。
+    // 号自己写的值（导入时从源目录抄来的）不在清单里、而清单只有一个模型时，直接换成清单里那个。
+    const safe = permissionSafeModel(model, known);
+    if (safe.changed) { modelFix = { from: safe.from, to: safe.model }; model = safe.model; }
     if (model) next.model = model;
     else delete next.model;
     const text = JSON.stringify(next, null, 2) + '\n';
@@ -400,7 +447,7 @@ function syncSharedConfig(personalDir, targetDir, fsModule = fs, { routeModel = 
   // model：这次启动会用的模型（显示用）；号没写默认模型时按清单推一个，只作显示，不写进配置。
   // 开关关着时只认号自己写的、在清单里的默认模型（strictDefaultModel），不猜；开关打开时沿用以前的推断。
   if (!routeSwitch) { try { model = strictDefaultModel(model, accountModels(targetDir, fsModule).models).model; } catch { model = ''; } }
-  return { errors, model };
+  return { errors, model, modelFix };
 }
 
 // 本机号池里各号的模型合集（启动中心选「号池」时的模型菜单）。
@@ -485,7 +532,14 @@ function importLocal(dataDir, sourceDir, { note = '', personalDir = '', env = pr
   try { if (!fsModule.existsSync(path.join(target, '.cac.json'))) fsModule.copyFileSync(path.join(candidate.dir, '.cac.json'), path.join(target, '.cac.json')); } catch { /* 没有账号清单 */ }
   try {
     const own = JSON.parse(fsModule.readFileSync(path.join(candidate.dir, 'settings.json'), 'utf8'));
-    if (typeof own.model === 'string' && own.model.trim()) fsModule.writeFileSync(path.join(target, 'settings.json'), JSON.stringify({ model: own.model.trim() }, null, 2) + '\n', 'utf8');
+    if (typeof own.model === 'string' && own.model.trim()) {
+      // 抄来的默认模型必须在这个号的权限清单里（2026-10-22）：源目录写的是 GLM、而这个号只有 DeepSeek 权限时，
+      // 直接抄进去会让它每轮会话都报「模型不存在」（号表里也显示成「默认模型未知」）。清单只有一个模型就换成它。
+      // 权限清单从源目录读（这是同一个号、同一份配置；探测文件不随导入复制，读新目录会读不到）。
+      const safe = permissionSafeModel(own.model.trim(), accountModels(candidate.dir, fsModule));
+      const model = String(safe.model || '').trim();
+      if (model) fsModule.writeFileSync(path.join(target, 'settings.json'), JSON.stringify({ model }, null, 2) + '\n', 'utf8');
+    }
   } catch { /* 原目录没有设置 */ }
   return id;
 }
@@ -498,5 +552,5 @@ module.exports = {
   listAccounts, label, pickAccount, markAssigned, addAccount, setNote, removeAccount,
   personalLastAssignedAt, markPersonalAssigned,
   projectCredentialsOverride, syncSharedConfig, poolModelOptions, poolDirMatch,
-  chooseAccountModel, personalDefaultModel, readSettingsModel, effectiveModel, plannedModel, strictDefaultModel, describeDefaultNote, markerRestoreDecision, ROUTE_MARKER,
+  chooseAccountModel, personalDefaultModel, readSettingsModel, effectiveModel, plannedModel, strictDefaultModel, describeDefaultNote, permissionSafeModel, fixPoolModel, markerRestoreDecision, ROUTE_MARKER,
 };

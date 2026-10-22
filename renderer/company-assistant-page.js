@@ -7,7 +7,7 @@
 // 写法同无线页：盖在主区域上的一层，点左侧其他按钮自动关闭。左侧按钮只在公司版（gate.js）插入。
 function createCompanyAssistantPage({ document, window, ipcRenderer, openSession, closeOtherPanels = () => {}, showMessage }) {
   const { ASSISTANT_AVATAR_SRC, USER_AVATAR_SRC } = require('./chat-avatar');
-  let page = null, data = null, timer = null, briefOpen = false, sending = false;
+  let page = null, data = null, timer = null, briefOpen = false, sending = false, pptEntry = false;
   const esc = v => String(v ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const pad = n => String(n).padStart(2, '0');
   const clock = at => { if (!at) return '—'; const d = new Date(at); return `${pad(d.getHours())}:${pad(d.getMinutes())}`; };
@@ -308,8 +308,10 @@ function createCompanyAssistantPage({ document, window, ipcRenderer, openSession
     const q = String(text || '').trim();
     if (!q || sending) return;
     sending = true;
+    const entry = pptEntry ? 'ppt' : '';
+    pptEntry = false;
     try {
-      await call('ask', { text: q });
+      await call('ask', { text: q, ...(entry ? { entry } : {}) });
       page.querySelector('[data-slot="form"] textarea').value = '';
       await load();
       const scroll = page.querySelector('.ca-scroll'); scroll.scrollTop = scroll.scrollHeight;
@@ -372,6 +374,8 @@ function createCompanyAssistantPage({ document, window, ipcRenderer, openSession
     if (verb === 'ppt-assist') {
       const panel = page.querySelector('[data-slot="panel"]');
       panel.hidden = true; panel.innerHTML = ''; panel.dataset.kind = 'closed';
+      // 从 PPT 入口进来：这一条问题只查素材库，不先查 WeLink（v3.1.2）。
+      pptEntry = true;
       if (!input.value.trim()) input.value = '帮我从已有 PPT 中找几页能讲清楚「」的素材，说明推荐理由并附文件路径和页码。';
       input.focus();
       const at = input.value.indexOf('「」'); if (at >= 0) input.setSelectionRange(at + 1, at + 1);

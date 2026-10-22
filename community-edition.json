@@ -35,12 +35,13 @@
     "releasePage": "https://github.com/TianLin0509/ai-hub-codeagent/releases"
   },
   "releaseNotes": [
-    "WeLink 扫码登录：二维码能正常显示了；扫不出来时，可以点「在浏览器打开」。",
-    "助理查看和管理 Hub 会话更稳：启动先后导致的「会话工具没接上」已修复；助理页会显示会话工具是否接上，没接上可以一键重开。",
+    "号池里的号按自己的模型权限派活：不会再因为配置里留着没权限的模型而一直避让，派活时自动用这个号能用的模型。",
+    "助理回答里的 PPT 出处由 Hub 自动核对文件与页码；从「PPT 素材库」入口提问时只查素材库，不先查 WeLink。",
+    "助理预置了一条「无线领域」偏好（可改、可删），找素材时会按无线术语扩搜。",
     "若干稳定性和测试修复。"
   ],
-  "version": "3.1.1",
-  "upstreamVersion": "1.6.575",
-  "upstreamCommit": "245bb59b0539f8122a9abfdeb61b532d2bf2dce6",
+  "version": "3.1.2",
+  "upstreamVersion": "1.6.577",
+  "upstreamCommit": "0108dfa29d7a747812fcfedcd3403daf2097b603",
   "upstreamDirty": false
 }

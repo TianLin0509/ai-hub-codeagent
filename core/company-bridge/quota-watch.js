@@ -20,6 +20,9 @@ const FIRST_TAIL_BYTES = 128 * 1024;
 const READ_MAX_BYTES = 2 * 1024 * 1024;
 const KEEP_ERRORS = 50;
 const HIT_KEEP_MS = 3600000;
+// 模型配置自动修正的间隔（2026-10-22）：同一个号同一个模型 6 小时内只自动改一次配置，
+// 改完还报同样的错，说明问题不在配置，照旧按「6 小时试探一次」的模型配置避让走。
+const MODEL_FIX_WINDOW_MS = 6 * 3600000;
 // 原生记录里的正文：以 API Error 开头
 const TEXT_HEAD = /^\s*API\s*Error/i;
 // 屏幕行：去掉 ⎿（CodeAgent 输出块的引线）或不带前缀后以 API Error 开头；行首的 >、-、*、●、│ 这类回显 / 列表前缀一律不认
@@ -199,7 +202,18 @@ class QuotaWatch {
         this.bridge.bridgeLog?.(`model-config skip ${key === 'personal' ? 'personal' : 'pool'} session=${String(id).slice(0, 8)} model=${model || '?'}：不是通道会话，也不是这个号配置里的模型`);
         return;
       }
-      const r = Q.markModelAvoid(this.dataDir, key, { model, have, reason: `${Q.KINDS['model-config']}：${sample}`, ruleId: hit.rule.id, session: id, sample }, this.now());
+      // B（2026-10-22 公司真机 v3.1.1）：号的配置能当场改对时，不留「一直避让」——那是留给改不了的配置的。
+      // 只对号池的号（Hub 管配置）；个人账号是号主自己日常用的配置，只提示不改（远程维护 set-personal-model）。
+      // 同一个号同一个模型 6 小时内只自动修一次：修了还报同样的错，说明不是配置写错，照旧按 6 小时试探避让，
+      // 免得反复新开会话。修好后这条避让立刻允许重试（probeMs 0），这一轮照旧由通道换号/重做。
+      const prevEntry = Q.modelAvoidEntry(Q.modelAvoidAll(this.dataDir), key, model);
+      const fixable = key !== 'personal' && !!model && !(prevEntry && Number(prevEntry.fixAt) > this.now() - MODEL_FIX_WINDOW_MS);
+      const fix = fixable ? require('../codeagent-pool').fixPoolModel(this.dataDir, key) : { ok: false };
+      const r = Q.markModelAvoid(this.dataDir, key, { model, have, reason: `${Q.KINDS['model-config']}：${sample}`, ruleId: hit.rule.id, session: id, sample,
+        ...(fix.ok ? { probeMs: 0, fix } : {}) }, this.now());
+      if (fix.ok) {
+        this.bridge.bridgeLog?.(`model-config fix ${key === 'personal' ? 'personal' : 'pool'} 配置 ${fix.from || '(空)'} → ${fix.to}：不在权限清单里，改成清单里唯一的模型，不记一直避让`);
+      }
       const prev = this.hits.get(id);
       if (!prev || prev.at < at) this.hits.set(id, { at, key, ruleId: hit.rule.id, kind: 'model-config', text: sample, model: r.entry.model, resetAt: r.entry.probeAt });
       if (r.changed) {
