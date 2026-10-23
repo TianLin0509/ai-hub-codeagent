@@ -29,7 +29,12 @@ function buildAcpOptions(kind, opts, config, dataDir, baseEnv = process.env) {
   const entry = profile.providers?.[kind];
   // 套餐额度用完且配了 DeepSeek Key 时，DeepSeek 旧 Harness 整条会话改走 DeepSeek 官方 API；千问 / GLM 等重置（core/token-plan-fallback.js）。
   const fallback = require('./token-plan-fallback');
-  const route = fallback.resolveRoute({ config, dataDir, kind });
+  const requestedRoute = kind === 'deepseek-acp' ? opts.deepseekRoute : undefined;
+  if (requestedRoute != null && !['tokenplan', 'api'].includes(requestedRoute)) throw new Error('DeepSeek 消费通道无效');
+  const route = requestedRoute === 'api'
+    ? { route: 'deepseek', apiKey: String(config.deepseekApiKey || '').trim() }
+    : fallback.resolveRoute({ config, dataDir, kind });
+  if (requestedRoute === 'api' && !route.apiKey) throw new Error('请先配置 DeepSeek API Key');
   const deepseekRoute = route.route === 'deepseek';
   const key = deepseekRoute ? route.apiKey : profile.apiKey || baseEnv.AI_HUB_TOKEN_PLAN_KEY;
   if (!key) throw new Error('请先配置套餐专属 Key');

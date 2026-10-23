@@ -531,7 +531,10 @@ function registerSessionIpc(ipcMain, deps) {
       }
       const personalDir = require('../../core/codeagent-config').resolveCodeAgentConfig(process.env).configDir;
       let defaultModel = '';
-      try { defaultModel = require('../../core/codeagent-model-route').personalModels({ dataDir: getHubDataDir(), personalDir }).defaultModel || ''; } catch { defaultModel = ''; }
+      // single：权限清单权威且只有一个模型时，不选具体模型启动就走它（core/codeagent-pool.js personalDefaultModel 的例外）。
+      // 2026-10-22 起手动新建的会话也按这个模型启动（session-manager 的启动核对），所以这里和启动口径一致地把「默认」那一项写成它，
+      // 用户开之前就能看到会用什么模型；清单有多个或未知时仍为空，界面照旧写「沿用 CodeAgent 当前模型」。
+      try { defaultModel = require('../../core/codeagent-model-route').personalModels({ dataDir: getHubDataDir(), personalDir, single: true }).defaultModel || ''; } catch { defaultModel = ''; }
       // 个人账号：一键获取过模型权限就用读到的菜单，否则沿用原来的清单
       const probed = require('../../core/codeagent-model-probe').readProbed(pool.personalModelsFile(getHubDataDir()));
       if (probed) return { options: asOptions(probed.models), defaultModel: sameCase(probed.models, defaultModel) };
@@ -805,11 +808,14 @@ function registerSessionIpc(ipcMain, deps) {
     let result = await driveMenu(modelId);
     let picked = modelId;
     const automatic = ['company-bridge', 'company-assistant', 'company-forum'].includes(session.purpose);
-    // 兜底（2026-10-22）：自动会话发第一条问题之前，核对这次会用的模型在这个号的权限清单里；不在清单里就开菜单改选清单里的模型，
+    // 兜底（2026-10-22）：发第一条问题之前，核对这次会用的模型在这个号的权限清单里；不在清单里就开菜单改选清单里的模型，
     // 不再只是记一行日志照发（2026-10-22 用户：明明是 DeepSeek 号却按 GLM 起来、请求没权限的模型）。
+    // 2026-10-22 起手动新建/重拉的会话也核（reason=launch / relaunch）：手动会话是同一个病根的另一条路（启动中心不带模型、按配置里写的起）。
+    // 用户在界面上明确的切换（switch）不在这里改选：那一路菜单本身只列清单里的模型（pickModel 的 allowedModels），选不出没权限的。
     // 改选只在菜单这次确实能用（result.ok）时做：菜单本来就选不动时再开一次只会更耽误这一轮，照旧走「能发就发、报错后修正」。
+    const atLaunch = automatic || reason === 'launch' || reason === 'relaunch';
     const willUse = result.ok ? modelId : before;
-    const offPermission = automatic && permitted.authoritative && permitted.models.length && willUse
+    const offPermission = atLaunch && permitted.authoritative && permitted.models.length && willUse
       && !permitted.models.some(m => String(m).toLowerCase() === String(willUse).toLowerCase());
     if (offPermission && result.ok) {
       // 清单里的第一个（号池的号通常只有一个模型）。菜单里的实际条目以 permitted.models 为准，不按配置里的默认模型猜。
@@ -821,10 +827,12 @@ function registerSessionIpc(ipcMain, deps) {
       else { result = { ...again, offPermissionPicked: target, message: `${again.message || '没选上'}（本来是 ${modelId}，不在这个号的权限清单里）` }; }
     }
     if (offPermission && !result.ok) {
-      // 菜单这次没能用上（上面的改选也没成）：照旧发，交给报错后的当场修正 / 避让，只是记一行诊断。
+      // 菜单这次没能用上（上面的改选也没成）：照旧发，只是记一行诊断。后面谁来收拾不一样：自动会话有通道的当场修正（号池号）
+      // 或避让（个人号），手动会话没人自动修——用户在界面上看到报错后自己 /model 切一次（启动中心建的会话现在还会先按清单选一次，
+      // 选不上才会走到这里）。日志里如实写清楚，排查时不用猜。
       codeagentModels.appendModelLog(dataDir, { event: 'pick', session: String(sessionId).slice(0, 8), account: account.replace(/\s+/g, ''), reason, model: willUse,
-        ok: false, error: 'off-permission：会请求的模型不在权限清单里，菜单没能用上，照旧发出，交给报错后的配置修正 / 避让',
-        fallback: session.codeagentPoolAccount ? 'pool-model-fix' : 'model-config-avoid' });
+        ok: false, error: `off-permission：会请求的模型不在权限清单里，菜单没能用上，照旧发出，${automatic ? '交给报错后的配置修正 / 避让' : '手动会话没人自动修，等用户在 /model 里自己切'}`,
+        fallback: automatic ? (session.codeagentPoolAccount ? 'pool-model-fix' : 'model-config-avoid') : 'user-pick' });
     }
     // 自动选模型的熔断计数（core/codeagent-auto-pick.js）：自动会话启动时菜单没选成记一次失败；这个号上任何一次选成就清零。
     // 不在权限清单里（没开菜单）不算菜单失败。

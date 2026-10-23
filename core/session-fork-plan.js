@@ -93,6 +93,7 @@ function planSessionFork({ source, siblingPool = [], meeting = null, rendererTit
   if (providerFamily === 'acp') {
     kind = source.kind.replace(/-resume$/, '');
     needsAcpFork = true;
+    if (kind === 'deepseek-acp' && source.deepseekRoute) opts.deepseekRoute = source.deepseekRoute;
   } else if (providerFamily === 'gemini') {
     kind = 'gemini';
     opts.antigravityForkFrom = nativeSessionId;

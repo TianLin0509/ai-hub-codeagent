@@ -45,7 +45,6 @@ jobs:
             dist/release-manifest.json
             dist/SHA256SUMS.txt
             dist/*-update.gz
-            dist/*-update-delta.gz
             dist/latest.json
           if-no-files-found: error
       - uses: actions/upload-artifact@v4

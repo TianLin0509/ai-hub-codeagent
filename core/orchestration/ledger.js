@@ -31,6 +31,7 @@ const clampInt = (value, min, max, fallback) => {
 };
 function normalizeSettings(input = {}) {
   const s = input && typeof input === 'object' ? input : {};
+  if (s.coordination === 'star') return { coordination: 'star', roundCap: null, timeCapMin: null, maxMembers: null, stuckMin: 40 };
   return {
     roundCap: clampInt(s.roundCap, 1, 30, DEFAULT_SETTINGS.roundCap),
     timeCapMin: clampInt(s.timeCapMin, 15, 24 * 60, DEFAULT_SETTINGS.timeCapMin),
@@ -43,7 +44,7 @@ function create(meetingId, settings, now = Date.now()) {
   const s = normalizeSettings(settings);
   return {
     version: 1, meetingId, status: 'planning', halt: null, settings: s,
-    budget: { roundsUsed: 0, roundCap: s.roundCap, activeMs: 0, timeCapMs: s.timeCapMin * 60000, grants: 0, lastTickAt: now },
+    budget: { roundsUsed: 0, roundCap: s.roundCap, activeMs: 0, timeCapMs: s.timeCapMin === null ? null : s.timeCapMin * 60000, grants: 0, lastTickAt: now },
     plan: null, roles: {}, segments: [], asks: [], reports: [],
     notices: [], seen: [], progressSeq: 0, lastWakeSeq: 0, wakesWithoutProgress: 0,
     events: [], createdAt: now, updatedAt: now,
@@ -68,15 +69,15 @@ function proposePlan(ledger, input = {}, now = Date.now()) {
     role: text(t && t.role, 40), kind: text(t && t.kind, 20), model: text(t && t.model, 80),
     effort: text(t && t.effort, 20), tier: text(t && t.tier, 20), reason: text(t && t.reason, 300),
   })).filter(t => t.role);
-  if (team.length > ledger.settings.maxMembers) throw new Error(`队伍最多 ${ledger.settings.maxMembers} 位成员（不含编排员）`);
+  if (ledger.settings.coordination !== 'star' && team.length > ledger.settings.maxMembers) throw new Error(`队伍最多 ${ledger.settings.maxMembers} 位成员（不含编排员）`);
   const segments = (Array.isArray(input.segments) ? input.segments : []).map(seg => {
     const preset = PRESETS.includes(seg && seg.preset) ? seg.preset : 'custom';
     const out = { name: text(seg && seg.name, 80), preset, goal: text(seg && seg.goal, 2000), acceptance: text(seg && seg.acceptance, 2000) };
-    if (preset === 'custom' && seg && seg.steps != null) out.steps = clampInt(seg.steps, 1, 6, 1);
+    if (preset === 'custom' && seg && seg.steps != null) out.steps = clampInt(seg.steps, 1, ledger.settings.coordination === 'star' ? Number.MAX_SAFE_INTEGER : 6, 1);
     return out;
   }).filter(seg => seg.name);
-  if (!segments.length) throw new Error('计划至少要有一段工作（segments），每段写清 name、preset、goal、acceptance');
-  if (segments.length > 8) throw new Error('计划最多 8 段工作');
+  if (!segments.length && ledger.settings.coordination !== 'star') throw new Error('计划至少要有一段工作（segments），每段写清 name、preset、goal、acceptance');
+  if (segments.length > 8 && ledger.settings.coordination !== 'star') throw new Error('计划最多 8 段工作');
   const missing = segments.filter(seg => !seg.acceptance).map(seg => seg.name);
   if (missing.length) throw new Error('每段工作都要写验收标准（acceptance）：' + missing.join('、'));
   if(new Set(segments.map(s=>s.name)).size!==segments.length)throw Error('计划工作段名称必须唯一');
@@ -101,7 +102,7 @@ function activatePlan(ledger, now = Date.now()) {
   ledger.budget.lastTickAt = now;
   bump(ledger);
 }
-function withinBudget(ledger) { return ledger.budget.roundsUsed < ledger.budget.roundCap && ledger.budget.activeMs < ledger.budget.timeCapMs; }
+function withinBudget(ledger) { return ledger.settings.coordination === 'star' || (ledger.budget.roundsUsed < ledger.budget.roundCap && ledger.budget.activeMs < ledger.budget.timeCapMs); }
 // 旧账本（计划须经用户确认的年代）：待确认的计划直接生效。
 function migrate(ledger, now = Date.now()) {
   if (!ledger) return false;
@@ -132,6 +133,7 @@ function segmentDone(ledger, planned) {
     && ['passed', 'completed'].includes(s.status) && s.verdict?.decision !== '需返工');
 }
 function budgetCheck(ledger) {
+  if (ledger.settings.coordination === 'star') return null;
   const plan = ledger.plan;
   if (!plan) return null;
   const pending = plan.segments.filter(seg => !segmentDone(ledger, seg));
@@ -269,6 +271,7 @@ function tick(ledger, now = Date.now(), { working = false } = {}) {
   if (ledger.status === 'running' && working) ledger.budget.activeMs += delta;
 }
 function overBudget(ledger) {
+  if (ledger.settings.coordination === 'star') return null;
   if (ledger.status !== 'running') return null;
   if (ledger.budget.roundsUsed >= ledger.budget.roundCap) return 'budget_rounds';
   if (ledger.budget.activeMs >= ledger.budget.timeCapMs) return 'budget_time';
@@ -338,6 +341,10 @@ function noteUserMessage(ledger) { ledger.wakesWithoutProgress = 0; ledger.lastW
 
 // ---- 汇报与结项 ----
 function finalGate(ledger) {
+  if (ledger.settings.coordination === 'star' && !ledger.plan?.segments?.length && !ledger.segments.length) {
+    if (ledger.asks.some(a => a.status === 'pending') || ledger.channel?.messages.some(m => ['queued','sending'].includes(m.state))) return { ok: false, reason: '还有待处理的成员任务或通信，请先核对结果' };
+    return { ok: true };
+  }
   if(!ledger.plan?.segments?.length)return {ok:false,reason:'缺少完整计划，不能结项'};
   const missing=ledger.plan.segments.filter(p=>!ledger.segments.some(s=>(s.planSegmentId===p.id || (!s.planSegmentId && s.name===p.name && s.preset===p.preset && s.goal===p.goal && s.acceptance===p.acceptance)) && ['passed','completed'].includes(s.status) && s.verdictPath && s.verdict?.decision!=='需返工'));
   if(missing.length)return {ok:false,reason:'计划工作段未完成或缺审核证据：'+missing.map(s=>s.name).join('、')};
@@ -377,7 +384,7 @@ function view(ledger) {
     halt: ledger.halt ? { ...ledger.halt, label: HALT_LABELS[ledger.halt.reason] || ledger.halt.reason } : null,
     settings: ledger.settings,
     budget: { roundsUsed: ledger.budget.roundsUsed, roundCap: ledger.budget.roundCap,
-      minutesUsed: fmtMin(ledger.budget.activeMs), minutesCap: fmtMin(ledger.budget.timeCapMs) },
+      minutesUsed: fmtMin(ledger.budget.activeMs), minutesCap: ledger.budget.timeCapMs === null ? null : fmtMin(ledger.budget.timeCapMs) },
     plan: ledger.plan ? { version: ledger.plan.version, summary: ledger.plan.summary,
       segments: ledger.plan.segments, team: ledger.plan.team, budget: ledger.plan.budget, budgetCheck: budgetCheck(ledger) } : null,
     roles: ledger.roles, segments: progressRows(ledger),
@@ -398,7 +405,7 @@ function markdownTable(ledger) {
 function renderMarkdown(ledger) {
   const v = view(ledger);
   const lines = [`# 计划账本`, '', `- 状态：${v.status}${v.halt ? '（' + v.halt.label + '）' : ''}`,
-    `- 额度：工作流 ${v.budget.roundsUsed}/${v.budget.roundCap} 轮 · ${v.budget.minutesUsed}/${v.budget.minutesCap} 分钟（每完成一步计 1 轮，审核循环按审核次数计）`, ''];
+    ledger.settings.coordination === 'star' ? `- 星型协作：已用 ${v.budget.minutesUsed} 分钟；目标、时间和停止条件按用户自然语言要求执行` : `- 额度：工作流 ${v.budget.roundsUsed}/${v.budget.roundCap} 轮 · ${v.budget.minutesUsed}/${v.budget.minutesCap} 分钟（每完成一步计 1 轮，审核循环按审核次数计）`, ''];
   if (ledger.plan) lines.push(`## 计划 v${ledger.plan.version}`, '', ledger.plan.summary, '', ...(v.plan.budgetCheck ? [`> ${v.plan.budgetCheck.text}`, ''] : []));
   lines.push('## 工作段', '', markdownTable(ledger), '');
   if (Object.keys(ledger.roles).length) lines.push('## 队伍', '', ...Object.entries(ledger.roles).map(([id, r]) => `- ${id}：${r.role}（${r.label || r.kind || ''}）`), '');

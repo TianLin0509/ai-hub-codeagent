@@ -175,6 +175,7 @@ function createDeliveryEngine({meetingManager,sessionManager,getHubDataDir,getDi
       if(r.status!=='running')return;
       if(Object.values(step.deliveries).some(d=>d.outcome==='blocked')){r.status='paused';r.error='成员报告阻塞，请查看任务文件；可结束本次任务，保留记录后调整目标重开';save(id,r);return;}
       if(step.members.every(m=>step.deliveries[m])) {
+        const unbounded = meeting(id)?.orchestration?.enabled === true;
         const stage=r.stages[step.index],rework=Object.values(step.deliveries).some(d=>d.outcome==='rework');
         let next=stage.after==='review'?(rework?Math.max(0,step.index-1):null):stage.after==='end'?null:step.index+1;
         if(next===null || next>=r.stages.length){r.status='done';r.error='';save(id,r);getDispatcher().handoffMeetingTurn?.(id);return;}
@@ -183,11 +184,11 @@ function createDeliveryEngine({meetingManager,sessionManager,getHubDataDir,getDi
           const decision=gateStep(id,r,step);
           if(decision==='wait')return;
           if(decision==='rework'){
-            if(gateStreak(r)>=GATE_LIMIT){r.status='paused';r.error=`候选连续 ${GATE_LIMIT} 次未通过 Hub 测试闸门，日志已保留；点继续再试`;save(id,r);return;}
+            if(!unbounded && gateStreak(r)>=GATE_LIMIT){r.status='paused';r.error=`候选连续 ${GATE_LIMIT} 次未通过 Hub 测试闸门，日志已保留；点继续再试`;save(id,r);return;}
             next=step.index;
           }
         }
-        if(rework && D.reviewsInBudget(r)>=D.REVIEW_LIMIT){r.status='paused';r.error=`已完成 ${D.REVIEW_LIMIT} 轮审查仍需返工，交付已保留；点继续再给 ${D.REVIEW_LIMIT} 轮审查`;save(id,r);return;}
+        if(!unbounded && rework && D.reviewsInBudget(r)>=D.REVIEW_LIMIT){r.status='paused';r.error=`已完成 ${D.REVIEW_LIMIT} 轮审查仍需返工，交付已保留；点继续再给 ${D.REVIEW_LIMIT} 轮审查`;save(id,r);return;}
         r.steps.push(D.newStep(r,next));D.prepare(base(id),r,r.steps.at(-1));save(id,r);
         selectStep(id,r.steps.at(-1));
         await dispatch(id,r,r.steps.at(-1));return;

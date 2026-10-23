@@ -1221,7 +1221,7 @@ class GroupChatOrchestrator {
     }
     const receipt = this.state.groupContextBySid[selfSid] || null;
     const rulesHash = promptFingerprint(String(systemPromptText || ''));
-    let includeRules = firstTime;
+    let includeRules = firstTime || (opts.ensureRulesReceipt === true && !receipt?.rulesHash);
     // Silent committee cursors do not establish delivery of these group rules.
     const rulesChanged = !firstTime && receipt && (receipt.rulesDeliveredAt || receipt.rulesHash)
       && receipt.rulesHash !== rulesHash;

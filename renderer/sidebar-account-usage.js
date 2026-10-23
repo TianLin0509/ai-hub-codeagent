@@ -1,6 +1,6 @@
 'use strict';
 
-const NAMES = { claude: 'Claude', codex: 'Codex', deepseek: 'DeepSeek', tokenPlan: 'Token Plan' };
+const NAMES = { claude: 'Claude', codex: 'Codex', deepseek: 'DeepSeek', tokenPlan: 'Token Plan', antigravity: 'Antigravity' };
 function remainingPercent(window) {
   const used = window?.pct;
   return typeof used === 'number' && Number.isFinite(used) && used >= 0
@@ -30,15 +30,15 @@ function createSidebarAccountUsage({ document, root, refresh, formatAge, formatB
   const pair = el('div', 'sidebar-quota-pair', quota);
   const entries = {};
   for (const provider of Object.keys(NAMES)) {
-    const row = el('button', 'sidebar-quota-provider', provider === 'claude' ? claudeRow : provider === 'tokenPlan' ? quota : pair);
+    const row = el('button', 'sidebar-quota-provider', provider === 'claude' ? claudeRow : ['tokenPlan', 'antigravity'].includes(provider) ? quota : pair);
     row.type = 'button';
     row.dataset.provider = provider;
-    const icon = el('span', 'sidebar-quota-icon ' + (provider === 'tokenPlan' ? 'token-plan-icon' : 'ai-logo logo-' + provider), row,
+    const icon = el('span', 'sidebar-quota-icon ' + (provider === 'tokenPlan' ? 'token-plan-icon' : 'ai-logo logo-' + (provider === 'antigravity' ? 'gemini' : provider)), row,
       provider === 'tokenPlan' ? 'T' : '');
     icon.setAttribute('aria-hidden', 'true');
     el('span', 'sidebar-quota-name', row, NAMES[provider]);
     const metrics = el('span', 'sidebar-quota-metrics', row);
-    const windows = provider === 'claude' ? ['5h', '7d'] : ['codex', 'tokenPlan'].includes(provider) ? ['7d'] : ['balance'];
+    const windows = provider === 'antigravity' ? ['gemini','thirdParty'] : provider === 'claude' ? ['5h', '7d'] : ['codex', 'tokenPlan'].includes(provider) ? ['7d'] : ['balance'];
     const cells = {};
     for (const window of windows) {
       const cell = el('span', 'sidebar-quota-metric', metrics); cell.dataset.window = window;
@@ -76,6 +76,10 @@ function createSidebarAccountUsage({ document, root, refresh, formatAge, formatB
           : state.result ? state.result.fresh ? '已取得新数据' : '未取得新数据，保留旧值' : '';
         row.title = [NAMES[provider], data.profileLabel, age, status, resetTip].filter(Boolean).join(' · ');
         row.title = '点击刷新 · ' + row.title;
+        if (provider === 'antigravity') {
+          const details = (data.groups || []).flatMap(g => ['usage5h','usage7d'].filter(k => g[k]).map(k => `${g.label} ${k === 'usage5h' ? '5小时' : '周'}剩余 ${Math.round(remainingPercent(g[k]))}% · 重置 ${g[k].resetsAt ? new Date(g[k].resetsAt).toLocaleString() : '未知'}`));
+          row.title += '\n' + details.join('\n') + `\ncredits 余额：${data.credits ?? '未知'}${data.creditsError ? ' · ' + data.creditsError : ''}`;
+        }
         button.setAttribute('aria-label', '刷新 ' + NAMES[provider] + (status ? ' · ' + status : ''));
         button.setAttribute('aria-disabled', String(!!state.inFlight));
         button.setAttribute('aria-busy', String(!!state.inFlight));
@@ -87,16 +91,19 @@ function createSidebarAccountUsage({ document, root, refresh, formatAge, formatB
             row.dataset.level = cell.value.textContent !== '—' && Number(raw) < 20 ? 'warn' : 'normal';
             cell.cell.title = '余额 · ' + age + ((data.balance || data).available === false ? ' · 当前不可用' : '')
               + ' · 点击刷新 ' + NAMES[provider] + (status ? ' · ' + status : '');
+            if (provider === 'antigravity') cell.cell.title += '\n' + row.title;
           } else {
             // Token Plan 单格自适应：服务端给周窗口就用周，改给月窗口就跟随月。
-            const observation = provider === 'tokenPlan'
-              ? (data.usage7d || data.usage30d || null) : data['usage' + window];
+            const agyGroup = provider === 'antigravity' ? data.groups?.find(g => g.id === window) : null;
+            const observation = provider === 'antigravity' ? [agyGroup?.usage5h, agyGroup?.usage7d].filter(Boolean).sort((a,b)=>b.pct-a.pct)[0]
+              : provider === 'tokenPlan' ? (data.usage7d || data.usage30d || null) : data['usage' + window];
             const windowLabel = provider === 'tokenPlan'
               ? (data.usage7d ? '7d' : data.usage30d ? '30d' : window) : window;
             cell.cell.dataset.period = windowLabel;
             const pct = remainingPercent(observation);
             cell.value.textContent = pct === null ? (provider === 'tokenPlan' && data.needsLogin ? '需登录' : '—')
               : (provider === 'tokenPlan' ? pct.toFixed(2) : Math.round(pct)) + '%';
+            if (provider === 'antigravity') cell.value.textContent = (window === 'gemini' ? 'G ' : 'C/G ') + cell.value.textContent;
             cell.fill.style.width = (pct ?? 0) + '%';
             cell.cell.dataset.level = pct !== null && pct < 15 ? 'danger' : pct !== null && pct <= 40 ? 'warn' : 'normal';
             const countdown = formatResetCountdown(observation?.resetsAt, now);

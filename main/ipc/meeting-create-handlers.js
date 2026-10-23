@@ -47,7 +47,7 @@ function sanitizeMeetingSlot(slot = {}, fallbackIndex = null) {
   if ((kind === 'codex' || kind === 'deepseek') && CODEX_SPEED_TIERS.has(codexSpeedTier)) {
     safe.codexSpeedTier = codexSpeedTier;
   }
-  if (kind === 'deepseek-claude') {
+  if (kind === 'deepseek-claude' || kind === 'deepseek-acp') {
     const route = require('../../core/deepseek-claude-profile').normalizeRoute(slot.deepseekRoute);
     if (route) safe.deepseekRoute = route;
   }

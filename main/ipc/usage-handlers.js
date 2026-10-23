@@ -34,6 +34,7 @@ function registerUsageIpc(ipcMain, deps) {
     refreshDeepSeekAccountBalance,
     refreshKimiAccountUsage,
     refreshTokenPlanUsage,
+    refreshAntigravityUsage,
     scanAgentSessions,
     getCodexUsageScopeKey = () => null,
   } = deps;
@@ -52,16 +53,18 @@ function registerUsageIpc(ipcMain, deps) {
 
   const providerFlights = new Map();
   async function refreshProvider(provider) {
+    let latestAntigravity = null;
     const before = (loadUsageCacheForCurrentConfig() || {})[provider] || null;
     const scopeKey = provider === 'codex' ? getCodexUsageScopeKey() : null;
     const observed = value => value && (value.observedAt || value._ts || value.ts) || 0;
     try {
       const refresh = { claude: refreshClaudeAccountUsage, codex: refreshCodexAccountUsage,
-        deepseek: refreshDeepSeekAccountBalance, tokenPlan: refreshTokenPlanUsage }[provider];
+        deepseek: refreshDeepSeekAccountBalance, tokenPlan: refreshTokenPlanUsage, antigravity: refreshAntigravityUsage }[provider];
       if (typeof refresh !== 'function') throw new Error('刷新服务不可用');
       const raw = await refresh();
       if (provider === 'codex' && getCodexUsageScopeKey() !== scopeKey) throw new Error('Codex 账号已切换，请重新刷新');
       const data = provider === 'claude' && raw?.data !== undefined ? raw.data : raw;
+      if (provider === 'antigravity') { latestAntigravity = data; if (data?.error) throw new Error(data.error); }
       const valid = provider === 'deepseek' ? hasDeepSeekBalanceData(data) : hasUsageData(data);
       if (!valid) throw new Error('未取得有效数据');
       const observedAt = observed(data) || (provider === 'claude' ? raw?.observedAt : 0) || 0;
@@ -76,7 +79,7 @@ function registerUsageIpc(ipcMain, deps) {
     } catch (error) {
       // Keep the last observed value. A scoped refresh must never scan other
       // providers or manufacture a new observation timestamp on failure.
-      const retained = provider === 'codex' && getCodexUsageScopeKey() !== scopeKey ? null : before;
+      const retained = provider === 'codex' && getCodexUsageScopeKey() !== scopeKey ? null : latestAntigravity || before;
       return { cache: retained ? { [provider]: retained } : {}, agentData: {}, refreshedAt: Date.now(),
         providerResults: { [provider]: { ok: false, fresh: false, changed: false,
           observedAt: observed(before), mode: 'snapshot', error: errorText(error, '刷新失败') } } };
@@ -84,7 +87,7 @@ function registerUsageIpc(ipcMain, deps) {
   }
   ipcMain.handle('refresh-usage-now', async (_event, provider) => {
     if (provider !== undefined) {
-      if (!['claude', 'codex', 'deepseek', 'tokenPlan'].includes(provider)) throw new Error('不支持的刷新提供方');
+      if (!['claude', 'codex', 'deepseek', 'tokenPlan', 'antigravity'].includes(provider)) throw new Error('不支持的刷新提供方');
       if (!providerFlights.has(provider)) {
         const flight = refreshProvider(provider).finally(() => providerFlights.delete(provider));
         providerFlights.set(provider, flight);
@@ -93,6 +96,10 @@ function registerUsageIpc(ipcMain, deps) {
     }
     const before = loadUsageCacheForCurrentConfig() || {};
     const providerResults = {};
+    if (typeof refreshAntigravityUsage === 'function') {
+      const antigravityResult = await refreshProvider('antigravity');
+      Object.assign(providerResults, antigravityResult.providerResults);
+    }
     if (typeof refreshTokenPlanUsage === 'function') {
       const tokenResult = await refreshProvider('tokenPlan');
       Object.assign(providerResults, tokenResult.providerResults);

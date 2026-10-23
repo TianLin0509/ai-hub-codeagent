@@ -5,7 +5,9 @@
 // 底层复用：交付工作流引擎（delivery-engine）、群聊派发（dispatcher）、成员创建（addMeetingSubInternal）。
 const fs = require('node:fs');
 const path = require('node:path');
-const { randomUUID } = require('node:crypto');
+const { randomUUID, randomBytes, createHash } = require('node:crypto');
+const Connection = require('../../core/orchestration/connection');
+const { createChannel } = require('./channel');
 const Ledger = require('../../core/orchestration/ledger');
 const Store = require('../../core/orchestration/store');
 const Prompt = require('../../core/orchestration/prompt');
@@ -17,7 +19,7 @@ const { AssistantBridge } = require('../../core/hub-assistant/bridge');
 
 const PURPOSE = 'hub-orchestrator';
 const MCP_NAME = 'hub_orchestrator';
-const TOOL_NAMES = ['orch_status', 'orch_propose_plan', 'orch_start_workflow', 'orch_control_workflow', 'orch_ask_member', 'orch_restart_member', 'orch_grant_budget', 'orch_report'];
+const TOOL_NAMES = ['orch_status', 'orch_propose_plan', 'orch_start_workflow', 'orch_control_workflow', 'orch_ask_member', 'orch_restart_member', 'orch_grant_budget', 'orch_report', 'orch_send_message', 'orch_request_peer', 'orch_decide_peer'];
 // CodeAgent 与 Claude 同走 --mcp-config（2026-10-14 公司版加入）；工具按 Hub 会话号认人，不依赖 --session-id。
 const MEMBER_KINDS = ['claude', 'codex', 'codeagent'];
 const TICK_MS = 3000;
@@ -49,6 +51,29 @@ function createOrchestrationService(deps) {
   // 构造时就定好：start() 之前创建/恢复的编排员会话也拿到正确的工具地址。
   const endpointFile = path.join(getHubDataDir(), 'orchestration', 'bridge-endpoint.json');
   const lastEmitted = new Map();
+  const credentials = new Map();
+  const channel = createChannel({ ledgerFor, members, persist, notify,
+    dispatch: (id, args) => { ensureConnections(id); return dispatcher().dispatchGroupChatTurn(id, args); },
+    ensureReady: (id, memberId) => ensureMemberReady(meeting(id), memberId),
+    busy: sid => sessionManager.isAgentTurnActive(sid), now, isFrozen: () => frozen, logger });
+
+  function ensureConnection(sessionId) {
+    if (!credentials.has(sessionId)) credentials.set(sessionId, randomBytes(32).toString('hex'));
+    const file = Connection.connectionFile(dataDir(), sessionId);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    if (bridge) {
+      const body = JSON.stringify({ url: bridge.url, token: credentials.get(sessionId) });
+      if (!fs.existsSync(file) || fs.readFileSync(file, 'utf8') !== body) fs.writeFileSync(file, body, { mode: 0o600 });
+    }
+    const script = path.resolve(__dirname, '../../scripts/orchestrator-mcp.js');
+    const command = Connection.commandFile(dataDir(), sessionId);
+    const body = process.platform === 'win32'
+      ? `@echo off\r\nsetlocal\r\n${runAsNode.ELECTRON_RUN_AS_NODE ? 'set ELECTRON_RUN_AS_NODE=1\r\n' : ''}"${nodeExecutable}" "${script}" --connection "${file}" %*\r\nexit /b %errorlevel%\r\n`
+      : `#!/bin/sh\n${runAsNode.ELECTRON_RUN_AS_NODE ? 'export ELECTRON_RUN_AS_NODE=1\n' : ''}exec '${nodeExecutable.replace(/'/g, "'\\''")}' '${script.replace(/'/g, "'\\''")}' --connection '${file.replace(/'/g, "'\\''")}' "$@"\n`;
+    if (!fs.existsSync(command) || fs.readFileSync(command, 'utf8') !== body) fs.writeFileSync(command, body, { mode: 0o700 });
+    return file;
+  }
+  function ensureConnections(meetingId) { for (const m of members(meetingId)) ensureConnection(m.sid); }
 
   const dataDir = () => getHubDataDir();
   const meeting = id => meetingManager.getMeeting(id);
@@ -62,8 +87,14 @@ function createOrchestrationService(deps) {
     if (!enabled(m)) return null;
     let ledger = Store.load(dataDir(), meetingId);
     if (!ledger) ledger = Ledger.create(meetingId, m.orchestration.settings, now());
+    if (!ledger.starAdoptedAt) ledger.starAdoptedAt = now();
+    // Existing rooms adopt the new natural-language policy when explicitly used.
+    ledger.settings = Ledger.normalizeSettings({ coordination: 'star' });
+    ledger.budget.roundCap = null; ledger.budget.timeCapMs = null;
+    if (ledger.status === 'halted' && ['budget_rounds','budget_time','no_progress','repeated_failure'].includes(ledger.halt?.reason)) Ledger.resume(ledger, now());
     ledgers.set(meetingId, ledger);
-    if (Ledger.migrate(ledger, now())) Store.save(dataDir(), ledger, now());
+    Ledger.migrate(ledger, now());
+    Store.save(dataDir(), ledger, now());
     return ledger;
   }
   function persist(meetingId, ledger = ledgerFor(meetingId)) {
@@ -125,21 +156,22 @@ function createOrchestrationService(deps) {
   }
   function findMeetingBySession(sessionId) {
     if (!sessionId) return null;
-    return meetingManager.getAllMeetings().find(m => enabled(m) && m.orchestration.sessionId === sessionId) || null;
+    return meetingManager.getAllMeetings().find(m => enabled(m) && (m.subSessions || []).includes(sessionId)) || null;
   }
 
   // ---- 编排员会话的 MCP 挂载 ----
   function mcpEntry(sessionId) {
     return {
       name: MCP_NAME, command: nodeExecutable, args: [path.resolve(__dirname, '../../scripts/orchestrator-mcp.js')],
-      env: { ...runAsNode, HUB_ORCH_ENDPOINT_FILE: endpointFile, HUB_ORCH_SESSION_ID: sessionId },
+      env: { ...runAsNode, HUB_ORCH_ENDPOINT_FILE: ensureConnection(sessionId), HUB_ORCH_SESSION_ID: sessionId },
       toolApprovalModes: Object.fromEntries(TOOL_NAMES.map(name => [name, 'approve'])),
       toolOutputTokenLimits: { orch_status: 20000 },
     };
   }
   function launchOptions(kind, sessionId = randomUUID()) {
     const base = String(kind || '').replace(/-resume$/, '');
-    if (!MEMBER_KINDS.includes(base)) throw new Error('编排员目前支持 Claude、Codex 或 CodeAgent');
+    ensureConnection(sessionId);
+    if (!MEMBER_KINDS.includes(base)) return { id: sessionId, purpose: PURPOSE };
     const entry = mcpEntry(sessionId);
     if (base === 'codex') return { id: sessionId, purpose: PURPOSE, mcpProfile: 'lean', codexMcpEntries: [entry] };
     const dir = path.join(dataDir(), 'orchestration');
@@ -163,12 +195,14 @@ function createOrchestrationService(deps) {
     const index = (m.subSessions || []).findIndex(sid => sessionManager.getSession(sid)?.purpose === PURPOSE);
     if (index < 0) throw new Error('编排员会话没有创建成功');
     const memberId = m.slotSpecs?.[index]?.memberId || `m${index + 1}`;
-    const settings = Ledger.normalizeSettings(m.orchestration.settings);
+    const settings = Ledger.normalizeSettings({ coordination: 'star' });
     meetingManager.updateMeeting(meetingId, { orchestration: { enabled: true, memberId, sessionId: m.subSessions[index], settings, createdAt: now() } });
     meetingManager.setParticipants?.(meetingId, [index]);
     const ledger = Ledger.create(meetingId, settings, now());
+    ledger.starAdoptedAt = now();
     ledgers.set(meetingId, ledger);
     recovered.add(meetingId);
+    ensureConnections(meetingId);
     persist(meetingId, ledger);
     return meeting(meetingId);
   }
@@ -186,6 +220,7 @@ function createOrchestrationService(deps) {
     const ledger = ledgerFor(meetingId);
     const orch = orchestratorOf(meetingId);
     if (!ledger || !orch || ledger.status === 'ended') return false;
+    ensureConnections(meetingId);
     if (!Ledger.pendingNotices(ledger).length || orchestratorBusy(meetingId)) return false;
     if (now() - (lastUserAt.get(meetingId) || 0) < QUIET_AFTER_USER_MS) return false;
     try{await ensureMemberReady(meeting(meetingId), orch.memberId);}
@@ -196,7 +231,7 @@ function createOrchestrationService(deps) {
     // 只有带新内容的投递才算一次「唤醒」；失败重试不计入「没进展」。
     const stalls = items.some(n => !n.attempts) ? Ledger.noteWake(ledger) : ledger.wakesWithoutProgress;
     let halted = ledger.status === 'halted' ? (ledger.halt && Ledger.HALT_LABELS[ledger.halt.reason]) : null;
-    if (stalls >= 2 && ledger.status === 'running') {
+    if (ledger.settings.coordination !== 'star' && stalls >= 2 && ledger.status === 'running') {
       haltRun(meetingId, ledger, 'no_progress', '连续两次唤醒都没有新进展');
       halted = Ledger.HALT_LABELS.no_progress;
       items = Ledger.pendingNotices(ledger);
@@ -263,11 +298,12 @@ function createOrchestrationService(deps) {
     seg.failureMark = mark;
     if (seg.failureStep !== stepId) { seg.failureStep = stepId; seg.failures = 0; }
     seg.failures = (seg.failures || 0) + 1;
-    if (seg.failures < Ledger.FAILURE_LIMIT) return;
+    if (ledger.settings.coordination === 'star' || seg.failures < Ledger.FAILURE_LIMIT) return;
     haltRun(meetingId, ledger, 'repeated_failure', `「${seg.name}」同一步骤已故障 ${seg.failures} 次：${run.error || '原因未知'}`);
     Ledger.enqueue(ledger, `repeated:${run.id}:${stepId}:${seg.failures}:${ledger.budget.grants}`, `工作段「${seg.name}」在同一步骤已故障 ${seg.failures} 次（最近一次：${run.error || '原因未知'}），Hub 已暂停。请向用户说明试过的办法、当前判断和下一步建议，他回话后暂停自动解除。`, now());
   }
   function checkBudget(meetingId, ledger, run = readRun(meetingId)) {
+    if (ledger.settings.coordination === 'star') return false;
     const reason = Ledger.overBudget(ledger);
     if (!reason) return false;
     const runActive = run && !terminalRun(run);
@@ -292,6 +328,21 @@ function createOrchestrationService(deps) {
     const ledger = ledgerFor(meetingId);
     if (!ledger || !orch?.state?.messages) return;
     let changed = false;
+    const roster = members(meetingId);
+    ledger.answerReceipts ||= {};
+    for (const answer of orch.state.messages) {
+      if (answer.role !== 'assistant' || answer.answer?.state !== 'delivered') continue;
+      const author = roster.find(m => m.sid === answer.sid) || roster.find(m => m.memberId === answer.memberId);
+      if (!author || author.orchestrator) continue;
+      const answerPath = orch.answerFileFor?.(answer.turnNum, answer.sid)?.ready;
+      const identity = `${answer.turnNum}:${author.sid}`;
+      const hash = createHash('sha256').update(String(answer.content || '') + '\n' + String(answer.answer.at || answer.updatedAt || '')).digest('hex');
+      if (ledger.answerReceipts[identity] === hash) continue;
+      ledger.answerReceipts[identity] = hash; changed = true;
+      if ((answer.answer.at || answer.updatedAt || 0) < ledger.starAdoptedAt) continue;
+      const key = `member-answer:${identity}:${hash}`;
+      if (Ledger.enqueue(ledger, key, `${author.name} 的正式回答已交付：${answerPath || answer.content || '请查看群聊记录'}`, now())) changed = true;
+    }
     for (const ask of ledger.asks.filter(a => a.status === 'pending')) {
       const dispatchMsg = orch.state.messages.find(m => m.dispatch && m.dispatch.runId === ask.id);
       if (!dispatchMsg) continue;
@@ -303,7 +354,6 @@ function createOrchestrationService(deps) {
       ask.answerPath = orch.answerFileFor(ask.turnNum, answer.sid)?.ready || '';
       ledger.progressSeq += 1; ledger.wakesWithoutProgress = 0;
       Ledger.event(ledger, `${ask.memberId} 回答了单独提问`, now());
-      Ledger.enqueue(ledger, `ask:${ask.id}`, `${ask.memberId} 已回答你的单独提问 ${ask.id}：${ask.answerPath}`, now());
       changed = true;
     }
     if (changed) { persist(meetingId, ledger); setImmediate(() => deliver(meetingId)); }
@@ -315,6 +365,7 @@ function createOrchestrationService(deps) {
   function recoverOnce(meetingId, ledger) {
     if (recovered.has(meetingId)) return;
     recovered.add(meetingId);
+    channel.recover(meetingId);
     const uncertain = Ledger.recoverAfterRestart(ledger);
     const run = readRun(meetingId);
     if (run) { bindStartingSegment(ledger, run); Ledger.applyRun(ledger, run, now(), { readText }); }
@@ -328,6 +379,7 @@ function createOrchestrationService(deps) {
     const ledger = ledgerFor(meetingId);
     if (!ledger) return;
     recoverOnce(meetingId, ledger);
+    void channel.flush(meetingId).catch(error => logger.warn('[orchestration] channel:', error.message));
     const run = readRun(meetingId);
     const working = (run && run.status === 'running') || ledger.asks.some(a => a.status === 'pending') || orchestratorBusy(meetingId);
     const before = ledger.status;
@@ -366,7 +418,7 @@ function createOrchestrationService(deps) {
   function tickAll() {
     if (frozen) return;
     for (const m of meetingManager.getAllMeetings()) {
-      if (!enabled(m) || m.status === 'closed') continue;
+      if (!enabled(m) || ['closed','dormant'].includes(m.status)) continue;
       try { tickMeeting(m.id); } catch (error) { logger.warn?.('[orchestration] tick failed:', m.id, error.message); }
     }
   }
@@ -400,6 +452,7 @@ function createOrchestrationService(deps) {
       asks: ledger.asks.slice(-8), lastReport: ledger.reports.at(-1) || null,
       ledgerFile: Store.files(dataDir(), meetingId).md,
       canDispatch: Ledger.canDispatch(ledger),
+      communication: channel.state(meetingId),
     };
   }
   function draftFor(meetingId, args, memberList) {
@@ -414,14 +467,14 @@ function createOrchestrationService(deps) {
       return { enabled: true, presetId: 'custom', kind: 'serial', rounds };
     }
     const named = args.members.map(id => ({ memberId: id, displayName: memberList.find(x => x.memberId === id)?.name || id }));
-    return Settings.createPreset(preset, named);
+    return Settings.createPreset(preset, named, { unbounded: true });
   }
   async function startWorkflow(meetingId, ledger, args) {
     requireDispatch(ledger);
     const planned=ledger.plan?.segments.find(s=>s.name===String(args.name||'').trim());
     if(!planned || ['preset','goal','acceptance'].some(k=>String(planned[k]||'').trim()!==String(args[k]||'').trim()))throw Error('派工必须匹配当前确认计划工作段的名称、模板、目标和验收标准');
     if (Ledger.overBudget(ledger)) { checkBudget(meetingId, ledger); persist(meetingId, ledger); throw new Error('额度已用满，已暂停；请用 orch_report(need_decision) 汇报'); }
-    if (ledger.budget.roundsUsed >= ledger.budget.roundCap) throw new Error('迭代额度已用满；请用 orch_report(need_decision) 汇报');
+    if (ledger.settings.coordination !== 'star' && ledger.budget.roundsUsed >= ledger.budget.roundCap) throw new Error('迭代额度已用满；请用 orch_report(need_decision) 汇报');
     if (!Ledger.PRESETS.includes(args.preset)) throw new Error('preset 只能是 ' + Ledger.PRESETS.join(' / '));
     if (args.preset === 'custom' && planned.steps && Array.isArray(args.rounds) && args.rounds.length > planned.steps && !args.rounds.some(r => r && r.after === 'review')) {
       throw new Error(`计划里这段写的是 ${planned.steps} 步，实际排了 ${args.rounds.length} 步；请先更新计划（steps）让用户确认额度`);
@@ -442,7 +495,7 @@ function createOrchestrationService(deps) {
     const draft = draftFor(meetingId, args, list);
     const workerIds = list.filter(x => !x.orchestrator).map(x => x.memberId);
     const m = meeting(meetingId);
-    const config = Settings.toDeliveryConfig(m.serialWorkflow || null, draft, workerIds);
+    const config = Settings.toDeliveryConfig(m.serialWorkflow || null, draft, workerIds, { unbounded: true });
     config.taskArmed = false;
     meetingManager.updateMeeting(meetingId, { serialWorkflow: config });
     sendToRenderer('meeting-updated', { meeting: meeting(meetingId) });
@@ -457,7 +510,7 @@ function createOrchestrationService(deps) {
         // 启动失败交给编排员处理；同一计划段反复启动失败才暂停等用户。
         const failures = l.startFailures = { ...(l.startFailures || {}) };
         failures[planned.id] = (failures[planned.id] || 0) + 1;
-        if (failures[planned.id] >= Ledger.FAILURE_LIMIT) {
+        if (l.settings.coordination !== 'star' && failures[planned.id] >= Ledger.FAILURE_LIMIT) {
           haltRun(meetingId, l, 'repeated_failure', `「${seg.name}」已启动失败 ${failures[planned.id]} 次：${error.message}`);
           Ledger.enqueue(l, `start-failed:${seg.id}`, `工作段「${seg.name}」已启动失败 ${failures[planned.id]} 次（最近一次：${error.message}），Hub 已暂停。请向用户说明试过的办法和建议，他回话后暂停自动解除。`, now());
         } else Ledger.enqueue(l, `start-failed:${seg.id}`, `工作段「${seg.name}」启动失败：${error.message}。由你处理：成员会话有问题先 orch_restart_member，再重新 orch_start_workflow；也可以改计划换人。`, now());
@@ -496,6 +549,7 @@ function createOrchestrationService(deps) {
   }
   async function askMember(meetingId, ledger, args) {
     requireDispatch(ledger);
+    ensureConnections(meetingId);
     const memberId = String(args.memberId || '');
     const question = String(args.question || '').trim();
     if (!question) throw new Error('question 不能为空');
@@ -596,16 +650,22 @@ function createOrchestrationService(deps) {
   }
   async function invokeTool(request = {}) {
     const m = findMeetingBySession(request.callerSessionId);
-    if (!m) throw new Error('只有编排群里的编排员可以调用这些工具');
+    if (!m) throw new Error('只有本编排群的成员可以调用通信工具');
+    ensureConnections(m.id);
     const ledger = ledgerFor(m.id);
     const args = request.arguments || {};
+    const caller = members(m.id).find(x => x.sid === request.callerSessionId);
+    if (request.name === 'orch_send_message') { requireDispatch(ledger); return channel.send(m.id, caller, args); }
+    if (request.name === 'orch_request_peer') { requireDispatch(ledger); return channel.request(m.id, caller, args); }
+    if (request.name === 'orch_decide_peer') { requireDispatch(ledger); return channel.decide(m.id, caller, args); }
+    if (!caller.orchestrator && request.name !== 'orch_status') throw Error('此工具由编排员使用；成员可发送消息或申请交流');
     switch (request.name) {
       case 'orch_status': return statusResult(m.id);
       case 'orch_propose_plan': {
         const workers=members(m.id).filter(x=>!x.orchestrator);
         const team=Array.isArray(args.team)?args.team:[];
         if(new Set(team.map(x=>x.memberId)).size!==team.length || team.some(x=>!workers.some(w=>w.memberId===x.memberId)))throw Error('team 只能指定不同的已有成员 memberId 与角色');
-        const plan = Ledger.proposePlan(ledger, {...args,budget:BudgetIntent.forPlan(ledger,args.budget)}, now());
+        const plan = Ledger.proposePlan(ledger, {...args,budget:ledger.settings.coordination === 'star' ? null : BudgetIntent.forPlan(ledger,args.budget)}, now());
         persist(m.id, ledger);
         const check = Ledger.budgetCheck(ledger);
         const budgetNote = check && !check.ok ? `${check.text}向用户汇报计划时原样说明这句核算，并给出推荐额度。` : (check?.text || '');
@@ -616,7 +676,7 @@ function createOrchestrationService(deps) {
       case 'orch_control_workflow': return controlWorkflow(m.id, ledger, args);
       case 'orch_ask_member': return askMember(m.id, ledger, args);
       case 'orch_restart_member': return restartMember(m.id, ledger, args);
-      case 'orch_grant_budget': return grantBudget(m.id, ledger, args);
+      case 'orch_grant_budget': return { ok: true, status: ledger.status, budget: Ledger.view(ledger).budget, note: '本群没有固定轮次或时长上限；请按用户自然语言要求安排工作。' };
       case 'orch_report': return report(m.id, ledger, args);
       default: throw new Error('未知工具');
     }
@@ -672,6 +732,7 @@ function createOrchestrationService(deps) {
   function userMessage(meetingId, { text = '', direct = [] } = {}) {
     const ledger = ledgerFor(meetingId);
     if (!ledger) return null;
+    ensureConnections(meetingId);
     lastUserAt.set(meetingId, now());
     Ledger.noteUserMessage(ledger);
     if(!direct.length){
@@ -679,11 +740,12 @@ function createOrchestrationService(deps) {
         ledger.taskHistory=[...(ledger.taskHistory||[]),{plan:ledger.plan,segments:ledger.segments,budget:ledger.budget,asks:ledger.asks,reports:ledger.reports,endedAt:now()}];
         ledger.budget=Ledger.create(meetingId,ledger.settings,now()).budget;
         ledger.plan=null;ledger.segments=[];ledger.asks=[];ledger.reports=[];
+        ledger.channel = { messages: [], requests: [], grants: [] };
         ledger.budgetIntent=null;ledger.budgetError=null;
       }
       ledger.userMessages=[...(ledger.userMessages||[]),String(text)].slice(-8);
       ledger.userLog=[...(ledger.userLog||[]),{at:now(),text:String(text)}].slice(-8);
-      try{
+      if (ledger.settings.coordination !== 'star') try{
         if(/按默认额度|使用默认额度|恢复默认额度/.test(String(text))){ledger.budgetIntent={roundCap:ledger.settings.roundCap,timeCapMin:ledger.settings.timeCapMin};ledger.budgetError=null;}
         else{const intent=BudgetIntent.extract(text);if(intent){ledger.budgetIntent={...ledger.budgetIntent,...intent};ledger.budgetError=null;}}
       }
@@ -706,12 +768,14 @@ function createOrchestrationService(deps) {
 
   // ---- 生命周期 ----
   async function start() {
-    bridge = new AssistantBridge(request => invokeTool(request), { identityHeader: 'x-hub-orchestrator-session' });
+    bridge = new AssistantBridge(request => invokeTool(request), { identityHeader: 'x-hub-orchestrator-session',
+      resolveIdentity: authorization => [...credentials].find(([, token]) => authorization === 'Bearer ' + token)?.[0] || null });
     await bridge.start();
     fs.mkdirSync(path.dirname(endpointFile), { recursive: true });
     const tmp = `${endpointFile}.${process.pid}.tmp`;
-    fs.writeFileSync(tmp, JSON.stringify({ url: bridge.url, token: bridge.secret }), { mode: 0o600 });
+    fs.writeFileSync(tmp, JSON.stringify({ url: bridge.url }), { mode: 0o600 });
     fs.renameSync(tmp, endpointFile);
+    for (const sid of credentials.keys()) ensureConnection(sid);
     timer = setInterval(tickAll, TICK_MS);
     timer.unref?.();
     return { endpointFile };

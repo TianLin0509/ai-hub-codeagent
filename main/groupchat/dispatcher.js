@@ -1325,7 +1325,7 @@ function createGroupChatDispatcher(deps) {
     shouldDispatch,
     onSubmission,
   } = {}) {
-    if (shouldDispatch && !shouldDispatch()) return { status: 'error', reason: '文件进度已变化或用户已停止', turnNum: null };
+    if (shouldDispatch && !shouldDispatch()) return { status: 'error', cancelledBeforeDispatch: true, reason: '文件进度已变化或用户已停止', turnNum: null };
     const turnStartedAt = Date.now();
     // 在飞派发计数（2026-07-29 maintainer）：给 interruptMeetingTurn 区分「真没人在跑」
     //   和「有轮正卡在 sendToPty」。silent 内部编排不计入（不属于用户可见轮）。
@@ -1405,7 +1405,7 @@ function createGroupChatDispatcher(deps) {
         const SEAT_WAIT_MS=Math.min(Number(turnTimeoutMs) || 90_000,90_000);
         while(waiting().length) {
           if(interruptedSinceStart() || (shouldDispatch && !shouldDispatch()))
-            return {status:'error',reason:'文件进度已变化或用户已停止',turnNum:null};
+            return {status:'error',cancelledBeforeDispatch:true,reason:'文件进度已变化或用户已停止',turnNum:null};
           const nativeWaiting=waiting().some(member=>isNativeSession(sessionManager.getSession(member.sid)));
           if(nativeWaiting) {
             if(Date.now()-waitStart > (Number(turnTimeoutMs) || 30*60_000))
@@ -1419,7 +1419,7 @@ function createGroupChatDispatcher(deps) {
         }
         // Stop can race the terminal event that made waiting() become false.
         if(interruptedSinceStart() || (shouldDispatch && !shouldDispatch()))
-          return {status:'error',reason:'文件进度已变化或用户已停止',turnNum:null};
+          return {status:'error',cancelledBeforeDispatch:true,reason:'文件进度已变化或用户已停止',turnNum:null};
       }
       // 2026-07-20 maintainer [修#3d]：被勾选但 dormant/不可达的成员以 absent 合入本轮，
       //   不再静默消失（此前卡片全程"思考中"、轮末查无此人）。仅整组发送时统计；
@@ -1511,6 +1511,7 @@ function createGroupChatDispatcher(deps) {
         const basePrompt = DevDiscuss.appendDiscussBlock(
           orch.buildFirstDelta(member.sid, userInput || '', systemPromptText, {
             currentUserMessageAppended: begin.didAppendUserMessage,
+            ensureRulesReceipt: OrchestrationRules.enabled(meeting),
             roster,
             contextUsed: memberContextUsed(member.sid),
           }),

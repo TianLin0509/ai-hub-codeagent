@@ -46,6 +46,7 @@
   const MCP_KINDS = new Set(['claude', 'codex', 'deepseek', 'deepseek-claude']);
   // 新建面板上只有一个「DeepSeek」按钮；DeepSeek 新建别名统一使用 DSH。
   const DEEPSEEK_PANEL_KINDS = new Set(['deepseek', 'deepseek-acp', 'deepseek-claude']);
+  const DEEPSEEK_ROUTE_KINDS = new Set(['deepseek-acp', 'deepseek-claude']);
   const deepseekProfile = require('../core/deepseek-claude-profile.js');
   // 这个开关只表示 Claude Code 的 fastMode；Codex 的 fast 是另一套
   // service_tier 机制，由下面独立的速度通道控件承载。
@@ -91,6 +92,9 @@
   let codeagentPoolPick = (() => { try { return localStorage.getItem(CODEAGENT_POOL_PICK_KEY) || ''; } catch { return ''; } })();
   // 所选账号不选具体模型时启动会用的模型（主进程 codeagent:models 的 defaultModel）：「沿用」那一项就写成它（2026-10-19 用户：
   // 选了号，模型下拉只列这个号能用的模型、默认选中这个号的默认模型）。为空表示说不定（比如号池自动挑号、各号默认不同）。
+  // 2026-10-22（用户报「个人账号建 codeagent 报 API deepseek 错误」）：个人账号的清单权威且只有一个模型时主进程也把它报上来，
+  // 启动中心按它启动（session-manager），所以这东西同时是「摘要里写哪个模型」的来源（tuningTag）和「启动用哪个模型」的承诺，
+  // 两处必须同一口径——摘要写空就是不承诺，那也确实是按配置里写的起。
   let codeagentDefaultModel = '';
   const codeagentModelLabel = id => { try { return require('../core/codeagent-models').modelLabel(id); } catch { return id; } };
   // 个人账号的登录状态（号池列表里的 personal.state）：不是 ready 时在账号下拉和说明里写出来。
@@ -251,7 +255,7 @@
       }
       if (config) {
         configuredDeepseekRoute = deepseekProfile.normalizeRoute(config.deepseekRoute) || deepseekProfile.DEFAULT_ROUTE;
-        if (!deepseekRouteTouched) deepseekRoute = hubLaunchDefaults['deepseek-claude']?.deepseekRoute || configuredDeepseekRoute;
+        if (!deepseekRouteTouched) deepseekRoute = hubLaunchDefaults['deepseek-acp']?.deepseekRoute || hubLaunchDefaults['deepseek-claude']?.deepseekRoute || configuredDeepseekRoute;
         deepseekRoutes = config.deepseekRoutes || null;
       }
     } catch (error) {
@@ -333,7 +337,7 @@
     if (kind === 'codex' && codexBackend !== 'api' && tuning.codexProfile) {
       opts.codexProfile = tuning.codexProfile;
     }
-    if (kind === 'deepseek-claude') opts.deepseekRoute = tuning.deepseekRoute;
+    if (DEEPSEEK_ROUTE_KINDS.has(kind)) opts.deepseekRoute = tuning.deepseekRoute;
     return opts;
   }
   const RECENT_LIMIT = 8;
@@ -965,7 +969,7 @@
     if (MCP_KINDS.has(kind)) result.mcpProfile = tuning.mcpProfile;
     if (FAST_KINDS.has(kind)) result.fastMode = tuning.fastMode;
     if (CODEX_TIER_KINDS.has(kind)) result.codexSpeedTier = tuning.codexSpeedTier;
-    if (kind === 'deepseek-claude') result.deepseekRoute = tuning.deepseekRoute;
+    if (DEEPSEEK_ROUTE_KINDS.has(kind)) result.deepseekRoute = tuning.deepseekRoute;
     return result;
   }
 
@@ -1256,7 +1260,7 @@
     paintTuning();
 
     const routeField = document.getElementById('new-session-deepseek-route-field');
-    const showRoute = selectedKind === 'deepseek-claude';
+    const showRoute = DEEPSEEK_ROUTE_KINDS.has(selectedKind);
     if (routeField) routeField.hidden = !showRoute;
     const routeSelect = document.getElementById('new-session-deepseek-route');
     if (routeSelect && showRoute) {
@@ -1278,7 +1282,7 @@
       routeNote.dataset.state = routeStatus.available ? 'info' : 'error';
       routeNote.textContent = !showRoute ? ''
         : routeStatus.available
-          ? 'DeepSeek 在 Claude Code 里运行；两种接入用同一个 CLI，只是计费方式不同。'
+          ? 'DeepSeek 使用 DSH；Token Plan 消耗套餐额度，API 使用 DeepSeek 官方 API 计费。'
           : `${deepseekProfile.ROUTES[deepseekRoute].label}不可用：${routeStatus.reason}。请改选另一种接入方式，Hub 不会自动替换。`;
     }
     const existingRow = document.getElementById('new-session-existing-path');
@@ -1304,7 +1308,7 @@
     }
     const submit = document.getElementById('new-session-submit');
     if (submit) submit.disabled = submitting || accountSaving || (selectedKind === 'codex' && !!accountReadError)
-      || (selectedKind === 'deepseek-claude' && !routeStatus.available)
+      || (DEEPSEEK_ROUTE_KINDS.has(selectedKind) && !routeStatus.available)
       || (workspaceMode === 'existing' && !existingWorkspace);
   }
 
@@ -1337,7 +1341,7 @@
       const pick = usablePoolAccounts().find(a => a.id === codeagentManualPick());
       parts.push(pick ? `号池 · ${pick.accountLabel}${pick.note ? '（' + pick.note + '）' : ''}` : '号池（自动挑号）');
     }
-    if (selectedKind === 'deepseek-claude') parts.push(deepseekProfile.ROUTES[deepseekRoute].label);
+    if (DEEPSEEK_ROUTE_KINDS.has(selectedKind)) parts.push(deepseekProfile.ROUTES[deepseekRoute].label);
     const tuning = tuningTag();
     if (tuning) parts.push(tuning);
     const target = targetPathPreview();
@@ -1467,7 +1471,7 @@
     selectedMcpProfile = tuning.mcpProfile;
     selectedFastMode = tuning.fastMode;
     selectedCodexTier = tuning.codexSpeedTier;
-    if (kind === 'deepseek-claude') deepseekRoute = tuning.deepseekRoute;
+    if (DEEPSEEK_ROUTE_KINDS.has(kind)) deepseekRoute = tuning.deepseekRoute;
   }
 
   // Main 优先调用 codex app-server model/list；失败再读 models_cache.json。
@@ -1580,7 +1584,7 @@
       fastMode: selectedFastMode,
       codexSpeedTier: selectedCodexTier,
     });
-    if (selectedKind === 'deepseek-claude') opts.deepseekRoute = deepseekRoute;
+    if (DEEPSEEK_ROUTE_KINDS.has(selectedKind)) opts.deepseekRoute = deepseekRoute;
     if (selectedKind === 'codeagent') opts.codeagentModelPick = modelTouchedByUser;
     if (selectedKind === 'codeagent' && codeagentUsesPool()) {
       opts.codeagentAccount = 'pool';
@@ -1592,7 +1596,7 @@
 
   async function submitNewSession() {
     if (submitting || accountSaving || (selectedKind === 'codex' && accountReadError)) return null;
-    if (selectedKind === 'deepseek-claude' && !deepseekRouteStatus(deepseekRoute).available) {
+    if (DEEPSEEK_ROUTE_KINDS.has(selectedKind) && !deepseekRouteStatus(deepseekRoute).available) {
       setError(`${deepseekProfile.ROUTES[deepseekRoute].label}不可用：${deepseekRouteStatus(deepseekRoute).reason}`);
       return null;
     }

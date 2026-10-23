@@ -116,10 +116,12 @@ async function act(meeting, action, extra = {}) {
 const BUDGET_HINT = '工作流轮次：每完成一步计 1 轮，带审核循环的按审核次数计；和聊天区的「第 N 轮」不是一回事';
 function budgetText(v) {
   if (!v) return '';
+  if (v.settings?.coordination === 'star') return `星型协作 · 已用 ${v.budget.minutesUsed} 分钟`;
   return `工作流 ${v.budget.roundsUsed}/${v.budget.roundCap} 轮 · ${v.budget.minutesUsed}/${v.budget.minutesCap} 分钟`;
 }
 function budgetRatio(v) {
   if (!v) return 0;
+  if (v.settings?.coordination === 'star') return 0;
   return Math.min(1, Math.max(v.budget.roundsUsed / Math.max(1, v.budget.roundCap), v.budget.minutesUsed / Math.max(1, v.budget.minutesCap)));
 }
 // 只留旁观与急停：账本、暂停（编排中）、结束编排；结束后可恢复编排（切回只和编排员对话）。
@@ -151,6 +153,7 @@ function ledgerPanel(v, escapeHtml) {
   const report = v.lastReport ? `<div class="mr-orch-report"><strong>最近汇报</strong>（${escapeHtml(v.lastReport.kind)}）<div class="mr-orch-plan-text">${escapeHtml(v.lastReport.summary)}</div></div>` : '';
   return `<div class="mr-orch-ledger" id="mr-orch-ledger">
     <div class="mr-orch-ledger-title"><strong>计划账本</strong><span class="mr-orch-muted">由 Hub 按工作流结果更新，编排员不能直接把状态改成「通过」</span><code class="mr-orch-ledger-file" title="${escapeHtml(v.ledgerFile || '')}">orchestration/ledger.md</code></div>
+    ${v.settings?.coordination === 'star' ? '<div class="mr-orch-muted">星型协作：编排员负责规划与分工；目标、时间和停止条件按你的自然语言要求执行。</div>' : ''}
     ${plan}
     <table class="mr-orch-table"><thead><tr><th>工作段</th><th>负责人</th><th>状态</th><th>审核结论</th><th>已用轮次</th></tr></thead><tbody>${rows}</tbody></table>
     ${report}
@@ -168,7 +171,7 @@ function renderStrip(row, meeting, { escapeHtml, onError = () => {} } = {}) {
   row.innerHTML = `<section class="mr-orch-strip${halted ? ' is-halted' : ''}" data-orch-status="${escapeHtml(status)}" aria-label="编排进度">
       <div class="mr-orch-main">
         <strong class="mr-orch-label">编排 · ${escapeHtml(label)}</strong>
-        ${v && status !== 'ended' ? `<span class="mr-orch-budget" title="${BUDGET_HINT}"><span class="mr-orch-bar"><i style="width:${Math.round(ratio * 100)}%"></i></span>${escapeHtml(budgetText(v))}</span>` : ''}
+        ${v && status !== 'ended' ? `<span class="mr-orch-budget" title="${v.settings?.coordination === 'star' ? '目标、分工、时间与停止条件按用户自然语言要求执行' : BUDGET_HINT}">${v.settings?.coordination === 'star' ? '' : `<span class="mr-orch-bar"><i style="width:${Math.round(ratio * 100)}%"></i></span>`}${escapeHtml(budgetText(v))}</span>` : ''}
         <span class="mr-orch-muted">${escapeHtml(runText)}${status !== 'ended' && orchSid ? (halted ? ' · 在输入框回复编排员即可继续' : ' · 发送给编排员（@成员 可直接点名）') : ''}</span>
       </div>
       <div class="mr-orch-actions">${stripButtons(v)}</div>

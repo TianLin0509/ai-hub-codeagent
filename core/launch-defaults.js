@@ -33,7 +33,7 @@ function normalizeLaunchDefaults(kind, value, { strict = false } = {}) {
   if (base === 'codex' || base === 'deepseek') take('codexSpeedTier', v => SPEED.includes(v));
   // Ignore legacy account snapshots, including payloads from an older dialog.
   // Only providers.codex.subscription_profile selects the quota account.
-  if (base === 'deepseek-claude') take('deepseekRoute', v => ['tokenplan', 'api'].includes(v));
+  if (['deepseek-claude', 'deepseek-acp'].includes(base)) take('deepseekRoute', v => ['tokenplan', 'api'].includes(v));
   return result;
 }
 

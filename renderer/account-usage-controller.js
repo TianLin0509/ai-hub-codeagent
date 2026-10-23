@@ -63,11 +63,11 @@ function createAccountUsageController({
   }
   Promise.resolve().then(() => ipcRenderer.invoke('codex-other-usage'))
     .then(list => { if (Array.isArray(list)) { otherCodex = list; render(); } }).catch(() => {});
-  const agentUsage = { gemini: null, codex: null, kimi: null, deepseek: null, tokenPlan: null };
+  const agentUsage = { gemini: null, codex: null, kimi: null, deepseek: null, tokenPlan: null, antigravity: null };
   const agentUsageLastSeen = { gemini: 0, codex: 0, kimi: 0, deepseek: 0, tokenPlan: 0 };
   let _claudeUsageLastSeen = 0;
   const usageRefreshState = { inFlight: false, error: null, lastManualAt: 0, providerResults: null };
-  const providerRefreshStates = Object.fromEntries(['claude', 'codex', 'deepseek', 'tokenPlan'].map(p => [p,
+  const providerRefreshStates = Object.fromEntries(['claude', 'codex', 'deepseek', 'tokenPlan', 'antigravity'].map(p => [p,
     { inFlight: false, error: null, result: null }]));
   let _refreshStatusTimer = null;
   let staleTimer = null;
@@ -153,6 +153,13 @@ function createAccountUsageController({
   }
 
   function recordAgentUsage(totals) {
+    if (totals?.antigravity) {
+      const value = totals.antigravity;
+      const newer = (value.observedAt || 0) > (agentUsageLastSeen.antigravity || 0);
+      agentUsage.antigravity = value; agentUsageLastSeen.antigravity = value.observedAt || 0;
+      if (value.error) providerRefreshStates.antigravity.error = value.error;
+      else if (newer) { providerRefreshStates.antigravity.error = null; providerRefreshStates.antigravity.result = null; }
+    }
     if (totals && totals.gemini && (totals.gemini.usage5h || totals.gemini.usage7d)) {
       agentUsage.gemini = totals.gemini;
       agentUsageLastSeen.gemini = totals.gemini.observedAt || totals.gemini._ts || nowFn();
@@ -188,6 +195,7 @@ function createAccountUsageController({
 
   function applyUsageCache(cached) {
     if (!cached) cached = {};
+    if (cached.antigravity) { agentUsage.antigravity = cached.antigravity; agentUsageLastSeen.antigravity = cached.antigravity.observedAt || cached.antigravity.ts || 0; }
     if (cached.claude && (cached.claude.usage5h || cached.claude.usage7d)) {
       accountUsage.usage5h = cached.claude.usage5h;
       accountUsage.usage7d = cached.claude.usage7d;
@@ -554,6 +562,7 @@ function createAccountUsageController({
       },
       codex: agentUsage.codex ? { ...agentUsage.codex, lastSeen: agentUsageLastSeen.codex } : null,
       gemini: agentUsage.gemini ? { ...agentUsage.gemini, lastSeen: agentUsageLastSeen.gemini } : null,
+      antigravity: agentUsage.antigravity ? { ...agentUsage.antigravity, lastSeen: agentUsageLastSeen.antigravity } : null,
       kimi: agentUsage.kimi ? { ...agentUsage.kimi, lastSeen: agentUsageLastSeen.kimi } : null,
       tokenPlan: agentUsage.tokenPlan ? { ...agentUsage.tokenPlan, lastSeen: agentUsageLastSeen.tokenPlan } : null,
       deepseek: agentUsage.deepseek ? { ...agentUsage.deepseek, lastSeen: agentUsageLastSeen.deepseek } : null,

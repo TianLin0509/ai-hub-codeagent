@@ -68,7 +68,8 @@ function installStatusFooterLayout(doc = globalThis.document) {
     if (quota && !summary.parentElement) quota.append(summary);
     const cells = [...footer.querySelectorAll('.sidebar-quota-metric')];
     const known = cells.filter(el => /%$/.test(el.querySelector('.sidebar-quota-value')?.textContent || ''));
-    const tightest = known.sort((a,b) => parseFloat(a.querySelector('.sidebar-quota-value').textContent) - parseFloat(b.querySelector('.sidebar-quota-value').textContent))[0];
+    const remaining = el => Number(el.querySelector('.sidebar-quota-value').textContent.match(/([\d.]+)%$/)?.[1]);
+    const tightest = known.sort((a,b) => remaining(a) - remaining(b))[0];
     const provider = tightest?.closest('.sidebar-quota-provider');
     summary.textContent = tightest ? provider.querySelector('.sidebar-quota-name').textContent + ' '
       + tightest.querySelector('.sidebar-quota-value').textContent + ' ' + tightest.querySelector('.sidebar-quota-period').textContent : '余量详情';

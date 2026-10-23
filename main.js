@@ -3459,7 +3459,7 @@ function cacheAgentUsage(provider, tokenData, scope = null) {
     const scoped = provider === 'codex' && scope
       ? attachCodexUsageScope(tokenData, scope)
       : tokenData;
-    const observedAt = tokenData && (tokenData.observedAt || tokenData._ts) || Date.now();
+    const observedAt = tokenData && (tokenData.observedAt || tokenData._ts) || (provider === 'antigravity' ? 0 : Date.now());
     const next = { ...scoped, ts: observedAt };
     if (JSON.stringify(existing[provider]) === JSON.stringify(next)) return;
     existing[provider] = next;
@@ -3568,6 +3568,12 @@ const codexOtherUsage = require('./main/usage/codex-other-profiles-usage.js').cr
 ipcMain.handle('codex-other-usage', () => codexOtherUsage.list());
 ipcMain.handle('refresh-codex-other-usage', (_event, opts = {}) => codexOtherUsage.refresh({ force: opts && opts.force === true }));
 
+const antigravityUsage = require('./main/usage/antigravity-account-usage').createAntigravityUsage();
+async function refreshAntigravityUsage(force = false) {
+  const value = await antigravityUsage.refresh(force);
+  if (value) { cacheAgentUsage('antigravity', value); sendToRenderer('agent-usage', { antigravity: value }); }
+  return value;
+}
 registerUsageIpc(ipcMain, {
   clearCodexJsonlCache: () => _codexJsonlCachedByRoot.clear(),
   loadUsageCacheForCurrentConfig,
@@ -3576,6 +3582,7 @@ registerUsageIpc(ipcMain, {
   refreshCodexAccountUsage: () => refreshCodexUsageIfDue(true),
   refreshDeepSeekAccountBalance: refreshDeepSeekAccountBalanceLive,
   refreshTokenPlanUsage: () => refreshTokenPlanUsage(true),
+  refreshAntigravityUsage: () => refreshAntigravityUsage(true),
   refreshKimiAccountUsage: refreshKimiAccountUsageLive,
   scanAgentSessions,
 });
@@ -3981,6 +3988,9 @@ function refreshKimiUsageIfDue(force = false) {
 function startAgentScanner() {
   if (_agentScanInterval) return;
   const run = () => {
+    if (!process.env.CLAUDE_HUB_HOME_DIR || process.env.AI_HUB_ANTIGRAVITY_COMMAND) {
+      void refreshAntigravityUsage().catch(error => console.warn('[antigravity-usage]', error.message));
+    }
     if (_agentScanInFlight) return _agentScanInFlight;
     _agentScanInFlight = scanAgentSessions()
       .catch(error => console.warn('[usage-scan] failed:', error && error.message))

@@ -42,6 +42,7 @@ function createTokenPlanFallbackController(deps = {}) {
       return session.deepseekActiveRoute === 'api' ? 'deepseek' : 'token-plan';
     }
     if (!isAcpKind(session.kind)) return null;
+    if (String(session.kind).replace(/-resume$/, '') === 'deepseek-acp' && session.deepseekRoute === 'api') return null;
     if (fallback.isDeepSeekRouteProfile(session.acpProfileId)) return 'deepseek';
     if (fallback.isTokenPlanRouteProfile(session.acpProfileId)) return 'token-plan';
     return null;

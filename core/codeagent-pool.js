@@ -257,7 +257,8 @@ function chooseAccountModel(own, known) {
 //   4. 没写、清单里有 GLM-5.2-WX-Auto：就是它（2026-10-17 公司实测没定模型时 CodeAgent 退回它自己的默认 GLM）。
 // 留空的例子：没写、清单里也没有 GLM-Auto（CodeAgent 仍会退回 GLM 并报找不到，不能判成清单第一个）；
 // 写的是菜单外的内部别名（例如 MiniMax-M2.7-CodeAgentCLI，CLI 实际按它跑，不能改判成别的）。
-// single：自动会话的挑号和选型用（见 strictDefaultModel 的例外）——写的不在清单里、而探测过的清单只有一个模型时就是它。
+// single：挑号和选型用（见 strictDefaultModel 的例外）——写的不在清单里、而探测过的清单只有一个模型时就是它。
+// 2026-10-22 起手动新建的会话也用（core/session-manager.js 的启动核对 + 启动中心「默认」那一项的显示，main/ipc/session-handlers.js 的 codeagent:models）。
 function personalDefaultModel(own, known, { single = false } = {}) {
   const models = (known && known.models) || [];
   const pick = m => models.find(x => x.toLowerCase() === String(m || '').toLowerCase()) || '';
@@ -269,8 +270,9 @@ function personalDefaultModel(own, known, { single = false } = {}) {
 // （分档名 GLM-5.2-WX 算清单里的 GLM-5.2-WX-Auto）才算已知；没写、清单未知或写的不在清单里都算未知，不参与按模型派活，
 // 免得「判断是 DS、实际启动退回 CodeAgent 自己的默认 GLM」（2.1.8 修过的问题）。note：missing / not-in-list。
 // 例外（2026-10-20 公司真机：CodeAgent 启动时自己把默认模型写回 deepseek，只有 GLM 权限的个人号和新号都被判成未知）：
-// authoritative（探测过的清单）且只有一个模型时就是它——只给自动会话的挑号和选型用：它们开起来后在 /model 菜单里选中它（2.1.20 起），
-// 不靠 settings.json 定模型。手动会话的预计模型显示（plannedModelFrom / syncSharedConfig）不传，照旧严格。
+// authoritative（探测过的清单）且只有一个模型时就是它——给自动会话和手动新建会话的挑号与启动选型用：它们在 /model 菜单里选中它（2.1.20 起），
+// 不靠 settings.json 定模型。号池号的启动前预计模型（plannedModelFrom / syncSharedConfig）不传，照旧严格：
+// 那是「同步配置会把这个号的 settings.json 定成什么」，不是「Hub 会替它选什么」（2026-10-22 手动会话也纳入启动选型后仍如此）。
 function strictDefaultModel(written, models, { authoritative = false } = {}) {
   const w = typeof written === 'string' ? written.trim() : '';
   const list = models || [];

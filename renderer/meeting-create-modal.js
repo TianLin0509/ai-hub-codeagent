@@ -51,7 +51,7 @@ let _presentation = { embedded: false, onCreated: null };
 // AI 编排模式：成员 1 当编排员，用户预先选定工作成员，编排员安排其分工与参与阶段。
 let _orchestrationOn = false;
 // 编排员靠 MCP 工具指挥成员：Claude 家族用 --mcp-config，Codex 用 config 覆盖。CodeAgent 同 Claude（2026-10-14 公司版加入）。
-const ORCHESTRATOR_KINDS = ['claude', 'codex', 'codeagent'];
+const ORCHESTRATOR_KINDS = GROUP_MEMBER_KINDS;
 
 function _paintWorkspace(workspace) {
   if (workspace) _meetingWorkspace = workspace;
@@ -499,11 +499,9 @@ function _ensureModal() {
         <div class="mcm-scene-hint" id="mcm-scene-hint" style="display:none; font-size:12px; color:#888; margin:-6px 0 12px; line-height:1.6;"></div>
         <div class="mcm-orch-row" id="mcm-orch-row"${ORCHESTRATOR_KINDS.some(require('../core/distribution').kindAllowed) ? '' : ' style="display:none"'}>
           <label class="mcm-orch-switch"><input type="checkbox" id="mcm-orch-toggle" role="switch"><span class="mcm-orch-track" aria-hidden="true"></span><strong>编排员</strong></label>
-          <span class="mcm-orch-hint" id="mcm-orch-hint">打开后成员 1 当编排员：你只和它对话，它使用你选好的成员，自主分工、设计工作流并汇报进展；通过与否由审核位决定。</span>
+          <span class="mcm-orch-hint" id="mcm-orch-hint">打开后成员 1 当编排员：它负责方案规划、分工和汇总；所有成员可与它交流，成员间可申请交流。目标与停止条件直接用自然语言说明。</span>
           <div class="mcm-orch-options" id="mcm-orch-options" hidden>
-            <label>迭代上限 <input type="number" id="mcm-orch-rounds" min="2" max="30" value="8"> 轮</label>
-            <label>时长上限 <input type="number" id="mcm-orch-hours" min="0.5" max="24" step="0.5" value="3"> 小时</label>
-            <span class="mcm-orch-note">关掉开关 = 和现在完全一样</span>
+            <span class="mcm-orch-note">模型由你选择；目标、分工、时间与停止条件直接在群聊中描述。成员默认与编排员交流，互相交流可向编排员申请。</span>
           </div>
         </div>
         <div class="mcm-member-caption">
@@ -536,21 +534,19 @@ function _setOrchestration(on) {
   if (caption) {
     if (!caption.dataset.plainText) caption.dataset.plainText = caption.textContent;
     caption.textContent = _orchestrationOn
-      ? '成员 1 为编排员，其余为工作成员。成员与模型由你选，分工和参与阶段由编排员安排；额度可在任务中用自然语言指定。'
+      ? '成员 1 为编排员和方案规划者，其余为工作成员。任意模型均可；目标、分工和停止条件用自然语言说明。'
       : caption.dataset.plainText;
   }
   const hint = _modalEl.querySelector('#mcm-orch-hint');
   if (hint) hint.textContent = _orchestrationOn
-    ? '已开启：成员 1 当编排员。你只和它用自然语言对话，它使用你选好的成员自主分工、推进到结项，处理成员故障；需要你取舍时它会在对话里问。通过与否由审核位决定。'
-    : '打开后成员 1 当编排员：你只和它对话，它使用你选好的成员，自主分工、设计工作流并汇报进展；通过与否由审核位决定。';
+    ? '已开启：成员 1 当编排员。它负责规划、派活与汇总，使用你选好的成员和模型，按自然语言目标推进；成员间交流由它审批。'
+    : '打开后成员 1 当编排员：它负责方案规划、分工和汇总；所有成员可与它交流，成员间可申请交流。目标与停止条件直接用自然语言说明。';
   _renderSlots();
 }
 
 function _orchestrationPayload() {
   if (!_orchestrationOn || !_modalEl) return null;
-  const rounds = Number(_modalEl.querySelector('#mcm-orch-rounds')?.value) || 8;
-  const hours = Number(_modalEl.querySelector('#mcm-orch-hours')?.value) || 3;
-  return { enabled: true, settings: { roundCap: Math.round(rounds), timeCapMin: Math.round(hours * 60) } };
+  return { enabled: true, settings: { coordination: 'star' } };
 }
 
 function _bindEvents() {
@@ -648,7 +644,6 @@ async function _onCreate() {
     const scene = sceneInput ? sceneInput.value : 'general';
     const orchestration = _orchestrationPayload();
     if (orchestration && slots.length < 2) throw new Error('编排群至少需要编排员和一位工作成员；请先选择成员');
-    if (orchestration && !ORCHESTRATOR_KINDS.includes(slots[0].kind)) throw new Error('编排员（成员 1）请选 Claude、Codex 或 CodeAgent');
     if (!orchestration && scene === 'dev' && slots.length < 2) throw new Error('开发群聊至少需要两位成员；单人开发请使用普通会话的“一键开工”。');
     // createMeeting 的 scene 实际取自 mode（过 MEETING_MODES 白名单），scene 字段只是透传
     const mode = (scene === 'research' || scene === 'dev') ? scene : 'general';

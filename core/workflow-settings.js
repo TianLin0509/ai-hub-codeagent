@@ -15,12 +15,12 @@ const DEV = [
   { name: '独立审查与合并', phase: 'merge', prompt: '独立核验候选 SHA 与最新主干，亲自验证。真实缺陷交付需返工；环境、权限或审批阻塞保留草稿。已有授权且验证通过后实际合并，后置检查成功才交付已完成。' },
 ];
 const clone = value => JSON.parse(JSON.stringify(value));
-function createPreset(id, members) {
+function createPreset(id, members, { unbounded = false } = {}) {
   const ids = members.map(m => m.memberId);
   const names = members.map(m => m.title || m.displayName || m.memberId);
   if (!ids.length || (id !== 'custom' && ids.length < 2)) throw new Error('此模板至少需要 2 位 Agent');
   const one = i => [ids[i] || ids[0]];
-  const all = ids.slice(0, 3);
+  const all = unbounded ? ids : ids.slice(0, 3);
   const base = { enabled: true, presetId: id, kind: id === 'development' ? 'file' : 'serial' };
   if (id === 'development') return { ...base, rounds: DEV.map((s, i) => ({ ...s, members: one(i === 2 ? 1 : 0), after: i === 2 ? 'review' : 'next' })) };
   if (id === 'roundtable') return { ...base, rounds: [
@@ -55,12 +55,12 @@ function fromConfig(config, members) {
   if (c.loop?.enabled || c.soloDevelopment) d.legacyProtocol = true;
   return d;
 }
-function validate(d, memberIds) {
+function validate(d, memberIds, { unbounded = false } = {}) {
   if (d?.legacyProtocol) throw new Error('此群保留旧版执行协议；如需转换，请明确选择一套新模板后保存');
   if (!d || !['file', 'serial'].includes(d.kind)) throw new Error('工作流类型无效');
-  if (!Array.isArray(d.rounds) || d.rounds.length < 1 || d.rounds.length > LIMIT) throw new Error('请配置 1–6 轮；已有超长流程请手动调整，不会自动截断');
+  if (!Array.isArray(d.rounds) || d.rounds.length < 1 || (!unbounded && d.rounds.length > LIMIT)) throw new Error('请配置有效轮次；普通固定流程为 1–6 轮，不会自动截断');
   d.rounds.forEach((r, i) => {
-    if (!Array.isArray(r.members) || r.members.length < 1 || r.members.length > 3 || new Set(r.members).size !== r.members.length) throw new Error(`第 ${i + 1} 轮请选择 1–3 位不同的 Agent`);
+    if (!Array.isArray(r.members) || r.members.length < 1 || (!unbounded && r.members.length > 3) || new Set(r.members).size !== r.members.length) throw new Error(`第 ${i + 1} 轮请选择不同的 Agent；普通固定流程为 1–3 位`);
     if (r.members.some(id => !memberIds.includes(id))) throw new Error(`第 ${i + 1} 轮有已移除的成员，请重新选择`);
     if (typeof r.name !== 'string' || !r.name.trim() || r.name.length > 80) throw new Error(`第 ${i + 1} 轮名称不能为空且不能超过 80 字`);
     if (typeof r.prompt !== 'string' || r.prompt.length > 16000) throw new Error(`第 ${i + 1} 轮共享 prompt 须为文本且不能超过 16000 字（可以留空）`);
@@ -76,8 +76,8 @@ function validate(d, memberIds) {
   }
   return true;
 }
-function toConfig(previous, d, memberIds) {
-  validate(d, memberIds);
+function toConfig(previous, d, memberIds, options = {}) {
+  validate(d, memberIds, options);
   const c = { ...(previous || {}), schemaVersion: 2, settingsVersion: 1, executionLimit: LIMIT, settingsPreset: d.presetId, enabled: !!d.enabled, loop: { enabled: false } };
   if (d.kind === 'file') {
     c.fileFlowVersion = 2; c.templateId = 'dev-task'; c.mdHandoff = true;
@@ -93,8 +93,8 @@ function toConfig(previous, d, memberIds) {
   }
   return c;
 }
-function toDeliveryConfig(previous, draft, memberIds) {
-  const c=toConfig(previous,draft,memberIds);
+function toDeliveryConfig(previous, draft, memberIds, options = {}) {
+  const c=toConfig(previous,draft,memberIds,options);
   delete c.conversationVersion;
   if(previous?.deliveryVersion!==1 && (previous?.serialRunState || previous?.loopState || previous?.fileFlow)) {
     c.legacyExecution={serialRunState:previous.serialRunState,loopState:previous.loopState,fileFlow:previous.fileFlow};
