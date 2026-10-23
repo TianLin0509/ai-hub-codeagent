@@ -97,6 +97,7 @@ function parseKimiWireRecords(records) {
   // Text written in a step that then calls tools is progress, shown as a
   // timed row like Codex commentary instead of vanishing behind the answer.
   let notes = [];
+  let currentCompleted = false;
   const steps = new Map();
 
   for (const record of records) {
@@ -120,6 +121,7 @@ function parseKimiWireRecords(records) {
       turnText = '';
       toolCalls = [];
       notes = [];
+      currentCompleted = false;
       steps.clear();
       currentAssistantTs = null;
       currentPromptTs = toMs(record);
@@ -164,7 +166,17 @@ function parseKimiWireRecords(records) {
     }
     const stepKey = event.stepUuid || event.uuid || fallbackKey;
     const step = steps.get(stepKey) || { text: '', hadTool: false };
+    if (event.type === 'content.part' && event.part?.type === 'think' && typeof event.part.think === 'string') {
+      if (!step.thought) {
+        step.thought = { text: '', ts: toMs(record), fromThinking: true };
+        notes.push(step.thought);
+      }
+      step.thought.text += event.part.think;
+      steps.set(stepKey, step);
+      continue;
+    }
     if (event.type === 'content.part' && event.part && event.part.type === 'text' && typeof event.part.text === 'string') {
+      step.textTs ??= toMs(record);
       step.text += event.part.text;
       steps.set(stepKey, step);
       continue;
@@ -210,8 +222,9 @@ function parseKimiWireRecords(records) {
       continue;
     }
     const text = (ended.text || turnText).trim();
-    if (!text && toolCalls.length === 0) continue;
+    if (!text && toolCalls.length === 0 && !notes.length) continue;
     const id = `kimi-assistant-${currentTurnKey || stableKimiRecordKey(event, turnIndex)}`;
+    currentCompleted = true;
     turns.push({
       id,
       role: 'assistant',
@@ -221,9 +234,9 @@ function parseKimiWireRecords(records) {
       tsEnd: toMs(record),
       stopReason: event.finishReason || 'completed',
       toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
-      ...(notes.length && ended.text.trim() ? { displayMessages: [
-        ...notes.map((note, i) => ({ id: `${id}:note:${i}`, text: note.text, phase: 'commentary', ts: note.ts })),
-        { id: `${id}:answer`, text: ended.text.trim(), phase: 'final_answer', ts: toMs(record) }] } : {}),
+      ...(notes.length ? { displayMessages: [
+        ...notes.map((note, i) => ({ id: `${id}:note:${i}`, ...note, phase: 'commentary' })),
+        ...(ended.text.trim() ? [{ id: `${id}:answer`, text: ended.text.trim(), phase: 'final_answer', ts: toMs(record) }] : [])] } : {}),
       model: currentModel || undefined,
       outputUsageComplete,
       generation,
@@ -235,6 +248,17 @@ function parseKimiWireRecords(records) {
       } : undefined,
       source: 'kimi_wire',
     });
+  }
+  if (!currentCompleted && currentTurnKey != null) {
+    const latest = [...steps.values()].at(-1);
+    const text = latest && !latest.hadTool ? latest.text.trim() : '';
+    if (text || notes.length || toolCalls.length) {
+      const id = `kimi-assistant-${currentTurnKey}`;
+      turns.push({ id, role:'assistant', text, ts:currentAssistantTs, stopReason:'partial_commentary',
+        source:'kimi_wire', toolCalls, displayMessages:[
+          ...notes.map((note,i)=>({id:`${id}:note:${i}`,...note,phase:'commentary'})),
+          ...(text ? [{id:`${id}:answer`,text,phase:'commentary',ts:latest.textTs || currentAssistantTs}] : [])] });
+    }
   }
   return coalesceKimiTurnCards(turns).map(turn => {
     const turnSpeed = ['stop', 'completed', 'end_turn'].includes(turn.stopReason)

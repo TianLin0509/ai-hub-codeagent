@@ -130,6 +130,7 @@ function codexLineFilter(prefix, context = {}, profile = 'turns') {
 
   if (recordType === 'response_item') {
     if (profile === 'live' || profile === 'user') return false;
+    if (profile === 'turns' && envelope.payloadType === 'reasoning') return true;
     if (String(envelope.role || '').toLowerCase() === 'user') return true;
     if (profile === 'turns' && isCardActivityItemType(envelope.payloadType || envelope.itemType)) {
       return boundedActivityDecision(context, prefixExhausted);

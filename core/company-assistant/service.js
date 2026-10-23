@@ -11,7 +11,7 @@
 //     能看、推进、新开、盯着其他会话。助理会话本身仍然只读 WeLink、不发消息，回答由 Hub 发回群里。
 const fs = require('node:fs');
 const path = require('node:path');
-const { randomUUID } = require('node:crypto');
+const { randomUUID, createHash } = require('node:crypto');
 const welink = require('./welink');
 const D = require('./data');
 const B = require('./brief');
@@ -95,6 +95,7 @@ class CompanyAssistant {
     this.auth = new AuthKeeper(this);
     this.memory = new AssistantMemory(this);
     this.query = new AssistantQuery(this);
+    this.meetings = new (require('./meeting').MeetingCompanion)(this, deps);
     this.toolsReady = null;
   }
 
@@ -161,7 +162,7 @@ class CompanyAssistant {
   changed() { try { this.deps.onChanged?.(); } catch { /* 界面没开 */ } }
   cli() { return (this.deps.resolveCli || welink.resolveCli)({ configured: this.settings().cliPath }); }
   // 快速查找没找到：后台全盘找一次（2026-10-19），找到就记进设置；同一次启动里没找到的，6 小时后再自动找。
-  // 「再找一次」按钮传 force 立刻重找；状态给界面显示（正在找 / 找到了 / 没找到）。
+  // 「再找一次」按钮传 force 立刻重找；状态区分未找到与查找/接入失败。
   findCli({ force = false } = {}) {
     const s = this.cliSearch || { state: 'idle', at: 0 };
     if (s.state === 'searching') return this.cliSearching;
@@ -170,7 +171,6 @@ class CompanyAssistant {
     this.changed();
     const find = this.deps.findCliDeep || welink.findCliDeep;
     this.cliSearching = Promise.resolve().then(() => find({ onStage: stage => { this.cliSearch = { ...this.cliSearch, stage }; this.changed(); } }))
-      .catch(() => ({ path: null }))
       .then(found => {
         if (found && found.path) {
           this.setSettings({ cliPath: found.path });
@@ -179,9 +179,14 @@ class CompanyAssistant {
           // 找到了：马上取数；今天的简报还是「没找到 welink-cli」的空简报就重新生成。
           void this.refresh({ force: true }).then(() => { const b = this.brief(); if (!b || b.by === 'none') return this.generateBrief(); }).catch(() => {});
         } else this.cliSearch = { state: 'notfound', at: this.now() };
+        return this.cliSearch;
+      }).catch(error => {
+        // 自动查找没有等待者；所有阶段统一收尾，不能留下 rejected Promise 和永久 searching。
+        this.cliSearch = { state: 'error', at: this.now(), error: error?.message || String(error) };
+        return this.cliSearch;
+      }).finally(() => {
         this.cliSearching = null;
         this.changed();
-        return this.cliSearch;
       });
     return this.cliSearching;
   }
@@ -210,6 +215,7 @@ class CompanyAssistant {
   }
 
   start() {
+    this.meetings.start();
     fs.mkdirSync(this.workspace, { recursive: true });
     const st = this.state();
     // 关注词只看从现在起的新消息；重启前没答完的对话标出来，可重问。
@@ -228,11 +234,15 @@ class CompanyAssistant {
     this.timers.push(setInterval(() => { void this.collectJob().catch(e => console.warn('[company-assistant] collect', e.message)); }, 4000));
     const first = setTimeout(() => { void this.tick().catch(() => {}); }, 15000); this.timers.push(first);
   }
-  close() { for (const t of this.timers) { clearInterval(t); clearTimeout(t); } this.timers = []; this.loginStop?.abort(); this.auth.close(); this.phone.close(); this.ppt.close?.(); this.rooms.close(); this.tools?.close(); }
+  close() { for (const t of this.timers) { clearInterval(t); clearTimeout(t); } this.timers = []; this.meetings.close(); this.loginStop?.abort(); this.auth.close(); this.phone.close(); this.ppt.close?.(); this.rooms.close(); this.tools?.close(); }
   // 给助理会话挂会话工具（main.js 注册的 extraMcpProvider 调用）：只挂给 purpose=company-assistant 的会话。
   // 不等本机接口开始监听（v3.1.1）：mcp.js 每次调用工具时才读接口文件，挂载时用不到地址。以前要求地址已有，
   // 会话若先于接口建好（启动时恢复、或接口还没开始监听），这一整个会话都不带会话工具，也没有任何提示。
   sessionPlan({ opts = {}, id } = {}) {
+    if (this.meetings.ownsSession(opts.id || id)) return {};
+    // Team sessions only read their explicitly provided local evidence file.
+    // An empty plan also prevents fallback to the home/company bridge MCP.
+    if (Object.values(this.state().teamSessionIds || {}).includes(opts.id || id)) return {};
     if (opts.purpose !== PURPOSE || !this.tools) return null;
     return { mcp: this.tools.mcpEntry(opts.id || id) };
   }
@@ -507,8 +517,10 @@ class CompanyAssistant {
     const listed = snap.directoryRawCount ?? snap.conversations.length;
     const catalog = this.read('conversation-catalog.json', {});
     const remembered = catalog.identity === me ? (catalog.conversations || []).filter(c => c.seenAt >= now - 90 * 86400000) : [];
-    const directory = new Map(remembered.map(c => [c.id, c]));
+    const directory = new Map();
     for (const c of snap.conversations) directory.set(c.id, { ...c, seenAt: now });
+    // Map.set 不会移动已有 key；必须先放本轮最近会话，再补历史，限额才不会截掉新活跃会话。
+    for (const c of remembered) if (!directory.has(c.id)) directory.set(c.id, c);
     snap.conversations = [...directory.values()];
     let list = snap.conversations.filter(c => c.id !== phoneGroup); // 手机对话的专用群不进简报
     const limited = s.maxConversations > 0 && list.length > s.maxConversations;
@@ -635,7 +647,10 @@ class CompanyAssistant {
     if (this.briefRunning(day) && !force) return this.brief(day);
     const snap = await this.refresh({ force });
     if (!snap.login?.ok) {
-      const brief = { day, generatedAt: now, by: 'none', sections: [], dropped: 0, total: 0, note: snap.login?.reason === 'missing' ? '这台电脑上没找到 welink-cli，装好后再生成。' : 'WeLink 没登录或登录过期：点上方「扫码登录」，登录后会自动生成。' };
+      const note = snap.login?.reason === 'missing' ? '这台电脑上没找到 welink-cli，装好后再生成。'
+        : snap.login?.reason === 'expired' ? 'WeLink 没登录或登录过期：点上方「扫码登录」，登录后会自动生成。'
+        : '暂时无法确认 WeLink 登录状态，本次未生成简报；请查看登录状态说明，稍后刷新重试。';
+      const brief = { day, generatedAt: now, by: 'none', sections: [], dropped: 0, total: 0, note };
       this.write(`brief-${day}.json`, brief);
       this.changed();
       return brief;
@@ -738,20 +753,27 @@ class CompanyAssistant {
   }
 
   // ---- 对话 ----
-  ask(text, { via = '', entry = '' } = {}) {
+  verifyTeamOwner(job) {
+    if (!job.teamOwner) return;
+    const auth = this.auth.status();
+    if (auth.state !== 'online' || auth.login?.ok !== true || auth.login.uid !== job.teamOwner)
+      throw new Error('团队分析绑定的 WeLink 账号已退出或改变，请用当前账号重新采集分析。');
+  }
+  ask(text, { via = '', entry = '', teamOwner = '' } = {}) {
     const q = String(text || '').trim();
     if (!q) throw new Error('问题是空的');
-    const item = { id: randomUUID(), q, state: 'queued', askedAt: this.now(), ...(via === 'phone' ? { via } : {}), ...(entry === 'ppt' ? { entry } : {}) };
+    this.verifyTeamOwner({ teamOwner });
+    const item = { id: randomUUID(), q, state: 'queued', askedAt: this.now(), ...(via === 'phone' ? { via } : {}), ...(entry === 'ppt' ? { entry } : {}), ...(teamOwner ? { teamOwner } : {}) };
     this.saveChat([...this.chat(), item]);
     const notes = [via === 'phone' ? PHONE_NOTE : '', entry === 'ppt' ? PPT_ENTRY_NOTE : ''].filter(Boolean).join('\n\n');
-    this.enqueue({ type: 'chat', chatId: item.id, prompt: notes ? notes + '\n\n' + q : q });
+    this.enqueue({ type: 'chat', chatId: item.id, prompt: notes ? notes + '\n\n' + q : q, ...(teamOwner ? { teamOwner } : {}) });
     this.changed();
     return item;
   }
   retryChat(id) {
     const item = this.chat().find(c => c.id === id);
     if (!item) throw new Error('这条对话已经不在了');
-    return this.ask(item.q, { via: item.via, entry: item.entry });
+    return this.ask(item.q, { via: item.via, entry: item.entry, teamOwner: item.teamOwner });
   }
   enqueue(job) { this.queue.push({ ...job, id: randomUUID() }); void this.pump(); }
   sessionBusy(id) {
@@ -782,29 +804,49 @@ class CompanyAssistant {
     this.saveState({ sessionId: id, primed: null, toolsVersion: TOOLS_VERSION });
     return id;
   }
+  async ensureTeamSession(owner) {
+    this.verifyTeamOwner({ teamOwner: owner });
+    const key = createHash('sha256').update(owner).digest('hex');
+    let id = this.state().teamSessionIds?.[key];
+    if (id && this.deps.getSession(id)) return id;
+    if (id && this.deps.getSessionMetadata?.(id)) {
+      try { await this.deps.resumeSession(id); } catch { /* Create a fresh isolated session if the old one cannot resume. */ }
+      this.verifyTeamOwner({ teamOwner: owner });
+      if (this.deps.getSession(id)) return id;
+    }
+    id = randomUUID();
+    const cwd = path.join(this.deps.dataDir, 'team-workspace', 'runtime', key);
+    fs.mkdirSync(cwd, { recursive: true });
+    // Register before creation: extraMcpProvider runs while creating the session.
+    this.saveState({ teamSessionIds: { ...this.state().teamSessionIds, [key]: id } });
+    const created = await this.deps.createSession('codeagent', { id, cwd, title: '团队关注分析', purpose: PURPOSE, autonomous: true, noInheritCursor: true });
+    if (!created || created.id !== id) throw new Error('团队分析会话没能打开');
+    return id;
+  }
   async pump() {
     if (this.job || !this.queue.length || this.pumping) return;
     this.pumping = true;
     const job = this.queue.shift();
     try {
       this.job = job;
+      this.verifyTeamOwner(job);
       if (job.type === 'chat') this.patchChat(job.chatId, { state: 'running' });
-      const id = await this.ensureSession();
+      const id = job.teamOwner ? await this.ensureTeamSession(job.teamOwner) : await this.ensureSession();
+      this.verifyTeamOwner(job);
       if (this.sessionBusy(id)) { this.queue.unshift(job); this.job = null; return; }
       const st = this.state();
       const instructionsDay = D.dayKey(this.now());
-      try { this.memory.seedDefaults?.(); } catch { /* 记忆文件写不了不影响回答 */ }
-      const memory = this.memory.context(job.prompt);
+      if (!job.teamOwner) try { this.memory.seedDefaults?.(); } catch { /* 记忆文件写不了不影响回答 */ }
+      const memory = job.teamOwner ? '' : this.memory.context(job.prompt);
       const question = [memory, job.prompt].filter(Boolean).join('\n\n');
-      const prompt = st.primed === id && st.instructionsVersion === INSTRUCTIONS_VERSION && st.instructionsDay === instructionsDay ? question : this.instructions() + '\n\n---\n\n' + question;
+      const prompt = job.teamOwner ? question : st.primed === id && st.instructionsVersion === INSTRUCTIONS_VERSION && st.instructionsDay === instructionsDay ? question : this.instructions() + '\n\n---\n\n' + question;
       job.baseline = this.lastFinal(id)?.id || null;
       job.sessionId = id;
       job.sentAt = this.now();
-      this.ppt.beginTask?.(job.id);
-      this.query.beginTask(job.id);
+      if (!job.teamOwner) { this.ppt.beginTask?.(job.id); this.query.beginTask(job.id); }
       const receipt = await this.deps.sendPrompt(id, prompt, randomUUID());
       if (!receipt || receipt.notSent || (receipt.ok === false && !receipt.unconfirmed && receipt.sendStatus !== 'stuck')) throw new Error(receipt?.error || '问题没有发进助理会话');
-      this.saveState({ primed: id, instructionsVersion: INSTRUCTIONS_VERSION, instructionsDay });
+      if (!job.teamOwner) this.saveState({ primed: id, instructionsVersion: INSTRUCTIONS_VERSION, instructionsDay });
     } catch (error) {
       this.failJob(job, error.message);
     } finally { this.pumping = false; this.changed(); }
@@ -812,17 +854,28 @@ class CompanyAssistant {
   async collectJob() {
     const job = this.job;
     if (!job || !job.sentAt) { if (!job) void this.pump(); return; }
+    try { this.verifyTeamOwner(job); } catch (error) {
+      if (job.ownerStopPending) return;
+      job.ownerStopPending = true;
+      // Only the currently owned team turn may be interrupted. Keep the queue
+      // occupied until its interrupt settles, so a later task cannot be hit.
+      if (this.job === job && job.teamOwner && this.sessionBusy(job.sessionId)) {
+        try { await this.deps.interruptSession?.(job.sessionId); } catch { /* The result is rejected even if stopping is unavailable. */ }
+      }
+      this.failJob(job, error.message); return;
+    }
     if (this.sessionBusy(job.sessionId)) { if (this.now() - job.sentAt > JOB_TIMEOUT_MS * 2) this.failJob(job, '助理会话忙了太久'); return; }
     const final = this.lastFinal(job.sessionId);
     if (final && final.id !== job.baseline && String(final.text || '').trim()) {
       this.job = null;
-      this.memory.touch(final.text);
+      if (!job.teamOwner) this.memory.touch(final.text);
       const pptReport = this.ppt.takeTaskReport?.(job.id) || '';
       let text = pptReport || final.text;
       // 模型没走 report 时，Hub 按索引里的文稿与页数核对回答里写的出处（v3.1.2）；核对不了就什么都不加。
-      if (job.type === 'chat' && !pptReport) {
+      if (job.type === 'chat' && !job.teamOwner && !pptReport) {
         try { const note = await this.ppt.citationNote?.(final.text); if (note) text += '\n\n' + note; } catch { /* 核对失败不影响回答 */ }
       }
+      try { this.verifyTeamOwner(job); } catch (error) { this.failJob(job, error.message); return; }
       const answer = this.query.finishAnswer(job.id, text);
       if (job.type === 'chat') this.patchChat(job.chatId, { state: 'done', a: answer.text, agentText: final.text, queryCoverage: answer.coverage, answeredAt: this.now(), pptResults: this.ppt.takeTaskResult?.(job.id) || [] });
       else this.finishBrief(job, final.text, null);
@@ -927,7 +980,7 @@ class CompanyAssistant {
       cliFound: !!this.cli(), cliPath: this.cli() || '', cliSearch: this.cliSearch || { state: 'idle' }, auth: this.auth.status(), login: this.auth.status().login || snap?.login || null, loginFlow: this.loginFlow, calendarNeedsSetup: !!snap?.calendarNeedsSetup, mailSetup: snap?.mailSetup || null,
       counts: snap ? { meetings: (snap.meetings || []).length, calendar: (snap.calendar || []).length, messages: Object.values(snap.messages || {}).reduce((n, l) => n + l.length, 0), mails: (snap.mails || []).length } : null,
       refreshedAt: snap?.at || null, refreshing: !!this.refreshing, errors: snap?.errors || [], conversations: (snap?.conversations || []).slice(0, 60), scope: snap?.scope || null, nameResolution: snap?.nameResolution || null, meetingCoverage: snap?.meetingCoverage || null, calendarCoverage: snap?.calendarCoverage || null, mailCoverage: snap?.mailCoverage || null,
-      brief: this.brief(day), nextBriefAt: next, chat: this.chat().slice(-60), job: this.job ? { type: this.job.type, sentAt: this.job.sentAt || null } : null,
+      brief: this.brief(day), nextBriefAt: next, chat: this.chat().filter(c => !c.teamOwner || this.auth.status().state === 'online' && this.auth.status().login?.ok === true && c.teamOwner === this.auth.status().login.uid).slice(-60), job: this.job ? { type: this.job.type, sentAt: this.job.sentAt || null } : null,
       queued: this.queue.length, session: sid ? { id: sid, open: !!this.deps.getSession(sid), busy: this.sessionBusy(sid) } : null, tools: this.toolsStatus(),
       notices: st.notices.slice(0, 10), commitments: st.commitments, phone: this.phone.status(), ppt: this.ppt.status(), rooms: this.rooms.status() };
   }

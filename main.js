@@ -2503,6 +2503,26 @@ try {
     require('./main/ipc/company-assistant-handlers').registerCompanyAssistantIpc(ipcMain, companyAssistantService);
   }
 } catch (error) { console.error('[company-assistant] 公司助理未启动：', error.message); }
+// 团队工作台：家里可访问既有管理工具；WeLink 工作材料只在公司助理所在的本机生成。
+let teamWorkspace = null, teamToolsView = null;
+try {
+  const { teamEnabled, toolsCatalog } = require('./core/team-workspace/catalog');
+  if (teamEnabled()) {
+    teamWorkspace = require('./core/team-workspace').createTeamWorkspace({
+      dataDir: getHubDataDir(), getAssistant: () => companyAssistantService,
+      onChanged: () => sendToRenderer('team:changed', {}),
+    });
+    teamToolsView = require('./main/team-tools-view').createTeamToolsView({
+      getWindow: () => mainWindow, WebContentsView: require('electron').WebContentsView,
+      session: require('electron').session, catalog: toolsCatalog(),
+      onChanged: state => sendToRenderer('team:web-state', state),
+    });
+    require('./main/ipc/team-workspace-handlers').registerTeamWorkspaceIpc(ipcMain, {
+      workspace: teamWorkspace, web: teamToolsView, getWindow: () => mainWindow,
+    });
+    teamWorkspace.start();
+  }
+} catch (error) { console.error('[team-workspace] 团队工作台未启动：', error.message); }
 // 公司版「论坛」（2026-10-18）：每天同步稼先社区、心声社区的热门帖子并附 AI 摘要，数据只留在本机 Hub 数据目录。
 // 只在公司版启用（core/company-forum/gate.js）。取数用 Hub 自己的隐藏浏览器窗口（main/company-forum-browser.js）。
 let companyForumService = null, companyForumBrowser = null;
@@ -4318,6 +4338,7 @@ async function runFinalShutdownCleanup() {
   capture('dev-workbench', () => devWorkbench?.dispose());
   capture('hub-assistant', () => assistantService?.close());
   capture('company-bridge', () => companyBridgeService?.close());
+  capture('team-workspace', () => { teamWorkspace?.stop(); teamToolsView?.dispose(); });
   capture('company-assistant', () => companyAssistantService?.close());
   capture('company-forum', () => { companyForumService?.close(); companyForumBrowser?.close(); });
   capture('hub-orchestration', () => global.__orchestrationService?.stop());

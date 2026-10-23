@@ -14,8 +14,7 @@ function fmtDur(ms) {
 }
 function clock(at) {
   if (!at) return '';
-  const d = new Date(at);
-  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+  return require('./beijing-time').formatBeijingClock(at);
 }
 
 // 一轮的状态：queued（发出，公司还没开始）、running、done、failed。

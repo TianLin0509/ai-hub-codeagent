@@ -194,6 +194,7 @@ class AssistantQuery {
       const row = found.item, same = rows.filter(x => x.conv === row.conv).sort((a, b) => a.at - b.at), ix = same.findIndex(x => x.sourceId === sourceId);
       const adjacent = ix < 0 ? [] : same.slice(Math.max(0, ix - 3), ix + 4).filter(x => x.sourceId !== sourceId);
       parts.push({ sourceId, text: `${D.displayTime(row.at)} ${row.sender}：${row.text}`, nextOffset: found.nextOffset,
+        contextRefs: adjacent.map(x => ({ sourceId: x.sourceId, account: x.account, at: x.at, sender: x.sender, conv: x.conv })),
         context: adjacent.map(x => `${D.displayTime(x.at)} ${x.sender}：${D.short(x.text || x.preview, 200)} [${x.sourceId}]`), note: '上下文为同次查询已取到的相邻消息；不足三条时不编造。' });
     }
     return { items: parts };

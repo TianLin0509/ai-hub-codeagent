@@ -270,6 +270,8 @@ function _mergeConsecutiveAssistantTurns(turns) {
       }
       acc.mergedCount += 1;
     }
+    if (t.thinking) acc.displayMessages.push({id:`claude-thinking-${t.id}`,text:t.thinking,
+      ts:t.ts,phase:'commentary',fromThinking:true});
     if (t.text) acc.displayMessages.push({id:`claude-message-${t.id}`,text:t.text,
       ts:t.ts,phase:claudeEntryEndsAssistantTurn(t)?'final_answer':'commentary'});
     // 终止于「带正文的终态 entry」（一轮真完成）

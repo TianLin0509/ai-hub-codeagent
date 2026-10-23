@@ -57,6 +57,7 @@ function registerCompanyAssistantIpc(ipcMain, service) {
     'reopen-session': () => service.reopenSession(),
   };
   Object.assign(handlers, require('../../core/company-assistant/ppt-ipc').createPptHandlers(service));
+  Object.assign(handlers, require('../../core/company-assistant/meeting-ipc').createMeetingHandlers(service));
   for (const [name, handler] of Object.entries(handlers)) {
     ipcMain.handle('company-assistant:' + name, async (_event, request = {}) => {
       try { return await handler(request); } catch (error) { return { ok: false, error: error.message }; }

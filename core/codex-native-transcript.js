@@ -41,6 +41,12 @@ function nativeTranscriptTurns(threadId, turns) {
       if(i.type==='userMessage')clientSubmissionId=i.clientId || null;
       ownerByItem.set(i.id,clientSubmissionId);
       orderByItem.set(i.id,itemOrder);
+      if(i.type==='reasoning') {
+        const text=[...(i.summary || []),...(i.content || [])].map(x=>typeof x==='string'?x:x.text || '').filter(Boolean).join('\n\n');
+        if(text)displayMessages.push({id:threadId+':'+turn.id+':'+i.id,
+          itemId:i.id,providerTurnId:turn.id,clientSubmissionId,itemOrder,
+          phase:'commentary',fromThinking:true,text,ts:i.hubStartedAt || ts});
+      }
       if(i.type==='agentMessage')displayMessages.push({id:threadId+':'+turn.id+':'+i.id,
         itemId:i.id,providerTurnId:turn.id,clientSubmissionId,itemOrder,
         phase:i.phase || 'message',text:i.text || '',
@@ -55,7 +61,7 @@ function nativeTranscriptTurns(threadId, turns) {
       status:(!i.status || i.status==='inProgress') ? (TERMINAL.has(turn.status)?'unknown':'running') : i.status,
       startedAt:ts,...(i.status==='completed'?{completedAt:tsEnd}:{}),
     }));
-    const thinking=items.filter(i=>i.type==='reasoning').flatMap(i=>i.summary || []).map(x=>typeof x==='string'?x:x.text || '').join('\n');
+    const thinking=displayMessages.filter(m=>m.fromThinking).map(m=>m.text).join('\n');
     if(text || tools.length || thinking || TERMINAL.has(turn.status))cards.push({id:threadId+':'+turn.id+':assistant',
       role:'assistant',kind:'codex',text,ts,tsEnd,thinking,toolCalls:tools,source:BACKEND,displayMessages,
       stopReason:turn.status,nativeOutcome:TERMINAL.has(turn.status)?turn.status:null,

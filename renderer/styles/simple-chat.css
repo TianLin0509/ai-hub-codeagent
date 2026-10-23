@@ -76,6 +76,10 @@
 .chat-process-body .conversation-progress-row { margin: 0 0 10px; }
 .chat-process-body .conversation-progress-content { font-size: 12px; }
 .chat-process-body .turn-activity-rail { margin: 0; max-width: 100%; }
+.chat-progress-timeline { padding: 10px 12px; margin-bottom: 12px; border-radius: 12px; background: var(--surface-sunken); color: var(--fg-default); }
+.chat-progress-timeline .conversation-entry { margin: 0; padding: 10px 0; font-size: 12px; }
+.chat-progress-timeline .conversation-entry + .conversation-entry { border-top: 1px solid var(--border-subtle); }
+.chat-progress-timeline .conversation-progress-content { font-size: 12px; }
 .msg-overlay .turn-card[data-chat-style='message'].conversation-response-continuation > .turn-avatar { visibility: visible; }
 .msg-overlay .turn-card[data-chat-style='message'].conversation-response-continuation .turn-who { display: inline; }
 .msg-overlay .turn-card[data-chat-style='message']:focus-within .turn-actions { opacity: 1; }

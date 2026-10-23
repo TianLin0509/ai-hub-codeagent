@@ -251,13 +251,19 @@ class KimiTap extends EventEmitter {
 
   getStreamingText(hubSessionId) {
     const bound = this._bound.get(hubSessionId);
-    if (!bound || !bound.streamingText) return null;
-    return [{ type: 'text', text: bound.streamingText }];
+    if (!bound) return null;
+    const thought = [...bound.steps.values()].at(-1)?.thinking;
+    const blocks = [...(thought ? [{type:'thinking',thinking:thought}] : []),
+      ...(bound.streamingText ? [{type:'text',text:bound.streamingText}] : [])];
+    return blocks.length ? blocks : null;
   }
 
   clearStreamingBuf(hubSessionId) {
     const bound = this._bound.get(hubSessionId);
-    if (bound) bound.streamingText = '';
+    if (bound) {
+      bound.streamingText = '';
+      for (const step of bound.steps.values()) step.thinking = '';
+    }
   }
 
   async extractLatestTurn(hubSessionId, sincePromptTs = 0) {
@@ -268,7 +274,7 @@ class KimiTap extends EventEmitter {
       if (this._parserService) {
         const { turns } = await this._parserService.parse('kimi', bound.wirePath, { limit: 1, fromTail: true });
         const latest = turns[turns.length - 1];
-        turn = latest && latest.role === 'assistant'
+        turn = latest && latest.role === 'assistant' && latest.stopReason !== 'partial_commentary'
           ? { text: latest.text, source: 'kimi_wire_step_end', completedAt: latest.tsEnd || latest.ts || 0 }
           : null;
       } else {
@@ -499,6 +505,11 @@ class KimiTap extends EventEmitter {
     }
     const stepKey = event.stepUuid || event.uuid || fallbackStepKey;
     const step = bound.steps.get(stepKey) || { text: '', hadTool: false };
+    if (event.type === 'content.part' && event.part?.type === 'think' && typeof event.part.think === 'string') {
+      step.thinking = (step.thinking || '') + event.part.think;
+      bound.steps.set(stepKey, step);
+      return;
+    }
     if (event.type === 'content.part' && event.part && event.part.type === 'text' && typeof event.part.text === 'string') {
       step.text += event.part.text;
       bound.steps.set(stepKey, step);

@@ -22,10 +22,10 @@ class AntigravityTap extends EventEmitter {
   _receiptPath(s){return path.join(path.dirname(s.antigravityEventsFile),'native-'+s.geminiChatId+'.json');}
   _read(s){
     if(!s.transcriptPath)return;
-    const files=[s.transcriptPath,path.join(path.dirname(s.transcriptPath),'transcript_full.jsonl'),this._receiptPath(s)];
+    const files=[path.join(path.dirname(s.transcriptPath),'transcript.jsonl'),path.join(path.dirname(s.transcriptPath),'transcript_full.jsonl'),this._receiptPath(s)];
     const signature=files.map(f=>{try{const st=fs.statSync(f);return `${st.size}:${st.mtimeMs}`;}catch(e){if(e.code==='ENOENT')return 'missing';throw e;}}).join('|');
     if(signature===s.signature)return;
-    s.turns=parseAntigravityTranscriptToTurns(s.transcriptPath,{expectedSessionId:s.geminiChatId,receiptsFile:this._receiptPath(s)});s.signature=signature;
+    s.turns=parseAntigravityTranscriptToTurns(s.transcriptPath,{rawSteps:true,expectedSessionId:s.geminiChatId,receiptsFile:this._receiptPath(s)});s.signature=signature;
   }
   _fail(s,error){
     if(s.error===error.message)return;
@@ -98,7 +98,10 @@ class AntigravityTap extends EventEmitter {
   _finishStop(s){
     const p=s.pendingStop;if(!p)return;
     const lastUser=s.turns.findLastIndex(t=>t.role==='user');
-    const answer=s.turns.slice(lastUser+1).filter(t=>t.role==='assistant'&&t.text).at(-1);
+    const latest=s.turns.slice(lastUser+1).filter(t=>t.role==='assistant').at(-1);
+    // A tool hand-off/result is not the final answer. Stop may be ahead of
+    // the last planner row on disk; wait rather than publishing the progress.
+    const answer=latest?.text && !latest.toolCalls?.length ? latest : null;
     if(!answer){
       if(Date.now()-p.since<STOP_FLUSH_GRACE_MS)return;
       s.pendingStop=null;s.lastStop=p.key;

@@ -734,7 +734,7 @@ function createModelUiController({
       ? (session.currentModel.displayName || session.currentModel.id)
       : '当前模型';
     if (!message) {
-      menuNote(menu, `${modelLabel} 支持的思考档 · `+(session?.runtimeBackend==='acp' ? '由原生 Harness 确认后生效。' : session?.runtimeBackend==='codex-app-server'
+      menuNote(menu, `${modelLabel} 支持的思考档 · `+(session?.runtimeBackend==='acp' || session?.agentRuntime==='pty' && /^deepseek-acp(?:-resume)?$/.test(session.kind) ? '由原生 Harness 确认后生效。' : session?.runtimeBackend==='codex-app-server'
         ? '选择后由 Codex 确认，再更新显示。' : '将打开 Codex 原生面板，Hub 确认终端回执后再更新档位。'));
     }
     for (const effort of efforts) {
@@ -815,7 +815,7 @@ function createModelUiController({
     let commandScreen;
     try {
       commandScreen = await beginCommandScreen(sessionId, session);
-      const switched = session.runtimeBackend === 'acp'
+      const switched = session.runtimeBackend === 'acp' || session.agentRuntime === 'pty' && /^deepseek-acp(?:-resume)?$/.test(session.kind)
         ? await (async () => {
           const response = await ipcRenderer.invoke('codex:native-action', {sessionId, action:'configure', effort});
           if (!response?.ok) throw new Error(response?.message || '原生 Harness 未确认思考深度');

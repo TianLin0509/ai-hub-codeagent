@@ -171,6 +171,17 @@
 .ca-settings .ca-src-row{min-height:30px}
 .ca-settings .ca-steps{margin:0;padding-left:20px}
 .ca-source-link{text-align:left;white-space:normal;overflow-wrap:anywhere}
+.ca-onboarding{padding:18px 20px;margin-bottom:20px;border:1px solid #e3e7ee;border-radius:12px;background:#fff;line-height:1.7;color:#334155}
+.ca-onboarding h2{margin:0;font-size:17px;color:#1b2942}
+.ca-onboarding p{margin:8px 0}
+.ca-onboarding>.ca-btn{margin:4px 8px 4px 0}
+.ca-onboarding-steps{display:flex;flex-wrap:wrap;gap:8px 22px;margin:12px 0;color:#64748b;font-size:12px}
+.ca-install-guide{margin:12px 0;font-size:13px;line-height:1.8;max-width:100%;overflow-wrap:anywhere}
+.ca-install-guide summary{cursor:pointer;color:#3478f6}
+.ca-install-guide ol{padding-left:20px}
+.ca-install-guide pre{white-space:pre-wrap;background:#f3f4f6;padding:8px 12px;border-radius:6px;user-select:text}
+[data-slot="action-error"]{margin-bottom:12px;padding:10px 14px;background:#fff7ed;color:#9a3412;border-radius:8px;overflow-wrap:anywhere}
+.ca-convo>[data-slot="action-error"][hidden]{display:none}
 .ca-coverage{margin:8px 0 14px;font-size:12.5px;color:#64748b;line-height:1.7}
 .ca-coverage summary{cursor:pointer}
 .ca-coverage ul{padding-left:20px}

@@ -317,6 +317,11 @@ async function parseProviderTranscript(args = {}, deps) {
     }
     const parseOpts = { limit: 50, fromTail: true, ...(opts && typeof opts === 'object' ? opts : {}) };
     const record = session || (hubSessionId ? lookupSessionRecord(hubSessionId, deps)?.record : null);
+    if (String(record?.kind || inKind).replace(/-resume$/, '') === 'deepseek-acp'
+      && transcriptPath && /[\\/]\.dsh[\\/]hub-events[\\/]/.test(transcriptPath)) {
+      return { turns: require('../../core/dsh-cli-session').readDshCliTranscript(transcriptPath, parseOpts),
+        transcriptPath, source: 'provider-cli', error: null };
+    }
     if (!transcriptPath) {
       // 还没发过消息的分支：卡片先显示分支之前的对话（来自源会话），而不是空白。
       if (isUnsubmittedBranch(record)) {

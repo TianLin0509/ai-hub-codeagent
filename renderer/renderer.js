@@ -1332,7 +1332,7 @@ async function selectMeeting(meetingId, opts = {}) {
   if (terminalPanelEl) terminalPanelEl.classList.remove('home-active');
   if (window.__xresearchHide) window.__xresearchHide(); // 2026-07-23 投研面板互斥
   if (window.__studyHide) window.__studyHide(); // 2026-09-01 学习面板互斥
-  if (window.__assistantHide) window.__assistantHide(); window.__wirelessHide?.(); window.__cloudHide?.();
+  if (window.__assistantHide) window.__assistantHide(); window.__wirelessHide?.(); window.__cloudHide?.(); window.__teamHide?.();
   if (window.__writingHide) window.__writingHide(); // 2026-09-30 写作面板互斥
   window.__rulesHide?.(); // 2026-10-12 规则面板互斥
   if (window.__ranHide) window.__ranHide(); // 2026-09-04 RAN 工作台面板互斥
@@ -1898,7 +1898,7 @@ const APP_TOOLBAR_VIEWS = [
 function getReadingSurface() {
   // Detached full-page tabs are above the session stage. Keep their mounted
   // controls and content instead of copying them into a fullscreen shell.
-  for (const id of ['cloud-page', 'assistant-page', 'wireless-page', 'account-page', 'hub-workspace', 'memo-panel', ...APP_TOOLBAR_VIEWS.map(v => v.id)]) {
+  for (const id of ['team-page', 'cloud-page', 'assistant-page', 'wireless-page', 'account-page', 'hub-workspace', 'memo-panel', ...APP_TOOLBAR_VIEWS.map(v => v.id)]) {
     const panel = document.getElementById(id);
     if (panelIsVisible(panel)) return panel;
   }
@@ -1924,6 +1924,7 @@ function paintAppToolbarForView(label) {
   if (label !== '助理') window.__assistantHide?.();
   if (label !== '无线') window.__wirelessHide?.();
   if (label !== '云端') window.__cloudHide?.();
+  if (label !== '团队') window.__teamHide?.();
   if (!toolbarCrumbEl || !toolbarActionsEl) return;
   toolbarCrumbEl.dataset.mode = 'view';
   toolbarCrumbEl.title = '';
@@ -2029,13 +2030,16 @@ function paintAppToolbarForSession(sessionId, session, cached) {
 // 从会话栏挪到会话头部（状态点后面），悬停看编号、这一轮到哪了与结论；线程记录刷新（bridge-threads-updated）时就地更新。
 function paintCrumbBridge(sessionId) {
   if (!toolbarCrumbEl || toolbarCrumbEl.dataset.signature !== 'session:' + sessionId) return;
+  window._bridgeThreads?.ensureHistory?.(sessionId);
   let badge = null;
   try { badge = window._bridgeThreads?.badge(sessionId) || null; } catch { badge = null; }
   let chip = toolbarCrumbEl.querySelector('.crumb-bridge');
   let peer = toolbarCrumbEl.querySelector('.crumb-bridge-peer');
   if (!badge) { chip?.remove(); peer?.remove(); return; }
   if (!chip) {
-    chip = document.createElement('span');
+    chip = document.createElement('button');
+    chip.type = 'button';
+    chip.addEventListener('click', () => window._bridgeThreads?.openHistory?.(sessionId));
     chip.className = 'bt-badge crumb-bridge';
     toolbarCrumbEl.appendChild(chip);
   }
@@ -2044,7 +2048,8 @@ function paintCrumbBridge(sessionId) {
   chip.textContent = badge.chip;
   // 配对号牌（2026-10-20）：对端是谁写在标签后面；本会话有多个在途编号时悬停逐条列出。
   const lines = Array.isArray(badge.lines) && badge.lines.length ? '\n' + badge.lines.join('\n') : '';
-  chip.title = badge.sub + (badge.pin ? ' · ' + badge.pin : '') + lines;
+  chip.title = badge.sub + (badge.pin ? ' · ' + badge.pin : '') + lines + '\n点击查看交互历史';
+  chip.setAttribute('aria-label', badge.chip + '，查看交互历史');
   if (!badge.peer) { peer?.remove(); return; }
   if (!peer) {
     peer = document.createElement('span');
@@ -2060,7 +2065,7 @@ document.addEventListener('bridge-threads-updated', () => {
 });
 
 function currentAppToolbarView() {
-  for (const [id, label] of [['cloud-page', '云端'], ['assistant-page', '助理'], ['wireless-page', '无线'], ['account-page', '账号'], ['hub-workspace', '资源与回顾'], ['memo-panel', '速记']]) {
+  for (const [id, label] of [['team-page', '团队'], ['cloud-page', '云端'], ['assistant-page', '助理'], ['wireless-page', '无线'], ['account-page', '账号'], ['hub-workspace', '资源与回顾'], ['memo-panel', '速记']]) {
     if (panelIsVisible(document.getElementById(id))) return label;
   }
   for (const view of APP_TOOLBAR_VIEWS) {
@@ -2106,7 +2111,7 @@ if (typeof MutationObserver === 'function') {
   // These tabs mount outside app-body. Watch only their own visibility, never
   // streamed text or every descendant mutation.
   const watchReadingTabs = () => {
-    for (const id of ['cloud-page', 'assistant-page', 'wireless-page', 'account-page', 'hub-workspace', 'memo-panel']) {
+    for (const id of ['team-page', 'cloud-page', 'assistant-page', 'wireless-page', 'account-page', 'hub-workspace', 'memo-panel']) {
       const el = document.getElementById(id);
       if (el) _appToolbarObserver.observe(el, { attributes: true, attributeFilter: ['style', 'class', 'hidden'] });
     }
@@ -2926,7 +2931,9 @@ async function loadSessionHistoryToOverlayUnserialized(sessionId, opts = {}) {
     (result && Array.isArray(result.turns)) ? result.turns : []);
   let nextPageState=null;
   if (paged && !result?.error) {
-    if (opts.older || !incremental || view.changed) {
+    // A cached session keeps its already-loaded window. The short tail refresh
+    // on returning to it cannot decide whether that earlier window has more.
+    if (opts.older || !incremental || (view.changed && !view.hydrated)) {
       nextPageState={more:turns.length > pageLimit || (result?.turns?.length || 0) > pageLimit,limit:pageLimit};
     }
     turns = turns.slice(-pageLimit);
@@ -4593,7 +4600,7 @@ const _codexEffortCache = new Map();
 const CLAUDE_COMPOSER_EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max', 'ultracode', 'auto'];
 
 function composerSupportedEfforts(session) {
-  if (session?.runtimeBackend === 'acp') return require('../core/acp-model-catalog').acpThoughtChoices(session).map(o => o.value);
+  if (session?.runtimeBackend === 'acp' || (session?.agentRuntime === 'pty' && /^deepseek-acp(?:-resume)?$/.test(session.kind))) return require('../core/acp-model-catalog').acpThoughtChoices(session).map(o => o.value);
   const kind = String((session && session.kind) || '').replace(/-resume$/i, '').toLowerCase();
   // A native Claude session changes effort over its own command channel, so the
   // chip is live there; a PTY session still cannot and stays static.
@@ -5760,7 +5767,7 @@ async function selectSession(id, opts = {}) {
   }
   if (window.__xresearchHide) window.__xresearchHide(); // 2026-07-23 投研面板互斥
   if (window.__studyHide) window.__studyHide(); // 2026-09-01 学习面板互斥
-  if (window.__assistantHide) window.__assistantHide(); window.__wirelessHide?.(); window.__cloudHide?.();
+  if (window.__assistantHide) window.__assistantHide(); window.__wirelessHide?.(); window.__cloudHide?.(); window.__teamHide?.();
   if (window.__writingHide) window.__writingHide(); // 2026-09-30 写作面板互斥
   window.__rulesHide?.(); // 2026-10-12 规则面板互斥
   if (window.__ranHide) window.__ranHide(); // 2026-09-04 RAN 工作台面板互斥
@@ -8638,7 +8645,7 @@ function escapeToHome() {
   window.hubWorkspaces?.close();
   if (window.__xresearchHide) window.__xresearchHide();
   if (window.__studyHide) window.__studyHide();
-  if (window.__assistantHide) window.__assistantHide(); window.__wirelessHide?.(); window.__cloudHide?.();
+  if (window.__assistantHide) window.__assistantHide(); window.__wirelessHide?.(); window.__cloudHide?.(); window.__teamHide?.();
   if (window.__writingHide) window.__writingHide(); // 2026-09-30 写作面板互斥
   window.__rulesHide?.(); // 2026-10-12 规则面板互斥
   if (window.__ranHide) window.__ranHide(); // 2026-09-04 RAN 工作台面板互斥
@@ -8756,6 +8763,18 @@ if (require('../core/company-forum/gate').companyForumEnabled()) {
     window.__companyForumHide = () => companyForumPage.close();
   } catch (error) { console.warn('[company-forum] 论坛页未启动：', error.message); }
 }
+if (require('../core/team-workspace/catalog').teamEnabled()) {
+  const teamPage = require('./team-page').createTeamPage({
+    document, window, ipcRenderer,
+    closeOtherPanels: () => {
+      window.hubWorkspaces?.close(); memoryPanel.close(); capabilityPanel.close(); accountCenterPanel.close();
+      for (const key of ['__cloudHide', '__assistantHide', '__companyAssistantHide', '__companyForumHide', '__wirelessHide', '__writingHide', '__rulesHide', '__xresearchHide', '__studyHide', '__ranHide']) window[key]?.();
+    },
+    showMessage: message => showToast(message),
+  });
+  window.__teamHide = () => teamPage.close();
+  document.getElementById('btn-team')?.addEventListener('click', () => teamPage.open());
+} else document.getElementById('btn-team')?.remove();
 const openConfigModal = configModal.open;
 const setCodexProfileForm = configModal.setCodexProfileForm;
 document.addEventListener('hub-config-saved', () => {
@@ -8942,6 +8961,12 @@ ipcRenderer.on('session-created', async (_e, { session }) => {
     scheduleSessionListRender();
     return;
   }
+  // 公司助理的简报和团队分析会在后台创建会话；成员页输入与团队导航保持原位。
+  if (session.purpose === 'company-assistant') {
+    if (wasDormant && activeSessionId === session.id && !document.body.classList.contains('team-page-open')) await selectSession(session.id, { forceScrollBottom: pendingResume?.forceScrollBottom === true });
+    scheduleSessionListRender();
+    return;
+  }
   // 无线页的 wireless-sim 助理在后台为每个提案开会话、家里联动在公司 Hub 为每个问题开会话：不抢当前画面，用户从对应页面或会话栏打开。
   if (session.purpose === 'wireless-proposal' || session.purpose === 'company-bridge') {
     if (wasDormant && activeSessionId === session.id) await selectSession(session.id, { forceScrollBottom: pendingResume?.forceScrollBottom === true });
@@ -8994,7 +9019,7 @@ ipcRenderer.on('session-created', async (_e, { session }) => {
   // 2026-09-02：session-created 会直接亮出终端面板，但此前只隐藏了群聊面板。
   // 主区是 flex 容器，学习面板若还开着就会和终端并排各占一半。
   if (window.__studyHide) window.__studyHide();
-  if (window.__assistantHide) window.__assistantHide(); window.__wirelessHide?.(); window.__cloudHide?.();
+  if (window.__assistantHide) window.__assistantHide(); window.__wirelessHide?.(); window.__cloudHide?.(); window.__teamHide?.();
   if (window.__writingHide) window.__writingHide(); // 2026-09-30 写作面板互斥
   window.__rulesHide?.(); // 2026-10-12 规则面板互斥
   if (window.__ranHide) window.__ranHide(); // 2026-09-04 RAN 工作台面板互斥
@@ -9308,6 +9333,7 @@ ipcRenderer.on('session-updated', (_e, { session }) => {
   if (session.acpSid) local.acpSid = session.acpSid;
   if (session.acpProfileId) local.acpProfileId = session.acpProfileId;
   if (session.acpCapabilities) local.acpCapabilities = session.acpCapabilities;
+  if (session.acpConfigOptions) local.acpConfigOptions = session.acpConfigOptions;
   if (Object.hasOwn(session,'cliRuntime')) local.cliRuntime = session.cliRuntime;
   // 终端型 ACP 会话（千问 / GLM CLI）的卡片提示也以主进程为准，重启后不留旧进程的退出提示。
   if (Object.hasOwn(session,'nativeActionError')) local.nativeActionError = session.nativeActionError;
@@ -10323,7 +10349,7 @@ if (process && process.env && process.env.CLAUDE_HUB_E2E === '1') {
           currentView = 'card';
           _cardHistoryHydratedSid = sessionId;
           if (window.__studyHide) window.__studyHide();   // 同上：别和学习面板并排
-          if (window.__assistantHide) window.__assistantHide(); window.__wirelessHide?.(); window.__cloudHide?.();
+          if (window.__assistantHide) window.__assistantHide(); window.__wirelessHide?.(); window.__cloudHide?.(); window.__teamHide?.();
           if (window.__writingHide) window.__writingHide(); // 2026-09-30 写作面板互斥
           window.__rulesHide?.(); // 2026-10-12 规则面板互斥
           if (window.__ranHide) window.__ranHide(); // 2026-09-04 RAN 工作台面板互斥

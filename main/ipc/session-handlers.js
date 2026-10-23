@@ -407,7 +407,8 @@ function registerSessionIpc(ipcMain, deps) {
     let modelId = typeof payload.modelId === 'string' ? payload.modelId.trim() : '';
     const session = sessionId ? sessionManager.getSession(sessionId) : null;
     if (!session) return { ok: false, error: 'session-not-found', message: '会话不存在或已经休眠' };
-    if (['codex-app-server','acp'].includes(session.runtimeBackend)) {
+    if (['codex-app-server','acp'].includes(session.runtimeBackend)
+      || session.agentRuntime === 'pty' && /^deepseek-acp(?:-resume)?$/.test(session.kind)) {
       const current = session.currentModel || {};
       if (current.id !== modelId || (payload.effort && payload.effort !== session.effort)) {
         return {ok:false,message:'原生会话尚未确认该模型或思考档'};

@@ -7,7 +7,7 @@ const {
   sessionHasCompletedUnread,
 } = require('../core/session-attention-state.js');
 const { sessionRuntimeIssue } = require('../core/session-runtime-issue.js');
-const { KIND_LABELS } = require('../core/ai-kinds.js');
+const { KIND_LABELS, ALL_AI_KINDS } = require('../core/ai-kinds.js');
 const { sessionDisplayTitle } = require('../core/session-title-guards.js');
 // 右下角「国内正常 / 异常」只关 Kimi / DeepSeek 这类直连的国内 AI；发行版里一个都没有（公司纯净版只有 CodeAgent）就不显示
 // （2026-10-13 用户要求删掉）。
@@ -47,18 +47,14 @@ function partitionSessionsByAge(items, now) {
 // 家族由 kind（哪个 CLI）决定，模型只是家族内部的选择：Opus / Fable / Sonnet 都是
 // Claude CLI 起的会话，GPT 各版本都是 Codex CLI 起的。所以按 kind 分族，与用户
 // 心里的「这是 Claude 还是 Codex」完全对得上，不需要再解析 currentModel。
-// DeepSeek 现在由 Codex CLI + Responses API 启动，但品牌仍是独立的一家，归「其他」。
+// 各家模型独立筛选；同品牌的不同后端合并，选项随支持的 AI 注册表扩展。
 const SESSION_FAMILY_TABS = [
-  { key: 'all', label: '全部', hint: '所有会话与群聊' },
-  { key: 'claude', label: 'Claude', hint: 'Claude Code（Opus / Fable / Sonnet / Haiku）' },
-  { key: 'codex', label: 'Codex', hint: 'Codex CLI（GPT 各版本）' },
-  { key: 'codeagent', label: 'CodeAgent', hint: '公司 CodeAgent（只在装了它的发行版里单列）' },
-  { key: 'other', label: '其他', hint: 'Gemini / DeepSeek / Kimi / PowerShell' },
+  { key: 'all', label: '模型' },
+  ...[...new Set(['claude','codex',...ALL_AI_KINDS].map(familyOfKind))]
+    .filter(key=>ALL_AI_KINDS.some(kind=>familyOfKind(kind)===key && require('../core/distribution').kindAllowed(kind)))
+    .map(key=>({key,label:KIND_LABELS[key] || key})),
+  { key: 'other', label: '其他' },
 ];
-// 公司版（发行版限定了 AI 种类且包含 CodeAgent）把 CodeAgent 单列一族；家里版它仍归「其他」，筛选项也不显示。
-const CODEAGENT_FAMILY = (() => {
-  try { const d = require('../core/distribution'); return !!d.allowedKinds && d.kindAllowed('codeagent'); } catch { return false; }
-})();
 const SESSION_FAMILY_KEYS = SESSION_FAMILY_TABS.map(tab => tab.key);
 
 // --- Agent 自建会话的分组收纳 ---------------------------------------------
@@ -84,10 +80,8 @@ function agentGroupOf(session) {
 
 function familyOfKind(kind) {
   const base = String(kind || '').replace(/-resume$/, '');
-  if (base === 'claude') return 'claude';
-  if (base === 'codex') return 'codex';
-  if (base === 'codeagent' && CODEAGENT_FAMILY) return 'codeagent';
-  return 'other';
+  if (/^deepseek(?:-(?:acp|claude|legacy))?$/.test(base)) return 'deepseek';
+  return ALL_AI_KINDS.includes(base) ? base : 'other';
 }
 
 // 返回条目所属的家族集合。群聊按成员归属，可以同时属于多个家族——混合群聊只算
@@ -222,6 +216,7 @@ function createSessionListRenderer(options = {}) {
   }
   const modelControl = doc.getElementById?.('session-model-filter');
   if (modelControl) {
+    modelControl.innerHTML = SESSION_FAMILY_TABS.map(tab=>`<option value="${tab.key}">${tab.label}</option>`).join('');
     // 发行版裁掉了某个家族（公司版没有 Claude / Codex）而偏好里还存着它：退回「全部」，免得侧栏空着。
     const options = [...(modelControl.options || [])];
     if (options.length && !options.some(option => option.value === modelFilter && !option.hidden)) modelFilter = 'all';

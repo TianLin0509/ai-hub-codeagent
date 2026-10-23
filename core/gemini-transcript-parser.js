@@ -50,7 +50,10 @@ function parseGeminiTranscriptToTurns(file,options={}){
       toolCalls:tools,usage:row.tokens,
       ...(user?{}:{nativeOutcome:completed?'completed':null,replyKey,
         // Text that hands off to tools is a step, not the answer.
-        displayMessages:text?[{id:id+':text',text,phase:completed&&!tools.length?'final_answer':'commentary',ts:at(row.timestamp)}]:[],
+        displayMessages:[...(row.thoughts||[]).map((thought,index)=>({id:`${id}:thought:${index}`,
+          text:typeof thought==='string'?thought:thought.text||thought.subject||'',phase:'commentary',fromThinking:true,
+          ts:at(thought.timestamp)||at(row.timestamp)})).filter(m=>m.text),
+          ...(text?[{id:id+':text',text,phase:completed&&!tools.length?'final_answer':'commentary',ts:at(row.timestamp)}]:[])],
         ...(speed?{turnSpeed:speed}:{})})});
   }
   return Number.isFinite(options.limit)&&options.limit>=0

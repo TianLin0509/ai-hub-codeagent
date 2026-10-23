@@ -28,7 +28,9 @@
   <link rel="stylesheet" href="styles/assistant-panel.css">
   <!-- 公司版「助理」页（2026-10-16）：按钮由脚本只在公司版插入，样式公开版也带着无害 -->
   <link rel="stylesheet" href="styles/company-assistant-page.css">
+  <link rel="stylesheet" href="styles/company-meeting.css">
   <link rel="stylesheet" href="styles/company-forum-page.css">
+  <link rel="stylesheet" href="styles/team-page.css">
   <link rel="stylesheet" href="styles/pet-settings-tab.css">
   <link rel="stylesheet" href="file-manager-panel.css">
   <link rel="stylesheet" href="vendor/katex/katex.min.css">
@@ -130,6 +132,7 @@
       <!-- 规则 Tab（2026-10-12）：Hub 里的 Agent 默认带上的规则。放在主页和助理之间，公开版、公司版都有。 -->
       <button type="button" class="btn-shell-nav" id="btn-rules" data-rules-entry title="规则 · Agent 默认带上的规则" aria-label="规则"><span class="btn-icon" aria-hidden="true"><img class="rail-artwork" src="assets/navigation/sticker-v2/rules.png" alt="" aria-hidden="true" /></span><span class="btn-label">规则</span></button>
       <button type="button" class="btn-shell-nav" id="btn-assistant" title="助理 · 进展与下一步" aria-label="助理" aria-controls="terminal-panel"><span class="btn-icon" aria-hidden="true"><img src="assets/assistant/penguin.png" alt="" /></span><span class="btn-label">助理</span></button>
+      <button type="button" class="btn-shell-nav" id="btn-team" title="团队 · 成员关注、承诺跟进与周报草稿" aria-label="团队" aria-controls="team-page"><span class="btn-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><circle cx="9" cy="8" r="3"/><path d="M3 21v-2a6 6 0 0 1 12 0v2M16 5a3 3 0 0 1 0 6M21 21v-2a6 6 0 0 0-4-5.7"/></svg></span><span class="btn-label">团队</span></button>
       <button type="button" class="btn-shell-nav" id="btn-ran" data-ran-entry title="开发看板 · 各任务走到哪一步了"><span class="btn-icon" aria-hidden="true"><img class="rail-artwork" src="assets/navigation/sticker-v2/dev.png" alt="" aria-hidden="true" /></span><span class="btn-label">开发</span></button>
       <div class="rail-separator" aria-hidden="true"></div>
       <button type="button" class="btn-shell-nav" id="btn-rail-memo" data-action="open-review" title="回顾 · 备忘与昨日之我" aria-label="回顾" aria-expanded="false" aria-controls="hub-workspace"><span class="btn-icon" aria-hidden="true"><img class="rail-artwork" src="assets/navigation/sticker-v2/review.png" alt="" aria-hidden="true" /></span><span class="btn-label">回顾</span></button>
@@ -262,7 +265,7 @@
           <kbd>Ctrl Shift F</kbd>
         </button>
       </div>
-      <div class="session-detail-bar"><button type="button" id="btn-session-details" aria-pressed="false">详细信息</button><label class="session-model-filter"><select id="session-model-filter" aria-label="侧栏模型" title="按模型筛选"><option value="all">模型</option><option value="claude">Claude</option><option value="codex">Codex</option><option value="codeagent" hidden>CodeAgent</option><option value="other">其他</option></select></label><label class="session-project-filter"><select id="session-project-filter" aria-label="侧栏项目" title="按项目筛选"><option value="random">随机</option><option value="all" selected>项目</option></select></label></div><div id="session-project-filter-note" class="session-project-filter-note" role="status" hidden></div>
+      <div class="session-detail-bar"><button type="button" id="btn-session-details" aria-pressed="false">详细信息</button><label class="session-model-filter"><select id="session-model-filter" aria-label="侧栏模型" title="按模型筛选"><option value="all">模型</option></select></label><label class="session-project-filter"><select id="session-project-filter" aria-label="侧栏项目" title="按项目筛选"><option value="random">随机</option><option value="all" selected>项目</option></select></label></div><div id="session-project-filter-note" class="session-project-filter-note" role="status" hidden></div>
       <div class="session-range-tabs" role="group" aria-label="会话范围"><button type="button" data-session-days="pinned" aria-pressed="false" title="只显示置顶的会话与群聊">置顶</button><button type="button" data-session-days="1" aria-pressed="true" title="未置顶的最近24小时会话；未读和活跃会话始终显示">今天</button><button type="button" data-session-days="3" aria-pressed="false" title="未置顶的最近72小时会话；未读和活跃会话始终显示">3 天</button><button type="button" id="btn-sidebar-wireless" aria-pressed="false" title="显示无线协作会话">无线</button></div>
       <div class="session-list" id="session-list"></div>
       <section class="sidebar-insights" id="sidebar-insights" aria-label="用量与系统状态">

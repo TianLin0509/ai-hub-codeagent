@@ -8,7 +8,8 @@
     "accounts": false,
     "homeLink": true,
     "companyAssistant": true,
-    "companyForum": true
+    "companyForum": true,
+    "teamWorkspace": true
   },
   "rulesChannel": "company",
   "kinds": [
@@ -35,14 +36,13 @@
     "releasePage": "https://github.com/TianLin0509/ai-hub-codeagent/releases"
   },
   "releaseNotes": [
-    "启动中心手动新建的会话也不再照抄配置文件里的模型：按这个号自己的模型权限起（配置里写的不在清单里就改成清单里那个），创建完就不会先报一个模型错误。",
-    "底部状态栏多一格 Antigravity 的余量，和别家一样能一眼看到还剩多少，取数失败时不会再一直挂着上一次的报错。",
-    "星标编排可以直接用中文说要求：让谁做、按什么顺序做，不用再按固定格式填。",
-    "DSH 场景下会记住你选的 Token Plan / API 方式，不会再退回默认的那一个。",
-    "这版要用上第 1 条，请先在「AI特战队专用功能 → 账号与号池」点一次「一键获取全部模型权限」（不发消息、不耗额度），让每个号的可用模型清单是本机最新读到的。"
+    "助理新增会议伴侣：共享窗口自动截页、截图区域设置、系统声音与麦克风分轨录音，支持暂停、补截图和重点标记。",
+    "本地语音组件按需安装，音频分段保存并持续转写；失败材料保留，可重试。首次安装需要组件与模型下载网络，缺少 Python 时自动准备独立运行时。",
+    "CodeAgent 使用独立会议会话持续整理，保留每版理解和事件出处；支持会议追问、历史回看与纪要导出。",
+    "分别显示采集、转写、理解进度。原始材料先保存，理解成功后才推进处理范围，重启后可继续整理已保存会议。"
   ],
-  "version": "3.1.5",
-  "upstreamVersion": "1.6.586",
-  "upstreamCommit": "422429c915c3cc6c85f5ef341f04ed3aa18d497a",
+  "version": "4.0.0",
+  "upstreamVersion": "1.6.594",
+  "upstreamCommit": "aa43b9553e35e74a3fda8de1dd9667091a0cfe63",
   "upstreamDirty": false
 }

@@ -111,7 +111,7 @@ function buildAcpOptions(kind, opts, config, dataDir, baseEnv = process.env) {
     });
   } else if (kind === 'deepseek-acp') {
     if (process.platform === 'win32') args.unshift('--require', path.join(__dirname, 'dsh-windows-link-retry.cjs'));
-    if(!entry.bridgePath)throw new Error('DeepSeek 完整交互需要配置 ACP 扩展包目录');
+    if(!opts.dshCliRuntime && !entry.bridgePath)throw new Error('DeepSeek 完整交互需要配置 ACP 扩展包目录');
     env.DSH_HOME = path.join(home, '.dsh');
     env.BAILIAN_API_KEY = key;
     // authenticate persists the native provider credential in this isolated
@@ -125,11 +125,43 @@ function buildAcpOptions(kind, opts, config, dataDir, baseEnv = process.env) {
           compat: { thinkingFormat: 'deepseek', supportsDeveloperRole: false } })) } } },
     };
     writeJson(path.join(env.DSH_HOME, 'settings.yaml'), settings);
-    const patch = path.join(sessionRoot, 'acp-route.yaml');
+    const patch = path.join(sessionRoot, opts.dshCliRuntime ? 'cli-route.yaml' : 'acp-route.yaml');
     const routePatches = [{ id: 'llm-pi-ai', config: settings['llm-pi-ai'] },
       { id: 'agent-default-model', config: settings['agent-default-model'] },
       { id: 'acp', config: { provider: 'bailian-tpp', model } }];
-    if (entry.bridgePath) {
+    if (opts.dshCliRuntime) {
+      args[args.indexOf(entry.entryPath)] = path.join(__dirname, 'dsh-cli-launch.mjs');
+      env.AI_HUB_DSH_CLI_ENTRY = entry.entryPath;
+      const profileHome = path.join(env.DSH_HOME, 'profiles/hub-cli');
+      fs.mkdirSync(profileHome, { recursive: true });
+      const link = path.join(profileHome, 'node_modules');
+      if (!fs.existsSync(link)) linkWithRetry(opts.dshCliRuntime.modules, link);
+      if (fs.realpathSync(link) !== fs.realpathSync(opts.dshCliRuntime.modules)) throw new Error('DSH CLI 运行环境链接不一致');
+      writeJson(path.join(profileHome, 'package.json'), { name: 'hub-dsh-cli-profile', private: true,
+        dsh: { profile: { bundles: ['@deepseek-ai/dsh-base', '@deepseek-harness-tui/dsh-tui'], patchReload: 'startup' } } });
+      Object.assign(env, { DSH_PERMISSION_MODE: 'danger-full-access', DSH_TUI_BACKEND: 'dsh',
+        DSH_TUI_WORKSPACE_TARGET: opts.cwd, DSH_TUI_NO_LAUNCHPAD: '1' });
+      if (opts.acpSid || opts.acpFork?.sessionId) env.DSH_TUI_RESUME_SESSION = opts.acpFork?.sessionId || opts.acpSid;
+      // Hub already owns credential, model and workspace onboarding.
+      writeJson(path.join(home, '.dsh-tui/onboarding.json'), { completed: true, version: 1 });
+      writeJson(path.join(home, '.dsh-tui/model.json'), { provider: 'bailian-tpp', model });
+      routePatches.pop();
+      routePatches.push({ insert: [{ id: 'hub-cli-observer', name: path.join(__dirname, 'dsh-cli-observer.mjs') }] });
+      routePatches.push({ id: 'dsh-tui', inject: ['hubCliObserver', 'agents', 'workspaceRegistry',
+        'tuiWorkspaces', 'tuiScenes', 'tuiPanels', 'tuiDialogs', 'tuiStatus', 'tuiShortcuts', 'tuiRenderers', 'tuiThemes'],
+        config: { provider: 'bailian-tpp', model, backend: 'dsh', fullscreen: true, launchpad: false,
+          workspace: opts.cwd, sessionId: env.DSH_TUI_RESUME_SESSION,
+          effort: deepseekRoute && !['high', 'max'].includes(opts.effort) ? undefined : opts.effort,
+          modes: [{ id: 'default', plan: false, sandbox: 'danger-full-access', approval: 'never' }] } });
+      if (mcpServers.length) routePatches.push({ insert: mcpServers.map((s, i) => ({
+        id: 'hub-mcp-' + i, name: '@deepseek-ai/dsh-mcp-client', config: {
+          serverName: s.name, failOnStartupError: true,
+          ...(!s.type || s.type === 'stdio' ? { transport: 'stdio', command: s.command, args: s.args,
+            env: Object.fromEntries((s.env || []).map(e => [e.name, e.value])), cwd: opts.cwd }
+            : { transport: 'streamable-http', url: s.url, headers: Object.fromEntries((s.headers || []).map(e => [e.name, e.value])) }),
+        },
+      })) });
+    } else if (entry.bridgePath) {
       if (!path.isAbsolute(entry.bridgePath) || !fs.existsSync(path.join(entry.bridgePath, 'package.json'))) throw new Error('DeepSeek ACP 扩展包路径无效');
       const scope = path.join(env.DSH_HOME, 'profiles/acp/node_modules/@openma');
       fs.mkdirSync(scope, { recursive: true });
@@ -153,7 +185,7 @@ function buildAcpOptions(kind, opts, config, dataDir, baseEnv = process.env) {
     routePatches.push({ id: 'system-prompt', config: { personaSuffix:
       '你正在 AI Hub 中协作。对用户已经授权的任务持续执行到可交付；先通过读取项目和工具查清可查证的信息。常规实现细节由你选择合理方案并执行，汇报必要的假设与取舍。仅当缺少用户独有的信息、选择会实质改变目标或造成显著返工、或用户规则要求审批时，使用 ask_user_question 等待回答。用户明确要求比较或选择时正常提问。需要用户决定的事项由用户亲自回答。' } });
     writeJson(patch, routePatches);
-    args.push('--profile', 'acp', '--patch', patch);
+    args.push('--profile', opts.dshCliRuntime ? 'hub-cli' : 'acp', '--patch', patch);
   } else {
     if (!entry.backendPath || !path.isAbsolute(entry.backendPath) || !fs.existsSync(entry.backendPath)) throw new Error('缺少原生 ZCode 后端路径');
     Object.assign(env, { ZCODE_BIN: entry.backendPath, ZCODE_NODE: profile.nodePath, ZCODE_MODEL: model,

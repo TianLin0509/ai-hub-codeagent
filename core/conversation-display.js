@@ -4,8 +4,15 @@
 // Keep this projection out of final-answer extraction and runtime decisions.
 function displayTurns(turns) {
   const projected = (turns || []).flatMap(turn => {
-    if (!Array.isArray(turn.displayMessages)) return [turn];
-    const { displayMessages, ...base } = turn;
+    const hasThinking=turn.role==='assistant' && typeof turn.thinking==='string' && turn.thinking.trim();
+    if (!Array.isArray(turn.displayMessages) && !hasThinking) return [turn];
+    const { displayMessages: originalMessages, ...base } = turn;
+    const displayMessages=Array.isArray(originalMessages)?originalMessages.slice():turn.text?
+      [{id:`${turn.id}:text`,text:turn.text,phase:'message',displayVisibility:'body',ts:turn.ts}]:[];
+    // Providers with per-item timestamps supply fromThinking rows themselves.
+    // Older records still expose their stored text at the known record time.
+    if(hasThinking && !displayMessages.some(m=>m.fromThinking)) displayMessages.unshift({
+      id:`${turn.id}:thinking`,text:turn.thinking,phase:'commentary',fromThinking:true,ts:turn.ts});
     const cards = displayMessages.filter(m => m && m.id && m.text).map(m => ({
       ...base, ...m, role: 'assistant', logicalTurnId: turn.id,
       thinking: null, toolCalls: [], usage: undefined, durationMs: undefined,

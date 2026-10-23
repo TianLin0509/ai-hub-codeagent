@@ -7,6 +7,7 @@
 // 写法同无线页：盖在主区域上的一层，点左侧其他按钮自动关闭。左侧按钮只在公司版（gate.js）插入。
 function createCompanyAssistantPage({ document, window, ipcRenderer, openSession, closeOtherPanels = () => {}, showMessage }) {
   const { ASSISTANT_AVATAR_SRC, USER_AVATAR_SRC } = require('./chat-avatar');
+  const { connectionState } = require('./company-assistant-connection');
   let page = null, data = null, timer = null, briefOpen = false, sending = false, pptEntry = false;
   const esc = v => String(v ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const pad = n => String(n).padStart(2, '0');
@@ -20,6 +21,7 @@ function createCompanyAssistantPage({ document, window, ipcRenderer, openSession
     return `${d.getMonth() + 1}-${d.getDate()} ${clock(at)}`;
   };
   const call = async (channel, payload) => { const r = await ipcRenderer.invoke('company-assistant:' + channel, payload); if (r && r.ok === false) throw new Error(r.error || '操作未完成'); return r; };
+  let meetingPage = null;
   let md = null;
   const markdown = text => {
     try {
@@ -58,6 +60,8 @@ function createCompanyAssistantPage({ document, window, ipcRenderer, openSession
       </aside><main class="ca-main">
       <div class="ca-panel" data-slot="panel" hidden></div>
       <div class="ca-scroll"><div class="ca-convo">
+        <div data-slot="action-error" role="alert" hidden></div>
+        <div data-slot="onboarding"></div>
         <div data-slot="setup"></div>
         <div data-slot="coverage"></div>
         <div data-slot="brief"></div>
@@ -81,7 +85,15 @@ function createCompanyAssistantPage({ document, window, ipcRenderer, openSession
     });
     page.addEventListener('click', event => {
       const b = event.target.closest('[data-ca]');
-      if (b) { event.preventDefault(); void action(b.dataset.ca, b).catch(e => showMessage?.(e.message)); }
+      if (b && !b.disabled) {
+        event.preventDefault();
+        const feedback = page.querySelector('[data-slot="action-error"]'); feedback.hidden = true;
+        void action(b.dataset.ca, b).catch(e => {
+          b.disabled = false;
+          feedback.textContent = '操作未完成：' + e.message + '。可以重试，已填写的内容会保留。'; feedback.hidden = false;
+          showMessage?.(e.message);
+        }).finally(() => { b.disabled = false; if (data) render(); });
+      }
     });
     const form = page.querySelector('[data-slot="form"]'), input = form.querySelector('textarea');
     form.addEventListener('submit', e => { e.preventDefault(); void send(input.value); });
@@ -100,13 +112,13 @@ function createCompanyAssistantPage({ document, window, ipcRenderer, openSession
   function status() {
     const d = data, auth = d.auth || {}, phone = d.phone || {}, p = phone.settings || {};
     const renewing = auth.state === 'renewing';
-    const online = d.login?.ok && auth.state !== 'needs-scan';
+    const connection = connectionState(d), online = connection.kind === 'online';
     const coverages = [['会议', d.meetingCoverage], ['日程', d.calendarCoverage], ['邮件', d.mailCoverage]];
     const mailText = coverages.map(([name, c]) => name + ({ complete: '已查', partial: '未取全', failed: '失败' }[c?.status] || '待查')).join(' · ');
-    const loginText = !d.cliFound ? '未找到 welink-cli' : renewing ? '正在自动续期' : online ? (auth.lastRenewAt ? '自动续期 · 上次 ' + clock(auth.lastRenewAt) : '在线 · 自动维护登录') : auth.state === 'needs-scan' ? '自动续期没成功，点这里扫码登录' : auth.error || '正在检查登录';
+    const loginText = online ? (auth.lastRenewAt ? '自动续期 · 上次 ' + clock(auth.lastRenewAt) : '在线 · 自动维护登录') : connection.title;
     const row = (icon, title, detail, color, action, extra = '') => `<div class="ca-connection" title="${esc(title + ' · ' + detail)}"><button type="button" class="ca-connection-main" data-ca="${action}"><span class="ca-side-icon">${icon}<i class="ca-dot ${color}"></i></span><span class="ca-side-copy"><b>${title}</b><small>${esc(detail)}</small></span></button>${extra}</div>`;
     return row('W', 'WeLink', loginText, renewing ? 'run' : online ? 'ok' : 'warn', d.cliFound && auth.state === 'needs-scan' ? 'login' : 'settings-tab:welink',
-      !d.cliFound ? '<button class="ca-link ca-side-copy" data-ca="find-cli">查找</button>' : !online && !renewing ? '<button class="ca-link ca-side-copy" data-ca="login">扫码登录</button>' : '')
+      connection.action && !online ? `<button class="ca-link ca-side-copy" data-ca="${connection.action}">${esc(connection.label)}</button>` : '')
       + row('✉', '会议、日程与邮件', mailText, coverages.every(([, c]) => c?.status === 'complete') ? 'ok' : coverages.some(([, c]) => ['failed', 'partial'].includes(c?.status)) ? 'warn' : '', 'settings-tab:welink')
       + row('▣', '手机群', !p.groupId ? '填入群 ID 即可接通' : phone.lastError ? phone.lastError : !p.enabled ? '已暂停' : (p.groupName || '群 ' + p.groupId.slice(-6)), p.enabled && p.groupId && !phone.lastError ? 'ok' : '', 'settings-tab:phone')
       + toolsRow(row)
@@ -138,10 +150,11 @@ function createCompanyAssistantPage({ document, window, ipcRenderer, openSession
   function capabilities() {
     const r = data.rooms || {}, p = data.ppt || {};
     return [['▤', '今日简报', data.brief ? '已更新' : '待生成', 'brief'],
+      ['◉', '会议伴侣', '采集 · 转写 · 持续理解', 'meeting'],
       ['◷', '抢会议室', r.running ? '守护中' : r.available ? '可配置' : '待接入', 'rooms'],
       ['▧', 'PPT 素材库', p.indexing?.state === 'indexing' ? `正在更新 · ${p.indexing.scanned || 0} 份` : p.available ? `${p.files ?? 0} 份 / ${p.pages ?? 0} 页` : '选择素材目录', 'ppt'],
       ['▣', '手机对话', data.phone?.settings?.enabled ? '已开启' : '待接通', 'phone']]
-      .map(([icon, name, detail, tab]) => `<button class="ca-side-button" data-ca="${tab === 'ppt' ? 'ppt-assist' : 'settings-tab:' + tab}" title="${name} · ${tab === 'ppt' ? '告诉助理你想讲清什么' : detail}"><span class="ca-side-icon">${icon}</span><span class="ca-side-copy">${name}<small>${detail}</small></span></button>`).join('');
+      .map(([icon, name, detail, tab]) => `<button class="ca-side-button" data-ca="${tab === 'meeting' ? 'meeting' : tab === 'ppt' ? 'ppt-assist' : 'settings-tab:' + tab}" title="${name} · ${tab === 'ppt' ? '告诉助理你想讲清什么' : detail}"><span class="ca-side-icon">${icon}</span><span class="ca-side-copy">${name}<small>${detail}</small></span></button>`).join('');
   }
   function assistantMessage(html, extra = '') {
     return `<div class="ca-message-row assistant ${extra}"><img class="ca-avatar" src="${ASSISTANT_AVATAR_SRC}" alt="助理"><div class="ca-message-content">${html}</div></div>`;
@@ -152,7 +165,21 @@ function createCompanyAssistantPage({ document, window, ipcRenderer, openSession
   function cliChip(d) {
     const s = d.cliSearch || {};
     if (s.state === 'searching') return `<span class="ca-chip run">正在查找 welink-cli…${CLI_STAGE[s.stage] ? '（' + CLI_STAGE[s.stage] + '）' : ''}</span>`;
-    return '<span class="ca-chip bad">没找到 welink-cli</span><button type="button" class="ca-btn small" data-ca="find-cli">再找一次</button><button type="button" class="ca-btn small" data-ca="pick-cli">手动选择…</button>';
+    return `<span class="ca-chip bad">${s.state === 'error' ? '查找未完成' : '尚未检测到 welink-cli'}</span><button type="button" class="ca-btn small" data-ca="find-cli">再找一次</button><button type="button" class="ca-btn small" data-ca="pick-cli">手动选择…</button>`;
+  }
+  function installGuide() {
+    return `<details class="ca-install-guide"><summary>还没安装？查看安装步骤</summary><ol><li>在公司电脑连接公司网络，按内部 WeLink CLI 文档安装 <code>@welink/welink-cli</code>。已有 Node.js / npm 且配置好公司指定的软件源时，安装命令为：<pre>npm install -g @welink/welink-cli</pre>版本、软件源和权限要求以内部安装文档为准。</li><li>如果拿到的是公司分发的安装包，先完成安装，再点“手动选择…”选择 <code>welink-cli.exe</code> 或 <code>welink-cli.cmd</code>。</li><li>安装后点“已安装，重新检测”，确认连接后按提示扫码登录。邮件和日历可随后配置。</li></ol><p class="ca-note">这里提供操作说明；Hub 不会自动安装软件或修改 npm 配置。</p></details>`;
+  }
+  const STARTERS = [
+    ['会前准备', '帮我准备下一场会议：议题、相关讨论、待确认的问题，逐条附出处。'],
+    ['承诺复盘', '梳理我最近答应过的事：对谁、什么事项、何时完成；不确定的单独列出，附原文。'],
+    ['下班小结', '根据今天可见的工作信息，整理已完成、还在等谁、明天先做什么，缺少依据的标明待确认。'],
+  ];
+  function onboarding() {
+    const c = connectionState(data), ready = c.kind === 'online';
+    const first = !(data.chat || []).length && (!data.brief || data.brief.by === 'none');
+    if (ready && data.refreshedAt && !first) return '';
+    return `<article class="ca-onboarding" data-connection="${c.kind}"><h2>${esc(ready ? '从一件工作开始' : c.title)}</h2><p>${esc(c.detail)}</p><div class="ca-onboarding-steps" aria-label="接入进度"><span>${data.cliFound ? '✓' : '1'} 安装工具</span><span>${ready ? '✓' : '2'} 确认登录</span><span>${ready && data.refreshedAt ? '✓' : '3'} 获取工作信息</span></div>${c.action ? `<button type="button" class="ca-btn primary" data-ca="${c.action}">${esc(c.label)}</button>` : ''}${!data.cliFound ? '<button type="button" class="ca-btn" data-ca="pick-cli">手动选择…</button>' + installGuide() : ''}${ready ? `<p class="ca-note">先选一个问题，补充要求后再发送。</p><div class="ca-row">${STARTERS.map(([label], i) => `<button type="button" class="ca-btn" data-ca="starter:${i}">${label}</button>`).join('')}</div>` : '<p class="ca-note">接通前，也可以先用 PPT 素材库，或直接提问讨论已有材料。</p><button type="button" class="ca-link" data-ca="ppt-assist">先找 PPT 素材</button>'}</article>`;
   }
   function loginPanel() {
     const f = data.loginFlow;
@@ -181,7 +208,7 @@ function createCompanyAssistantPage({ document, window, ipcRenderer, openSession
   // 邮件和日历没接入、WeLink 里也读不到邮箱时，在简报上方请用户填一次（只出现这一处，填完就消失）。
   function setupCard() {
     const d = data;
-    if (!d.login?.ok || !d.calendarNeedsSetup) return '';
+    if (connectionState(d).kind !== 'online' || !d.calendarNeedsSetup) return '';
     const auto = d.mailSetup || {};
     const why = auto.reason === 'no-email' ? 'WeLink 账号信息里没读到你的邮箱。' : auto.email ? `用 ${esc(auto.email)} 自动配置没成功${auto.output ? '（' + esc(auto.output) + '）' : ''}。` : '';
     return `<article class="ca-setup"><b>邮件和日历暂不可用</b><p class="ca-note">${why}</p><button class="ca-link" data-ca="calendar">查看连接设置</button></article>`;
@@ -285,6 +312,7 @@ function createCompanyAssistantPage({ document, window, ipcRenderer, openSession
       el.innerHTML = html; el.dataset.html = html;
       el.querySelectorAll('details').forEach((d, i) => { if (opened[i]) d.open = true; });
     };
+    setHtml('onboarding', onboarding());
     setHtml('setup', setupCard());
     setHtml('coverage', coverageNote());
     setHtml('brief', assistantMessage(briefCard(), 'ca-brief-row'));
@@ -345,8 +373,14 @@ function createCompanyAssistantPage({ document, window, ipcRenderer, openSession
   }
 
   async function action(name, button) {
+    if (name === 'meeting') {
+      if (!meetingPage) meetingPage = require('./company-meeting-page').createCompanyMeetingPage({ document, window, call, markdown });
+      await meetingPage.open(page.querySelector('.ca-main')); return;
+    }
+    meetingPage?.close();
     const input = page.querySelector('[data-slot="form"] textarea');
     const [verb, arg] = name.split(/:(.*)/s);
+    if (verb === 'starter') { const item = STARTERS[Number(arg)]; if (item) { if (input.value.trim()) { showMessage?.('输入框里已有草稿，请先处理后再选示例。'); return; } pptEntry = false; input.value = item[1]; input.focus(); } return; }
     if (verb === 'toggle-brief') { briefOpen = !briefOpen; render(); return; }
     if (verb === 'chip') return useChip(data.chips[Number(arg)]);
     if (verb === 'save-chip') {
@@ -375,6 +409,7 @@ function createCompanyAssistantPage({ document, window, ipcRenderer, openSession
       const panel = page.querySelector('[data-slot="panel"]');
       panel.hidden = true; panel.innerHTML = ''; panel.dataset.kind = 'closed';
       // 从 PPT 入口进来：这一条问题只查素材库，不先查 WeLink（v3.1.2）。
+      if (input.value.trim()) { input.focus(); showMessage?.('输入框里已有草稿，请先处理后再发起 PPT 素材查询。'); return; }
       pptEntry = true;
       if (!input.value.trim()) input.value = '帮我从已有 PPT 中找几页能讲清楚「」的素材，说明推荐理由并附文件路径和页码。';
       input.focus();
@@ -387,7 +422,7 @@ function createCompanyAssistantPage({ document, window, ipcRenderer, openSession
     if (verb === 'open-session') return window.__companyAssistantOpenSession();
     if (verb === 'reopen-session') { button.disabled = true; showMessage?.('正在重开助理会话…'); await call('reopen-session'); await load(); showMessage?.('助理会话已重开，会话工具接上后这里会显示「已接上」'); return; }
     const reopenSettings = () => { const p = page.querySelector('[data-slot="panel"]'); if (p.dataset.kind === 'settings' && !p.hidden) openSettings(); };
-    if (verb === 'find-cli') { button.disabled = true; await call('find-cli'); await load(); reopenSettings(); showMessage?.(data.cliFound ? '找到 welink-cli 了' : '全盘也没找到 welink-cli，可以点「手动选择…」'); return; }
+    if (verb === 'find-cli') { button.disabled = true; await call('find-cli'); await load(); reopenSettings(); showMessage?.(data.cliFound ? '找到 welink-cli 了，正在确认连接' : data.cliSearch?.state === 'error' ? '查找未完成，可以重试或手动选择' : '暂未找到，可查看安装步骤或手动选择已安装的工具'); return; }
     if (verb === 'pick-cli') { const r = await call('pick-cli'); if (!r.canceled) { showMessage?.('已用 ' + r.path); await load(); reopenSettings(); } return; }
   }
 
@@ -495,9 +530,10 @@ function createCompanyAssistantPage({ document, window, ipcRenderer, openSession
 
   function welinkTab() {
     const d = data, s = d.settings, login = d.login;
-    const loginLine = !d.cliFound ? cliChip(d) + `<span class="ca-note">${d.cliSearch?.state === 'notfound' ? '全盘也没找到：先安装 npm 全局包 @welink/welink-cli；装在特殊位置的，点「手动选择…」选 welink-cli.exe。' : '会自动在常见位置和各个硬盘里找。'}</span>`
-      : login?.ok ? `<span class="ca-chip ok">已登录</span><span class="ca-note">账号 ${esc(login.uid || '')}</span>`
-        : `<span class="ca-chip warn">${login?.reason === 'expired' ? '登录已过期' : '没登录'}</span><button type="button" class="ca-btn small primary" data-ca="login">扫码登录</button>`;
+    const connection = connectionState(d);
+    const loginLine = !d.cliFound ? cliChip(d) + installGuide()
+      : connection.kind === 'online' ? `<span class="ca-chip ok">已登录</span><span class="ca-note">账号 ${esc(d.auth.login.uid || '')}</span>`
+        : `<span class="ca-chip warn">${esc(connection.title)}</span><span class="ca-note">${esc(connection.detail)}</span>${connection.action ? `<button type="button" class="ca-btn small primary" data-ca="${connection.action}">${esc(connection.label)}</button>` : ''}`;
     const from = s.emailFrom === 'welink' ? '从 WeLink 账号自动读到' : s.email ? '你填写的' : '';
     const errs = d.errors || [];
     const errOf = label => errs.find(e => e.label === label || e.label.startsWith(label));
@@ -766,7 +802,7 @@ function createCompanyAssistantPage({ document, window, ipcRenderer, openSession
     try {
       await load();
       // 打开页面时今天还没有简报：当场生成（工作日、非工作日都可以手动看）。
-      if (!data.brief && data.login?.ok !== false) { data = await call('brief-now'); briefOpen = true; render(); }
+      if (!data.brief && connectionState(data).kind === 'online') { data = await call('brief-now'); briefOpen = true; render(); }
     } catch (error) { showMessage?.('助理状态读取失败：' + error.message); }
   }
   function close() {

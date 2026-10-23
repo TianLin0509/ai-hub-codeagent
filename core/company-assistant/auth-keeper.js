@@ -1,7 +1,10 @@
 'use strict';
 const W = require('./welink');
 const CHECK_MS = 5 * 60000, RETRY_MS = 10 * 60000, SCAN_LIMIT = 2;
-const authFailure = text => /(?:token|session)\s*(?:is\s*)?(?:expired|invalid)|unauthenticated|not\s+logged\s*in|未登录|登录(?:已)?(?:过期|失效)|no\s+token/i.test(String(text || ''));
+const authFailure = text => /(?:token|session)\s*(?:is\s*)?(?:expired|invalid)|unauthenticated|not\s+logged\s*in|未登录|登录(?:已)?(?:过期|失效)|no\s+token|\buser\s+token\s+not\s+found\b/i.test(String(text || ''));
+// 只保留失败诊断，不把状态输出中的凭据带到 auth.json 或界面。
+const safeDiagnostic = text => String(text || '').replace(/((?:token|ticket|secret|password|authorization)\w*["']?\s*[:=]\s*)[^\r\n]+/gi, '$1***')
+  .replace(/\bBearer\s+\S+/gi, 'Bearer ***').trim().slice(0, 300);
 // Same recognition as the manual login panel (welink.loginNeedsScan): block-character QR art, data URI,
 // image path, URL, plus the fixed prompt lines of welink-cli 1.0.14 (Q-1021-14).
 const needsScan = text => W.loginNeedsScan(text);
@@ -11,8 +14,12 @@ class AuthKeeper {
     this.a = a; this.pending = null; this.controller = null; this.closed = false;
     this.current = { state: 'unknown', lastCheckAt: 0, lastAttemptAt: 0, lastRenewAt: 0, scanAttempts: 0, notified: false, login: null, error: '',
       ...a.read('auth.json', {}) };
-    // A process that ended mid-renewal is no longer renewing after restart.
-    if (this.current.state === 'renewing') this.current.state = 'unknown';
+    // The CLI account may have changed while Hub was stopped. Persisted login
+    // is diagnostic history, not proof of identity in this process. Keep retry
+    // counters/renewal history, but require a fresh read-only auth status check.
+    if (['online', 'renewing'].includes(this.current.state)) this.current.state = 'unknown';
+    this.current.login = null;
+    this.current.lastCheckAt = 0;
   }
   status() { return { ...this.current }; }
   set(patch) { if (this.closed) return; this.current = { ...this.current, ...patch }; this.a.write('auth.json', this.current); this.a.changed(); }
@@ -42,8 +49,10 @@ class AuthKeeper {
       const result = known || await this.a.rawWelink(['auth', 'status']);
       if (this.closed) return this.status();
       const text = result.stdout + '\n' + result.stderr;
-      login = { ...W.loginState(text), checkedAt: now };
-      if (result.code !== 0 && login.ok) login = { ok: false, reason: 'error', checkedAt: now, error: '登录状态查询失败' };
+      login = { ...W.loginState(text), checkedAt: now, exitCode: result.code };
+      if (result.code !== 0 && login.reason !== 'expired') login = { ...login, ok: false, reason: 'error',
+        error: `登录状态查询失败（退出码 ${result.code}）${safeDiagnostic(result.stderr || result.stdout) ? '：' + safeDiagnostic(result.stderr || result.stdout) : ''}` };
+      else if (login.reason === 'unknown') login.error = '无法识别 WeLink 登录状态输出，稍后自动重查';
       // A still-valid token renewed early must never turn into a scan request.
       const early = !!login.ok;
       if (login.ok) {
@@ -54,7 +63,7 @@ class AuthKeeper {
       }
       this.set({ login, lastCheckAt: now, ...(!login.ok && this.current.state === 'online' ? { state: 'unknown', error: '等待自动续期' } : {}) });
       // A network/parse failure is not proof of expiry and must not launch login.
-      if (!login.ok && login.reason !== 'expired') { this.set({ state: 'unknown', error: '暂时无法确认 WeLink 登录，稍后自动重查' }); return this.status(); }
+      if (!login.ok && login.reason !== 'expired') { this.set({ state: 'unknown', error: login.error || '暂时无法确认 WeLink 登录，稍后自动重查' }); return this.status(); }
       if (!login.ok && this.current.scanAttempts >= SCAN_LIMIT) this.set({ state: 'needs-scan', error: '' });
       if (this.current.scanAttempts >= SCAN_LIMIT || (this.current.lastAttemptAt && now - this.current.lastAttemptAt < RETRY_MS)) { this.notifyScan(); return this.status(); }
       this.set({ state: 'renewing', lastAttemptAt: now, error: '' });

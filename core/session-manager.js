@@ -1560,7 +1560,8 @@ class SessionManager extends EventEmitter {
     const id = opts.id || uuid();
     const freshLaunch = require('./session-history-state').isFreshLaunch(kind, opts);
     const isAcp = isAcpKind(kind);
-    const isProviderCli = ['qwen','glm'].includes(kind.replace(/-resume$/, '')) && require('./agent-runtime-mode').agentRuntimeMode() !== 'native';
+    const isDshCli = kind.replace(/-resume$/, '') === 'deepseek-acp';
+    const isProviderCli = isDshCli || (['qwen','glm'].includes(kind.replace(/-resume$/, '')) && require('./agent-runtime-mode').agentRuntimeMode() !== 'native');
     const isClaude = kind === 'claude' || kind === 'claude-resume';
     const isGemini = kind === 'gemini' || kind === 'gemini-resume';
     const isDeepSeek = kind === 'deepseek' || kind === 'deepseek-resume';
@@ -2119,7 +2120,10 @@ class SessionManager extends EventEmitter {
       } catch (error) { console.warn('[codex-editor-input] unavailable, retaining PTY paste:', error.message); }
     }
     let ptyProcess;
-    try { ptyProcess = isAcp
+    try { ptyProcess = isDshCli
+      ? new (require('./dsh-cli-session').DshCliSession)(require('./dsh-cli-profile').buildDshCliOptions(kind,
+        {...opts,id,cwd:spawnCwd},getConfig(),getHubDataDir(),sessionEnv))
+      : isAcp
       ? new (isProviderCli ? (kind.replace(/-resume$/, '') === 'qwen' ? require('./qwen-cli-session').QwenCliSession : require('./martty-cli-session').MarttyCliSession) : require('./acp-session').AcpSession)(buildAcpOptions(kind,
         {...opts,id,cwd:spawnCwd},getConfig(),getHubDataDir(),sessionEnv))
       : isNativeCodex

@@ -42,7 +42,7 @@ function createAppUpdateController({ app, config, dataDir, currentVersion, sendT
   const sources = resolveSources(config, env);
   const releasePage = (config && config.releasePage) || '';
   let state = { phase: 'idle', current: currentVersion, sources: sources.map(s => ({ id: s.id, name: s.name })), releasePage, canApply: isPackaged || env.AI_HUB_UPDATE_FORCE_APPLY === '1' };
-  let manifest = null, plan = null, abort = null, staged = null, checking = null, lastResult = null, timer = null;
+  let manifest = null, plan = null, abort = null, checkAbort = null, staged = null, checking = null, lastResult = null, timer = null;
 
   try { lastResult = takeLastResult(dataDir); } catch (error) { logger.warn?.('[app-update] 读取上次结果失败：', error.message); }
   if (lastResult) state.lastResult = lastResult;
@@ -57,7 +57,9 @@ function createAppUpdateController({ app, config, dataDir, currentVersion, sendT
     checking = (async () => {
       if (!silent) emit({ phase: 'checking', error: null });
       const fetchFn = resolveFetch(fetchImpl);
-      const results = await checkManifests({ sources, fetchImpl: fetchFn, validate: validateManifest });
+      checkAbort = new AbortController();
+      const results = await checkManifests({ sources, fetchImpl: fetchFn, validate: validateManifest, signal: checkAbort.signal });
+      if (checkAbort.signal.aborted) return emit({ phase: 'idle', error: null });
       const checks = results.map(r => ({ id: r.id, name: r.name, ok: r.ok, version: r.ok ? r.manifest.version : null, reason: r.reason || null,
         ...(r.blocked ? { blocked: true, url: r.url } : {}) }));
       const best = results.filter(r => r.ok).sort((a, b) => compareVersions(b.manifest.version, a.manifest.version))[0];
@@ -82,20 +84,19 @@ function createAppUpdateController({ app, config, dataDir, currentVersion, sendT
         } else plan = { kind: 'full', reason: '这一版只提供变化的程序文件，本机的程序文件对不上，需要完整安装包' };
       }
       const asset = plan.kind === 'incremental' ? (variant === 'delta' ? manifest.incrementalDelta : manifest.incremental) : plan.kind === 'full' ? manifest.installer : null;
+      plan = { ...plan, variant, asset };
       return emit({ phase: plan.kind === 'none' ? 'none' : 'available', checks, checkedAt: new Date().toISOString(), error: null,
         latest: { version: manifest.version, notes: manifest.notes, publishedAt: manifest.publishedAt, sourceName: best.name },
-        plan: { kind: plan.kind, variant, reason: plan.reason, bytes: asset ? asset.bytes : 0, file: asset ? asset.file : null } });
+        plan: { kind: plan.kind, variant: plan.variant, reason: plan.reason, bytes: plan.asset ? plan.asset.bytes : 0, file: plan.asset ? plan.asset.file : null } });
     })().catch(error => emit({ phase: silent ? 'idle' : 'error', error: `检查更新失败：${error.message}` }))
-      .finally(() => { checking = null; });
+      .finally(() => { checking = null; checkAbort = null; });
     return checking;
   }
 
   async function download() {
     if (!manifest || !plan || plan.kind === 'none') throw new Error('还没有可下载的新版本，请先检查更新');
     if (state.phase === 'downloading') return state;
-    const asset = plan.kind === 'incremental'
-      ? (plan.variant === 'delta' ? manifest.incrementalDelta : manifest.incremental)
-      : manifest.installer;
+    const asset = plan.asset;
     const p = stagingPaths(dataDir);
     const dest = path.join(p.downloads, asset.file);
     abort = new AbortController();
@@ -127,7 +128,7 @@ function createAppUpdateController({ app, config, dataDir, currentVersion, sendT
     return emit({ phase: 'ready', attempts: result.attempts, readySource: result.source.name });
   }
 
-  function cancel() { if (abort) abort.abort(); return state; }
+  function cancel() { if (abort) abort.abort(); if (checkAbort) checkAbort.abort(); return state; }
 
   // 用户点「立即重启」：增量 → 启动替换脚本后退出；完整安装包 → 打开安装程序后退出。
   function apply() {
@@ -161,7 +162,7 @@ function createAppUpdateController({ app, config, dataDir, currentVersion, sendT
 
   // 界面弹出提示后就会 dismiss；家里远程更新（core/company-bridge/hub-admin.js）要在通道接通后另读一次本次启动读到的结果。
   return { check, download, cancel, apply, getState: () => state, view, startBackgroundChecks, dismissLastResult, lastResult: () => lastResult,
-    dispose: () => { clearTimeout(timer); if (abort) abort.abort(); } };
+    dispose: () => { clearTimeout(timer); if (abort) abort.abort(); if (checkAbort) checkAbort.abort(); } };
 }
 
 // gate（2026-10-21）：公司版点「立即重启 / 立即安装」先过「通道问题答完再重启」这道关（hub-admin.js localApply）：

@@ -64,19 +64,44 @@ async function openResponse(fetchImpl, url, signal, timeoutMs) {
 }
 
 // 查版本：各源并行取清单，返回每个源的结果和版本最高的那份。
-async function checkManifests({ sources, fetchImpl, validate, timeoutMs = MANIFEST_TIMEOUT_MS }) {
+async function checkManifests({ sources, fetchImpl, validate, timeoutMs = MANIFEST_TIMEOUT_MS, signal }) {
   const results = await Promise.all(sources.map(async source => {
-    const startedAt = Date.now();
+    const startedAt = Date.now(), controller = new AbortController();
+    let response, timer, timedOut = false, rejectStop;
+    const stopped = new Promise((_, reject) => { rejectStop = reject; });
+    const onAbort = () => { controller.abort(); rejectStop(fail('已取消')); };
+    const assertActive = () => {
+      if (signal?.aborted) throw fail('已取消');
+      if (timedOut || Date.now() - startedAt >= timeoutMs) throw fail(`版本清单读取超时（${timeoutMs / 1000} 秒内未完成）`);
+    };
+    if (signal) { if (signal.aborted) onAbort(); else signal.addEventListener('abort', onAbort, { once: true }); }
+    timer = setTimeout(() => {
+      timedOut = true; controller.abort();
+      rejectStop(fail(`版本清单读取超时（${timeoutMs / 1000} 秒内未完成）`));
+    }, timeoutMs);
     try {
-      const { response } = await openResponse(fetchImpl, source.manifest, null, timeoutMs);
-      if (!response.ok) throw fail(response.status === 404 ? '源上还没有版本清单（HTTP 404）' : `服务器返回 HTTP ${response.status}`);
-      const text = await response.text();
-      if (looksLikeWebPage(response.headers && response.headers.get && response.headers.get('content-type'), Buffer.from(text.slice(0, 256)))) throw blockedFail(`收到的是网页（${fmtBytes(Buffer.byteLength(text))}）而不是版本清单，可能被公司代理拦截`);
-      let manifest;
-      try { manifest = validate(JSON.parse(text)); } catch (error) { throw fail(`版本清单无效：${error.message}`); }
+      // 清单期限覆盖响应头、正文和校验；不能在刚收到响应头时就撤掉计时器。
+      const manifest = await Promise.race([stopped, (async () => {
+        assertActive();
+        response = await fetchImpl(source.manifest, { signal: controller.signal, cache: 'no-store', redirect: 'follow' });
+        if (!response.ok) throw fail(response.status === 404 ? '源上还没有版本清单（HTTP 404）' : `服务器返回 HTTP ${response.status}`);
+        const text = await response.text();
+        assertActive();
+        if (looksLikeWebPage(response.headers && response.headers.get && response.headers.get('content-type'), Buffer.from(text.slice(0, 256)))) throw blockedFail(`收到的是网页（${fmtBytes(Buffer.byteLength(text))}）而不是版本清单，可能被公司代理拦截`);
+        let checked;
+        try { checked = await validate(JSON.parse(text)); } catch (error) { throw fail(`版本清单无效：${error.message}`); }
+        assertActive();
+        return checked;
+      })()]);
       return { id: source.id, name: source.name, ok: true, manifest, ms: Date.now() - startedAt };
     } catch (error) {
-      return { id: source.id, name: source.name, ok: false, reason: reasonOf(error), blocked: !!error.blocked, url: source.manifest, ms: Date.now() - startedAt };
+      return { id: source.id, name: source.name, ok: false, reason: signal?.aborted ? '已取消' : timedOut ? `版本清单读取超时（${timeoutMs / 1000} 秒内未完成）` : reasonOf(error), blocked: !!error.blocked, url: source.manifest, ms: Date.now() - startedAt };
+    } finally {
+      clearTimeout(timer);
+      if (signal) signal.removeEventListener('abort', onAbort);
+      controller.abort();
+      // 非成功 HTTP 或校验失败也要关流；取消本身不能再把源的期限拖住。
+      try { void response?.body?.cancel().catch(() => {}); } catch (_) {}
     }
   }));
   return results;

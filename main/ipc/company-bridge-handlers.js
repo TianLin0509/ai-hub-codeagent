@@ -6,6 +6,7 @@ function registerCompanyBridgeIpc(ipcMain, service, { openGate } = {}) {
   const role = service.status().role;
   const handlers = {
     status: () => service.status(),
+    'session-history': request => require('../../core/company-bridge/session-history').sessionHistory(service.store.db, role, String(request?.sessionId || '')),
     'check-now': () => service.checkNow(),
     'set-settings': request => ({ ok: true, settings: service.setSettings(request || {}) }),
     unpair: () => service.unpair(),

@@ -28,6 +28,11 @@
 .pty-attention-controls { display: none; }
 .card-view-active .pty-attention-controls:not([hidden]) { display: block; }
 .split-secondary:not(.card-view-active) .pty-attention-controls { display: none; }
+.pty-attention-header { display: flex; align-items: center; gap: 8px; }
+.pty-attention-header strong { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.pty-attention-header button { flex: none; }
+.pty-attention-controls .pty-attention-header { position: sticky; top: 0; }
+.pty-attention-controls .pty-attention-detail[hidden] { display: none; }
 .acp-queued-preview { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; margin: 6px 0; }
 .codex-native-request + .codex-native-request { border-top: 1px solid #7777; margin-top: 14px; padding-top: 14px; }
 .codex-native-controls label { display: block; margin: 10px 0 6px; }

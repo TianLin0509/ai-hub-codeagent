@@ -28,7 +28,7 @@ function sessionModelLabel(session) {
 
 function sessionEffortLabel(session) {
   const kind = baseKind(session);
-  if (session?.runtimeBackend === 'acp') {
+  if (session?.runtimeBackend === 'acp' || session?.agentRuntime === 'pty' && kind === 'deepseek-acp') {
     const { acpThoughtOption, acpThoughtChoices } = require('./acp-model-catalog');
     const current = acpThoughtOption(session)?.currentValue;
     return acpThoughtChoices(session).find(o => o.value === current)?.name || current || '';
@@ -172,7 +172,7 @@ function composerThinkingChip(session, options = {}) {
   const kind = baseKind(session);
   const label = sessionEffortLabel(session);
   const hidden = { visible: false, label: '', interactive: false, options: [] };
-  if (session?.runtimeBackend === 'acp') {
+  if (session?.runtimeBackend === 'acp' || session?.agentRuntime === 'pty' && kind === 'deepseek-acp') {
     const choices = require('./acp-model-catalog').acpThoughtChoices(session);
     return choices.length ? { visible: true, label: label || '模型默认', interactive: true, options: choices.map(o => o.value) } : hidden;
   }

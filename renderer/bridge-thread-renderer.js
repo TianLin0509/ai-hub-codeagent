@@ -101,6 +101,7 @@ function threadBlock(deps, ctx, rows, now = Date.now(), open = false) {
     ? `${threadId} · ${partyName(peer, ctx.agent)}${peer === 'company' && account ? ' · ' + account : ''}`
     : `${peer === 'home' ? '特战任务' : '为' + partyShort(peer) + '办事'} · ${threadId} · ${partyName(peer, ctx.agent)}`;
   const chips = [`<span class="bt-chip">${roundsCount} 轮</span>`];
+  if(ctx.history && record?.createdAt) chips.push(`<span class="bt-chip">${esc(deps,require('../core/beijing-time').formatBeijingDateTime(record.createdAt,{seconds:false}))}</span>`);
   if (summary?.lastTotal) chips.push(`<span class="bt-chip">全程 ${esc(deps, summary.lastTotal)}</span>`);
   if (summary?.model) chips.push(`<span class="bt-chip">${esc(deps, summary.model)}</span>`);
   if (role === 'answerer' && summary?.note) chips.push(`<span class="bt-chip">${esc(deps, summary.note)}</span>`);
@@ -240,7 +241,7 @@ function applyBridgeThreads(container, deps, records = {}, now = Date.now()) {
 
 // 线程记录：bridge:status 里各个列表按编号合在一起，并记下本机在这串里是问方还是答方、对端是谁。
 //   家里：threads 是家里问公司，consults 是家里替公司作答；公司：threads 是公司替家里作答，askHome 是公司问家里。
-function recordsFromStatus(status) {
+function recordsFromStatus(status, {includeArchived=false}={}) {
   const out = {};
   if (!status || status.ok === false || !status.role) return out;
   const home = status.role === 'home';
@@ -249,7 +250,7 @@ function recordsFromStatus(status) {
     : [[status.threads, 'answerer', 'home'], [status.askHome, 'asker', 'home']];
   for (const [list, role, peer] of lists) {
     for (const t of Array.isArray(list) ? list : []) {
-      if (t && t.id && !String(t.id).includes('#')) out[t.id] = { ...t, bridgeRole: role, bridgePeer: peer };
+      if (t && t.id && (includeArchived || !String(t.id).includes('#'))) out[t.id] = { ...t, bridgeRole: role, bridgePeer: peer };
     }
   }
   return out;
@@ -279,7 +280,9 @@ function sessionBadge(sessionId, records, now = Date.now()) {
     mine.push(t);
     const last = t.rounds?.[t.rounds.length - 1];
     const at = last?.sentAt || last?.receivedAt || t.createdAt || 0;
-    if (!best || at > best.at) best = { t, at };
+    const summary=t.bridgeRole==='asker'?view.threadSummary(t,now):view.answerSummary(t,now);
+    const active=['queued','running'].includes(summary.state);
+    if (!best || (active && !best.active) || (active===best.active && at > best.at)) best = { t, at, active };
   }
   if (!best) return null;
   const t = best.t;
@@ -339,6 +342,72 @@ function createBridgeThreadController({ doc, scope = doc, deps, invoke = null, s
   let records = {};
   let restartIssues = {};
   let loaded = null;
+  const histories = new Map();
+  let historyRevision = 0;
+  let historyDialog = null;
+  function notifyHistory() {
+    try { doc.dispatchEvent(new (doc.defaultView?.CustomEvent || CustomEvent)('bridge-threads-updated')); } catch {}
+  }
+  async function ensureHistory(sessionId, force=false) {
+    if (!invoke || !sessionId) return;
+    const cached=histories.get(sessionId);
+    if (cached?.pending) {
+      if (force) cached.refreshAgain=true;
+      return cached.pending;
+    }
+    if (cached && !force) return;
+    const state=cached || {records:{}};
+    histories.set(sessionId,state);
+    const revision=historyRevision;
+    state.pending=(async()=>{
+      try {
+        const response=await invoke('bridge:session-history',{sessionId});
+        if (!response || response.ok===false) throw Error(response?.error || '读取失败');
+        if(revision===historyRevision) {
+          state.records=recordsFromStatus(response,{includeArchived:true}); state.error=null;
+          Object.assign(records,recordsFromStatus(response));
+        } else state.refreshAgain=true;
+      } catch(error) { state.error=error.message; }
+      finally {
+        state.pending=null;
+        if(state.refreshAgain){state.refreshAgain=false;return ensureHistory(sessionId,true);}
+        notifyHistory(); renderHistory();
+      }
+    })();
+    return state.pending;
+  }
+  function renderHistory() {
+    if (!historyDialog?.open) return;
+    const sessionId=historyDialog.dataset.sessionId, state=histories.get(sessionId);
+    const content=historyDialog.querySelector('.bridge-history-content');
+    const scrollTop=content.scrollTop;
+    const previousThreads=new Set([...content.querySelectorAll('details.bridge-thread')].map(e=>e.dataset.thread));
+    const openRows=new Set([...content.querySelectorAll('details[open]')].map(e=>e.dataset.thread || `${e.closest('[data-thread]')?.dataset.thread}:${e.dataset.round}:${e.dataset.who}`));
+    const list=Object.values({...records,...state?.records}).filter(t=>t.sessionId===sessionId).sort((a,b)=>(b.updatedAt || b.createdAt || 0)-(a.updatedAt || a.createdAt || 0));
+    content.innerHTML=(state?.error?`<p class="bridge-history-error">历史暂未刷新：${esc(deps,state.error)}。已读取的记录保留。<button type="button" data-history-retry>重试</button></p>`:'')
+      + (list.length ? list.map(record=>{
+        const ctx={threadId:record.id,role:record.bridgeRole,peer:record.bridgePeer,record,agent:peerAgent(record,{}),history:true};
+        return threadBlock(deps,ctx,collectRows([],ctx),now(),!previousThreads.has(record.id)||openRows.has(record.id));
+      }).join('') : `<p class="bridge-history-empty">${state?.pending?'正在读取交互历史…':'还没有可显示的交互记录。'}</p>`);
+    content.querySelectorAll('.bt-acts').forEach(e=>e.remove());
+    content.querySelectorAll('details.bt-round').forEach(e=>{e.open=openRows.has(`${e.closest('[data-thread]')?.dataset.thread}:${e.dataset.round}:${e.dataset.who}`);});
+    content.querySelector('[data-history-retry]')?.addEventListener('click',()=>ensureHistory(sessionId,true));
+    deps.postProcess?.(content);
+    content.scrollTop=scrollTop;
+  }
+  async function openHistory(sessionId) {
+    if (!historyDialog) {
+      historyDialog=doc.createElement('dialog'); historyDialog.className='bridge-history-dialog';
+      historyDialog.setAttribute('aria-label','公司交互历史');
+      historyDialog.innerHTML='<header><div><h2>⇄ 公司交互历史</h2><p>按任务查看每轮提问、回复与处理进度</p></div><button type="button" aria-label="关闭交互历史">×</button></header><div class="bridge-history-content"></div>';
+      doc.body.appendChild(historyDialog);
+      historyDialog.querySelector('header button').addEventListener('click',()=>historyDialog.close());
+      historyDialog.addEventListener('click',event=>{if(event.target===historyDialog){const r=historyDialog.getBoundingClientRect();if(event.clientX<r.left||event.clientX>r.right||event.clientY<r.top||event.clientY>r.bottom)historyDialog.close();}});
+    }
+    historyDialog.dataset.sessionId=sessionId;
+    if(!historyDialog.open)historyDialog.showModal();
+    const loading=ensureHistory(sessionId,true); renderHistory(); await loading;
+  }
   const pending = new Set();
   let timer = null;
   const containers = () => new Set([...scope.querySelectorAll('.turn-card.bridge-msg')].map(c => c.parentElement).filter(Boolean));
@@ -357,7 +426,8 @@ function createBridgeThreadController({ doc, scope = doc, deps, invoke = null, s
   async function load() {
     if (!invoke) { loaded = Promise.resolve(); return; }
     loaded = (async () => {
-      try { const st = await invoke('bridge:status'); records = recordsFromStatus(st); restartIssues = restartIssuesFromStatus(st); } catch { records = {}; restartIssues = {}; }
+      try { const st = await invoke('bridge:status'); historyRevision++; records = {...records,...recordsFromStatus(st)}; restartIssues = restartIssuesFromStatus(st); } catch { /* Keep previously read history on transient failures. */ }
+      await Promise.all([...histories.keys()].map(id=>ensureHistory(id,true)));
       for (const c of containers()) pending.add(c);
       if (!timer) timer = setTimeout(flush, 0);
       try { doc.dispatchEvent(new (doc.defaultView?.CustomEvent || CustomEvent)('bridge-threads-updated')); } catch {}
@@ -410,7 +480,10 @@ function createBridgeThreadController({ doc, scope = doc, deps, invoke = null, s
       const sel = doc.defaultView.getSelection(); sel.removeAllRanges(); sel.addRange(range);
     } catch {}
   }
-  return { schedule, load, act, records: () => records, badge: (sessionId, at) => restartBadge(sessionId, restartIssues) || sessionBadge(sessionId, records, at || now()) };
+  return { schedule, load, act, ensureHistory, openHistory, records: () => records, badge: (sessionId, at) =>
+    restartBadge(sessionId, restartIssues) || sessionBadge(sessionId, records, at || now())
+    || (Object.values(histories.get(sessionId)?.records || {}).some(t=>t.sessionId===sessionId)
+      ? {chip:'⇄ 历史',sub:'查看已归档的交互历史',state:'archived',role:'history'} : null) };
 }
 
 module.exports = { renderBridgeCard, applyBridgeThreads, threadBlock, messageBody, describeMessage, collectRows, recordsFromStatus, sessionBadge,

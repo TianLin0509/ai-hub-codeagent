@@ -24,7 +24,7 @@ async function openAcpSettings({ document: doc = document, invoke }) {
     field(kind + ':model', '套餐模型 ID', value.model);
     field(kind + ':mcpConfigPath', 'MCP 配置文件绝对路径（可选，ACP server 数组）', value.mcpConfigPath);
     if (kind === 'glm') field(kind + ':backendPath', '原生 ZCode 的 zcode.cjs 绝对路径', value.backendPath);
-    if (kind === 'deepseek-acp') field(kind + ':bridgePath', '完整交互 ACP 扩展包目录（@openma/deepseek-harness-acp）', value.bridgePath);
+    if (kind === 'deepseek-acp') field(kind + ':cliRoot', 'DSH CLI 运行环境目录（留空使用本机安装记录）', value.cliRoot);
   }
   const status = doc.createElement('p'); status.setAttribute('role', 'status'); dialog.append(status);
   const save = doc.createElement('button'); save.textContent = '保存套餐配置'; save.type = 'button';
@@ -32,7 +32,7 @@ async function openAcpSettings({ document: doc = document, invoke }) {
     save.disabled = true;
     try {
       const providers = Object.fromEntries(ACP_KINDS.map(kind => [kind, Object.fromEntries(
-        ['entryPath','model','backendPath','bridgePath','mcpConfigPath'].map(key => [key, fields.get(kind + ':' + key)?.value || '']))]));
+        ['entryPath','model','backendPath','cliRoot','mcpConfigPath'].map(key => [key, fields.get(kind + ':' + key)?.value || '']))]));
       const result = await invoke('acp:settings:save', { apiKey: fields.get('key').value, nodePath: fields.get('node').value, providers });
       if (!result?.ok) throw new Error(result?.message || '保存失败');
       fields.get('key').value = '';

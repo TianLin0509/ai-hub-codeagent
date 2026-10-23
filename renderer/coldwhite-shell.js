@@ -21,9 +21,9 @@ function installColdwhiteShell(doc = globalThis.document) {
   if (codeagentQuota) footer.append(codeagentQuota);
   app.append(footer);
   require('./status-footer-layout').installStatusFooterLayout(doc);
-  const panelIds = ['cloud-page', 'hub-workspace', 'rules-panel', 'writing-panel', 'account-page', 'xresearch-panel', 'study-panel', 'ran-panel'];
+  const panelIds = ['team-page', 'cloud-page', 'hub-workspace', 'rules-panel', 'writing-panel', 'account-page', 'xresearch-panel', 'study-panel', 'ran-panel'];
   const watched = new Set();
-  const navigation = ['btn-home','btn-rules','btn-assistant','btn-company-assistant','btn-company-forum','btn-research','btn-study','btn-ran','btn-wireless','btn-rail-memo','btn-rail-capabilities','btn-cloud','btn-rail-accounts','btn-writing'];
+  const navigation = ['btn-home','btn-rules','btn-assistant','btn-company-assistant','btn-company-forum','btn-research','btn-study','btn-ran','btn-wireless','btn-rail-memo','btn-rail-capabilities','btn-cloud','btn-team','btn-rail-accounts','btn-writing'];
   let scheduled = false;
   const sync = () => {
     scheduled = false;
@@ -37,7 +37,9 @@ function installColdwhiteShell(doc = globalThis.document) {
       return e && !e.hidden && doc.defaultView.getComputedStyle(e).display !== 'none';
     };
     let current = 'btn-home';
-    if (isVisible('cloud-page')) {
+    if (isVisible('team-page')) {
+      current = 'btn-team';
+    } else if (isVisible('cloud-page')) {
       current = 'btn-cloud';
     } else if (isVisible('hub-workspace')) {
       current = doc.getElementById('hub-workspace').dataset.area === 'review' ? 'btn-rail-memo' : 'btn-rail-capabilities';

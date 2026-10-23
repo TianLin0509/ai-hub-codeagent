@@ -398,7 +398,7 @@ function parseCodexRolloutEntries(entries) {
   const flushAssistant = () => {
     if (!pendingAssistant) return;
     const text = (pendingAssistant.finalText || pendingAssistant.agentMessages.join('\n\n') || '').trim();
-    if (text || pendingAssistant.toolCalls.length) {
+    if (text || pendingAssistant.toolCalls.length || pendingAssistant.displayMessages.length) {
       if (pendingAssistant.completed) {
         pendingAssistant.toolCalls = pendingAssistant.toolCalls.map(tool => (
           tool.status === 'running' || tool.status === 'pending'
@@ -523,7 +523,7 @@ function parseCodexRolloutEntries(entries) {
       if (userEvent) {
         // Recent CLI starts a task before its user item. Retain that empty
         // task's timing/counter boundary rather than dropping it on receipt.
-        if (!pendingAssistant?.hasTaskStart || pendingAssistant.agentMessages.length || pendingAssistant.toolCalls.length)
+        if (!pendingAssistant?.hasTaskStart || pendingAssistant.displayMessages.length || pendingAssistant.agentMessages.length || pendingAssistant.toolCalls.length)
           flushAssistant();
         else { pendingAssistant.id = null; pendingAssistant.ts = null; }
         const raw = userEvent.text.trim();
@@ -541,7 +541,7 @@ function parseCodexRolloutEntries(entries) {
         return;
       }
       if (eventType === 'task_started') {
-        if (pendingAssistant && (pendingAssistant.finalText || pendingAssistant.agentMessages.length)) {
+        if (pendingAssistant && (pendingAssistant.finalText || pendingAssistant.displayMessages.length || pendingAssistant.agentMessages.length)) {
           flushAssistant();
         }
         const pending = ensurePendingAssistant(index);
@@ -573,7 +573,7 @@ function parseCodexRolloutEntries(entries) {
         // task_complete is a receipt that can echo the preceding item. It is
         // not another message. Distinct provider items with identical text
         // are deliberately retained.
-        const mirror = payload.type === 'task_complete' && last && last.text === agentEvent.text;
+        const mirror = payload.type === 'task_complete' && last && !last.fromThinking && last.text === agentEvent.text;
         const id = mirror ? last.id : _makeTurnId('codex-message', obj, index);
         const message = {id, text:agentEvent.text, phase:agentEvent.phase || 'message',
           providerTurnId:agentEvent.turnId,ts:toMs(obj.timestamp),tsEnd:agentEvent.completedAt};
@@ -588,13 +588,27 @@ function parseCodexRolloutEntries(entries) {
       }
     }
 
+    if (obj.type === 'response_item' && obj.payload?.type === 'reasoning') {
+      // Only public text is displayable. encrypted_content stays opaque.
+      const text = [...(obj.payload.summary || []), ...(obj.payload.content || [])]
+        .map(block => typeof block === 'string' ? block : block.text || '').filter(Boolean).join('\n\n');
+      if (text) {
+        const pending = ensurePendingAssistant(index);
+        pending.id ||= _makeTurnId('codex-assistant', obj, index);
+        pending.ts ||= toMs(obj.timestamp);
+        pending.tsEnd = toMs(obj.timestamp);
+        pending.displayMessages.push({id:_makeTurnId('codex-thinking', obj, index),text,
+          phase:'commentary',fromThinking:true,ts:toMs(obj.timestamp)});
+      }
+      return;
+    }
     if (obj.type === 'response_item' && obj.payload && obj.payload.role === 'user') {
       const raw = textFromPayload(obj.payload).trim();
       // 群聊里 Hub 发给成员的是一整段脚手架，用户真正打的字在 `## 用户` 段里，
       // 只显示那一段（displayUserText 同时兜住纯系统注入）。
       const text = raw && !isSyntheticUserEntry(obj, raw) ? displayUserText(raw) : null;
       if (text && !hasNearbyEventUserDuplicate(entries, entryIndex, text)) {
-        if (!pendingAssistant?.hasTaskStart || pendingAssistant.agentMessages.length || pendingAssistant.toolCalls.length)
+        if (!pendingAssistant?.hasTaskStart || pendingAssistant.displayMessages.length || pendingAssistant.agentMessages.length || pendingAssistant.toolCalls.length)
           flushAssistant();
         else { pendingAssistant.id = null; pendingAssistant.ts = null; }
         turns.push({

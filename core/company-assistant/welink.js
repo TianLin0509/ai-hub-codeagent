@@ -183,7 +183,7 @@ function parseJson(text) {
 function loginState(statusText) {
   const s = String(statusText || '');
   const uid = (s.match(/UID\s*[:：]\s*([A-Za-z0-9_-]+)/i) || [])[1] || null;
-  if (/EXPIRED|未登录|not\s+logged\s*in|no\s+token/i.test(s)) return { ok: false, reason: 'expired', uid };
+  if (/EXPIRED|未登录|not\s+logged\s*in|no\s+token|\buser\s+token\s+not\s+found\b/i.test(s)) return { ok: false, reason: 'expired', uid };
   if (/Token\s*[:：]\s*(?:VALID|OK|有效)|已登录|logged\s*in/i.test(s) || uid) return { ok: true, uid };
   return { ok: false, reason: 'unknown', uid };
 }

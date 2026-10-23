@@ -40,7 +40,7 @@ function registerAcpIpc(ipcMain, {sessionManager} = {}) {
       for (const kind of ACP_KINDS) {
         const value = request.providers?.[kind] || previous.providers?.[kind] || {};
         providers[kind] = {};
-        for (const key of ['entryPath','backendPath','bridgePath','model','mcpConfigPath']) {
+        for (const key of ['entryPath','backendPath','bridgePath','cliRoot','model','mcpConfigPath']) {
           if (value[key] != null && typeof value[key] !== 'string') throw new Error('配置字段必须是文字');
           providers[kind][key] = (value[key] || '').trim();
         }

@@ -28,7 +28,7 @@ function antigravitySiblingSignature(kind, transcriptPath) {
   if (!match) return '';
   const agy = require('./antigravity-config.js');
   const sig = file => { try { const st = fs.statSync(file); return `${st.size}:${st.mtimeMs}`; } catch { return 'missing'; } };
-  return '|' + sig(require('node:path').join(require('node:path').dirname(transcriptPath), 'transcript_full.jsonl'))
+  return '|' + ['transcript.jsonl','transcript_full.jsonl'].map(name=>sig(require('node:path').join(require('node:path').dirname(transcriptPath), name))).join('|')
     + '|' + (agy.UUID.test(match[1]) ? sig(agy.receiptsFile(match[1])) : 'none');
 }
 

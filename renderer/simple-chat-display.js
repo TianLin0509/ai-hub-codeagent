@@ -26,7 +26,7 @@ function mergeReply(group) {
   // A thinking note may stand in for the answer only while work runs. A turn
   // that ended without a reply keeps its outcome notice and every note in 过程.
   const endedSilent = latest.fromThinking && ['completed', 'failed', 'interrupted'].includes(latest.stopReason);
-  const result = endedSilent ? { ...latest, text: '', nativeOutcome: latest.stopReason } : latest;
+  const result = latest.fromThinking ? { ...latest, text: '', ...(endedSilent ? {nativeOutcome: latest.stopReason} : {}) } : latest;
   const activity = group.findLast(m => m.phase === 'activity');
   const owner = group.findLast(m => m.deliveryContext) || result;
   const tools = new Map();
@@ -50,7 +50,7 @@ function mergeReply(group) {
     nativeOutcome: activity?.nativeOutcome || result.nativeOutcome,
     usage: result.usage || activity?.usage,
     durationMs: result.durationMs ?? activity?.durationMs,
-    ts: first.ts,
+    ts: !body.length && result.phase==='commentary' ? result.ts || first.ts : first.ts,
     tsEnd: result.tsEnd || activity?.tsEnd,
   };
 }

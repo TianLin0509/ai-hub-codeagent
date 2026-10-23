@@ -79,7 +79,7 @@ function stageIncremental({ dataDir, payloadFile, resourcesDir, version, from, e
   const p = stagingPaths(dataDir);
   fs.rmSync(p.newDir, { recursive: true, force: true });
   fs.mkdirSync(p.newDir, { recursive: true });
-  const files = unpackPayload(payloadFile, p.newDir);
+  const files = unpackPayload(payloadFile, p.newDir, { resourcesDir });
   const plan = { version, from, pid, exe, args, relaunch, waitSeconds: 90, resourcesDir, newDir: p.newDir, stagingDir: p.root,
     resultFile: p.result, files, ...(simulateFailure ? { simulateFailure } : {}) };
   fs.writeFileSync(p.plan, JSON.stringify(plan, null, 2), 'utf8');
