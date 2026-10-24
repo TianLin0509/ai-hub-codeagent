@@ -34,6 +34,12 @@ function toMaskedConfig(config) {
   return {
     proxy: config.proxy,
     claudeBackend: config.claudeBackend,
+    claudeSubscriptionProfile: config.claudeSubscriptionProfile || 'default',
+    claudeSubscriptionProfiles: config.claudeSubscriptionProfiles || [],
+    claudeProfileIdentities: Object.fromEntries((config.claudeSubscriptionProfiles || []).map(p => {
+      const profiles = require('../../core/claude-subscription-profiles');
+      return [p.id, profiles.accountLabel(profiles.resolveProfile(config,p.id).home)];
+    })),
     claudeApiKey: config.claudeApiKey ? '***' + config.claudeApiKey.slice(-4) : '',
     claudeApiKeySet: !!config.claudeApiKey,
     claudeApiBaseUrl: config.claudeApiBaseUrl,
@@ -297,6 +303,21 @@ function registerConfigIpc(ipcMain, deps) {
   ipcMain.handle('get-hub-config', () => toMaskedConfig(require('../../core/codex-global-account').currentConfig()));
 
   ipcMain.handle('get-hub-config-raw', () => toEditableConfig(require('../../core/codex-global-account').currentConfig()));
+
+  ipcMain.handle('claude:set-launch-account', async (_e, payload = {}) => {
+    try {
+      const profiles = require('../../core/claude-subscription-profiles');
+      const profile = profiles.resolveProfile(getConfig(), payload.profileId);
+      // Selecting an account is also how a user reaches its login button. Do not
+      // silently launch a browser or require a successful login just to select it.
+      const raw = readConfigJsonForUpdate();
+      raw.providers = {...raw.providers, claude:{...raw.providers?.claude,subscription_profile:profile.id}};
+      saveConfig(raw);
+      clearSessionManagerConfigCache();
+      sendToRenderer('claude-launch-account-changed',{profileId:profile.id,claudeScope:profiles.usageScope(getConfig(),profile.id)});
+      return {ok:true,profileId:profile.id};
+    } catch (error) { return {ok:false,error:error.message}; }
+  });
 
   ipcMain.handle('codex:set-global-account', async (_e, payload = {}) => {
     try {

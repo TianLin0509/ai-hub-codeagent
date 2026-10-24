@@ -108,6 +108,11 @@ function planSessionFork({ source, siblingPool = [], meeting = null, rendererTit
     // DeepSeek on Claude Code 的分支沿用同一条接入方式。
     if (kind === 'deepseek-claude' && source.deepseekRoute) opts.deepseekRoute = source.deepseekRoute;
     opts.forkCCSessionId = nativeSessionId;
+    if (kind === 'claude') {
+      if (source.claudeProfile) opts.claudeProfile = source.claudeProfile;
+      if (source.claudeConfigDir) opts.claudeConfigDir = source.claudeConfigDir;
+      if (source.transcriptPath) opts.resumeTranscriptPath = source.transcriptPath;
+    }
     if (String(runtimeKind || '').startsWith('deepseek-legacy')) opts.deepseekLegacyClaude = true;
   } else {
     kind = isDeepSeek ? 'deepseek' : 'codex';

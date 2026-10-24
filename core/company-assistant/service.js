@@ -755,6 +755,8 @@ class CompanyAssistant {
   // ---- 对话 ----
   verifyTeamOwner(job) {
     if (!job.teamOwner) return;
+    if (job.teamAccessRevoked) throw new Error('团队已锁定，本次分析已取消；解锁后可主动重试。');
+    this.deps.assertTeamAccess?.();
     const auth = this.auth.status();
     if (auth.state !== 'online' || auth.login?.ok !== true || auth.login.uid !== job.teamOwner)
       throw new Error('团队分析绑定的 WeLink 账号已退出或改变，请用当前账号重新采集分析。');
@@ -769,6 +771,13 @@ class CompanyAssistant {
     this.enqueue({ type: 'chat', chatId: item.id, prompt: notes ? notes + '\n\n' + q : q, ...(teamOwner ? { teamOwner } : {}) });
     this.changed();
     return item;
+  }
+  async revokeTeamAccess() {
+    const pending = this.queue.filter(job => job.teamOwner);
+    this.queue = this.queue.filter(job => !job.teamOwner);
+    for (const job of pending) this.failJob(job, '团队已锁定，本次分析已取消；解锁后可主动重试。');
+    if (this.job?.teamOwner) { this.job.teamAccessRevoked = true; await this.collectJob(); }
+    this.changed();
   }
   retryChat(id) {
     const item = this.chat().find(c => c.id === id);
@@ -980,7 +989,7 @@ class CompanyAssistant {
       cliFound: !!this.cli(), cliPath: this.cli() || '', cliSearch: this.cliSearch || { state: 'idle' }, auth: this.auth.status(), login: this.auth.status().login || snap?.login || null, loginFlow: this.loginFlow, calendarNeedsSetup: !!snap?.calendarNeedsSetup, mailSetup: snap?.mailSetup || null,
       counts: snap ? { meetings: (snap.meetings || []).length, calendar: (snap.calendar || []).length, messages: Object.values(snap.messages || {}).reduce((n, l) => n + l.length, 0), mails: (snap.mails || []).length } : null,
       refreshedAt: snap?.at || null, refreshing: !!this.refreshing, errors: snap?.errors || [], conversations: (snap?.conversations || []).slice(0, 60), scope: snap?.scope || null, nameResolution: snap?.nameResolution || null, meetingCoverage: snap?.meetingCoverage || null, calendarCoverage: snap?.calendarCoverage || null, mailCoverage: snap?.mailCoverage || null,
-      brief: this.brief(day), nextBriefAt: next, chat: this.chat().filter(c => !c.teamOwner || this.auth.status().state === 'online' && this.auth.status().login?.ok === true && c.teamOwner === this.auth.status().login.uid).slice(-60), job: this.job ? { type: this.job.type, sentAt: this.job.sentAt || null } : null,
+      brief: this.brief(day), nextBriefAt: next, chat: this.chat().filter(c => { try { this.verifyTeamOwner(c); return true; } catch { return false; } }).slice(-60), job: this.job ? { type: this.job.type, sentAt: this.job.sentAt || null } : null,
       queued: this.queue.length, session: sid ? { id: sid, open: !!this.deps.getSession(sid), busy: this.sessionBusy(sid) } : null, tools: this.toolsStatus(),
       notices: st.notices.slice(0, 10), commitments: st.commitments, phone: this.phone.status(), ppt: this.ppt.status(), rooms: this.rooms.status() };
   }

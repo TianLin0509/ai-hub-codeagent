@@ -5116,6 +5116,9 @@ if (typeof document !== 'undefined') (function () {
       getActiveSessionId: () => _inputModelSessionId,
       refreshModelCatalog: (kind, session) => window.WorkspaceController.loadModelCatalog(kind, {
         codexProfile: session && session.codexProfile,
+        claudeProfile: session && session.claudeProfile,
+        claudeProfileLabel: session && session.claudeProfileLabel,
+        claudeConfigDir: session && session.claudeConfigDir,
       }),
       openCommandScreen: sessionId => require('./command-screen').openCommandScreen(ipcRenderer, sessionId),
       // A group member need not have an opened terminal tab. Read the same hydrated

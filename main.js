@@ -728,7 +728,13 @@ transcriptTap.on('turn-complete', (ev) => {
   }
 });
 
+let companyAiTasks = null;
+const runCompanyAi = (request, options) => {
+  if (!companyAiTasks) return Promise.reject(new Error('CodeAgent 服务尚未准备好，请稍后重试'));
+  return companyAiTasks.run(request, options);
+};
 const autoTitleManager = createAutoTitleManager({
+  runCompanyAi,
   allAiKinds: ALL_AI_KINDS,
   getHubConfig,
   kindLabels: KIND_LABELS,
@@ -2437,6 +2443,7 @@ try {
 // 公司版「助理」（2026-10-16）：每日简报 + 对话 + 6 条提醒，只读 WeLink，数据只留在本机 Hub 数据目录。
 // 只在公司版启用（core/company-assistant/gate.js），不依赖家里联动的配对。提醒经提醒总线发布：这里转成桌面通知并告诉页面。
 let companyAssistantService = null;
+const teamAccess = new (require('./core/team-workspace/access').TeamAccess)();
 try {
   if (require('./core/company-assistant/gate').companyAssistantEnabled()) {
     const { CompanyAssistant } = require('./core/company-assistant/service');
@@ -2447,6 +2454,7 @@ try {
       return saved ? { ...saved, id: saved.hubId || id } : null;
     };
     companyAssistantService = new CompanyAssistant({
+      assertTeamAccess: () => teamAccess.assert(),
       dataDir: getHubDataDir(),
       noTimer: process.env.CLAUDE_HUB_ASSISTANT_TIMER === '0',
       createSession: (kind, opts) => sessionOperations.createSession({ kind, opts }),
@@ -2503,24 +2511,53 @@ try {
     require('./main/ipc/company-assistant-handlers').registerCompanyAssistantIpc(ipcMain, companyAssistantService);
   }
 } catch (error) { console.error('[company-assistant] 公司助理未启动：', error.message); }
+if (require('./core/company-ai-policy').companyOnly()) {
+  const live = new (require('./core/hub-assistant/live-history').LiveHistory)();
+  companyAiTasks = new (require('./core/company-ai-tasks').CompanyAiTasks)({
+    dataDir:getHubDataDir(),
+    createSession:(kind,opts)=>sessionOperations.createSession({kind,opts}),
+    sendPrompt:(sessionId,text,clientSubmissionId)=>promptOperations.submitPrompt(null,{sessionId,text,clientSubmissionId,waitForCliReady:true}),
+    lastFinal:id=>{
+      const meta=sessionManager.getSession(id)||require('./core/session-store').loadSessionFile(id,{strict:true});
+      const result=meta&&live.read({...meta,id:meta.id||meta.hubId||id,kind:'claude'});
+      return result?.available ? result.records?.at(-1) : null;
+    },
+    closeSession:id=>require('./core/company-ai-tasks').closeOwnedSession(sessionManager,id),
+    onChanged:state=>sendToRenderer('company-ai:changed',state),
+  });
+  const earlierPlan=sessionManager.extraMcpProvider;
+  sessionManager.setExtraMcpProvider(request=>companyAiTasks.sessionPlan(request)||(earlierPlan?earlierPlan(request):null));
+}
 // 团队工作台：家里可访问既有管理工具；WeLink 工作材料只在公司助理所在的本机生成。
-let teamWorkspace = null, teamToolsView = null;
+let teamWorkspace = null, teamToolsView = null, companyWebAi = null;
 try {
   const { teamEnabled, toolsCatalog } = require('./core/team-workspace/catalog');
   if (teamEnabled()) {
+    const startTeam = () => {
+      teamAccess.assert();
+      if(require('./core/company-ai-policy').companyOnly() && !companyWebAi) companyWebAi=new (require('./core/company-web-ai').CompanyWebAi)({
+      dataDir:getHubDataDir(),catalog:toolsCatalog(),run:runCompanyAi,
+      onChanged:state=>sendToRenderer('company-ai:changed',{...state,source:'team-web'}),
+      });
+      teamWorkspace.start();
+    };
     teamWorkspace = require('./core/team-workspace').createTeamWorkspace({
+      assertAccess: () => teamAccess.assert(),
       dataDir: getHubDataDir(), getAssistant: () => companyAssistantService,
       onChanged: () => sendToRenderer('team:changed', {}),
     });
     teamToolsView = require('./main/team-tools-view').createTeamToolsView({
       getWindow: () => mainWindow, WebContentsView: require('electron').WebContentsView,
       session: require('electron').session, catalog: toolsCatalog(),
+      assertAccess: () => teamAccess.assert(),
+      configureSession:webSession=>companyWebAi?.attach(webSession),
       onChanged: state => sendToRenderer('team:web-state', state),
     });
     require('./main/ipc/team-workspace-handlers').registerTeamWorkspaceIpc(ipcMain, {
       workspace: teamWorkspace, web: teamToolsView, getWindow: () => mainWindow,
+      access: teamAccess, onUnlock: startTeam,
+      onLock: async () => { teamWorkspace.stop(); teamToolsView.dispose(); companyWebAi?.close(); companyWebAi = null; await companyAssistantService?.revokeTeamAccess(); },
     });
-    teamWorkspace.start();
   }
 } catch (error) { console.error('[team-workspace] 团队工作台未启动：', error.message); }
 // 公司版「论坛」（2026-10-18）：每天同步稼先社区、心声社区的热门帖子并附 AI 摘要，数据只留在本机 Hub 数据目录。
@@ -3293,13 +3330,15 @@ const hookServer = http.createServer((req, res) => {
       } else {
         // DeepSeek on Claude Code 走 API Key，状态栏里没有、也不能混进 Claude 订阅额度。
         const statusSession = parsed.sessionId ? sessionManager.getSession(parsed.sessionId) : null;
-        const deepseekStatus = String(statusSession?.kind || '').replace(/-resume$/, '') === 'deepseek-claude';
+        const deepseekStatus = statusSession && !/^claude(?:-resume)?$/.test(statusSession.kind);
+        const statusScope = statusSession?.claudeUsageScope || currentClaudeScope(statusSession?.claudeProfile || 'default');
         const filtered = deepseekStatus
           ? { usage5h: null, usage7d: null, anyAccepted: false }
-          : claudeUsageFilter.filter(parsed.usage5h, parsed.usage7d);
+          : claudeFilter(statusScope).filter(parsed.usage5h, parsed.usage7d);
         syncSessionRuntimeModel(parsed.sessionId, parsed.model);
         sendToRenderer('status-event', {
           sessionId: parsed.sessionId,
+          claudeScope: statusScope,
           contextPct: parsed.contextPct,
           contextUsed: parsed.contextUsed,
           contextMax: parsed.contextMax,
@@ -3312,7 +3351,7 @@ const hookServer = http.createServer((req, res) => {
           linesAdded: parsed.linesAdded,
           linesRemoved: parsed.linesRemoved,
         });
-        if (filtered.anyAccepted) cacheAccountUsage({ usage5h: filtered.usage5h, usage7d: filtered.usage7d });
+        if (filtered.anyAccepted) cacheAccountUsage({ usage5h: filtered.usage5h, usage7d: filtered.usage7d }, statusScope);
       }
     }
     res.writeHead(200); res.end('{}');
@@ -3377,19 +3416,27 @@ function flushUsageCacheSync() {
 // See core/usage-filter.js for why this filter exists (rate_limits monotonic
 // within a window — stale low-pct snapshots from idle sessions must not
 // overwrite the true usage from heavy sessions).
-const claudeUsageFilter = createUsageFilter();
-try { claudeUsageFilter.seed(loadUsageCache().claude); } catch {}
+const claudeScopeTools = require('./core/claude-usage-scope');
+const claudeUsageFilters = new Map();
+function currentClaudeScope(id) { return claudeScopeTools.scope(getHubConfig(),id); }
+function claudeCache(scope = currentClaudeScope()) { return claudeScopeTools.cached(loadUsageCache(),scope); }
+function claudeFilter(scope) {
+  if (!claudeUsageFilters.has(scope)) {const filter=createUsageFilter();filter.seed(claudeCache(scope));claudeUsageFilters.set(scope,filter);}
+  return claudeUsageFilters.get(scope);
+}
 
-function cacheAccountUsage(data) {
+function cacheAccountUsage(data, scope = currentClaudeScope()) {
   try {
     const existing = loadUsageCache();
-    const cur = existing.claude || {};
-    existing.claude = {
+    const key = "claude:" + scope;
+    const cur = existing[key] || {};
+    existing[key] = {
+      claudeScope: scope,
       usage5h: data.usage5h || cur.usage5h || null,
       usage7d: data.usage7d || cur.usage7d || null,
       ts: data.ts || Date.now(),
     };
-    if (JSON.stringify(cur) === JSON.stringify(existing.claude)) return;
+    if (JSON.stringify(cur) === JSON.stringify(existing[key])) return;
     _usageCacheMemory = existing;
     scheduleUsageCacheWrite();
   } catch (error) { console.warn('[claude-usage] cache update failed:', error && error.message); }
@@ -3403,21 +3450,21 @@ function loadStatuslineCache() {
 // status line that used to feed this never runs in that transport. Any live
 // connection can answer, so take the first one and fall back to the cache when
 // none is connected or the engine will not say.
-async function refreshClaudeAccountUsageLive() {
+async function refreshClaudeAccountUsageLive(scope = currentClaudeScope()) {
   for (const session of sessionManager.getAllSessions()) {
-    if (session.runtimeBackend !== 'claude-stream-json') continue;
+    if (session.runtimeBackend !== 'claude-stream-json' || !/^claude(?:-resume)?$/.test(session.kind) || (session.claudeUsageScope || currentClaudeScope(session.claudeProfile || 'default')) !== scope) continue;
     const native = sessionManager.getNativeClaude?.(session.id);
     if (!native || native.closed || native.runtime?.connection !== 'connected') continue;
     let snapshot = null;
     try { snapshot = await native.readAccountUsage(); }
     catch (error) { console.warn('[claude-usage] native read failed:', error && error.message); continue; }
     if (!snapshot) continue;
-    const before = loadUsageCache().claude || null;
-    const filtered = claudeUsageFilter.filter(snapshot.usage5h, snapshot.usage7d);
+    const before = claudeCache(scope);
+    const filtered = claudeFilter(scope).filter(snapshot.usage5h, snapshot.usage7d);
     if (filtered.anyAccepted) {
-      cacheAccountUsage({ usage5h: filtered.usage5h, usage7d: filtered.usage7d, ts: snapshot.observedAt });
+      cacheAccountUsage({ usage5h: filtered.usage5h, usage7d: filtered.usage7d, ts: snapshot.observedAt }, scope);
     }
-    const data = loadUsageCache().claude || null;
+    const data = claudeCache(scope);
     return { data, changed: didClaudeSnapshotAdvance(before, { ...data, observedAt: snapshot.observedAt }),
       observedAt: snapshot.observedAt, source: 'claude-native' };
   }
@@ -3428,30 +3475,38 @@ async function refreshClaudeAccountUsage() {
   return claudeAccountRefresh.refresh();
 }
 
-let claudeAccountBroadcast = '';
-const claudeAccountRefresh = require('./main/usage/claude-usage-refresh').createClaudeUsageRefresh({
-  refresh: async () => (await refreshClaudeAccountUsageLive()) || refreshClaudeAccountUsageFromStatuslineCache(),
-  getSessions: () => sessionManager.getAllSessions().flatMap(session => {
-    if (session.runtimeBackend !== 'claude-stream-json') return [];
-    const native = sessionManager.getNativeClaude?.(session.id);
-    return native && !native.closed && native.runtime?.connection === 'connected'
-      ? [{ id: session.id, ...native.runtime }] : [];
-  }),
-  getCached: () => loadUsageCache().claude,
-  publish: data => {
-    const signature = JSON.stringify(data);
-    if (signature === claudeAccountBroadcast) return;
-    claudeAccountBroadcast = signature;
-    sendToRenderer('status-event', { usage5h: data.usage5h, usage7d: data.usage7d,
-      observedAt: data.observedAt || data.ts || 0 });
-  },
-});
+const claudeRefreshers = new Map();
+function claudeRefresher(scope = currentClaudeScope()) {
+  if (claudeRefreshers.has(scope)) return claudeRefreshers.get(scope);
+  let broadcast = '';
+  const controller = require('./main/usage/claude-usage-refresh').createClaudeUsageRefresh({
+    refresh: async () => (await refreshClaudeAccountUsageLive(scope)) || refreshClaudeAccountUsageFromStatuslineCache(scope),
+    getSessions: () => sessionManager.getAllSessions().flatMap(session => {
+      if (!/^claude(?:-resume)?$/.test(session.kind) || session.runtimeBackend !== 'claude-stream-json'
+        || (session.claudeUsageScope || currentClaudeScope(session.claudeProfile || 'default')) !== scope) return [];
+      const native=sessionManager.getNativeClaude?.(session.id);
+      return native && !native.closed && native.runtime?.connection === 'connected' ? [{id:session.id,...native.runtime}] : [];
+    }),
+    getCached: () => claudeCache(scope),
+    publish: data => {
+      if (scope !== currentClaudeScope()) return;
+      const signature=JSON.stringify(data);if(signature===broadcast)return;broadcast=signature;
+      sendToRenderer('status-event',{usage5h:data.usage5h,usage7d:data.usage7d,claudeScope:scope,observedAt:data.observedAt||data.ts||0});
+    },
+  });
+  claudeRefreshers.set(scope,controller);return controller;
+}
+const claudeAccountRefresh = {
+  tick: reason => claudeRefresher().tick(reason),
+  refresh: () => claudeRefresher().refresh(),
+  stop: () => {for(const r of claudeRefreshers.values())r.stop();},
+};
 app.on('browser-window-focus', () => { void claudeAccountRefresh.tick('focus'); });
 app.on('will-quit', () => { claudeAccountRefresh.stop(); });
 
-function refreshClaudeAccountUsageFromStatuslineCache() {
-  const before = loadUsageCache().claude || null;
-  const snapshot = selectClaudeStatuslineUsage(loadStatuslineCache());
+function refreshClaudeAccountUsageFromStatuslineCache(scope = currentClaudeScope()) {
+  const before = claudeCache(scope);
+  const snapshot = selectClaudeStatuslineUsage(claudeScopeTools.selectStatusline(loadStatuslineCache(),scope));
   if (!snapshot) {
     return {
       data: before,
@@ -3460,15 +3515,15 @@ function refreshClaudeAccountUsageFromStatuslineCache() {
       source: 'statusline-cache',
     };
   }
-  const filtered = claudeUsageFilter.filter(snapshot.usage5h, snapshot.usage7d);
+  const filtered = claudeFilter(scope).filter(snapshot.usage5h, snapshot.usage7d);
   if (filtered.anyAccepted) {
     cacheAccountUsage({
       usage5h: filtered.usage5h,
       usage7d: filtered.usage7d,
       ts: snapshot.ts,
-    });
+    }, scope);
   }
-  const data = loadUsageCache().claude || null;
+  const data = claudeCache(scope);
   return {
     data,
     changed: didClaudeSnapshotAdvance(before, { ...data, observedAt: snapshot.ts }),
@@ -3573,7 +3628,7 @@ function loadUsageCacheForCurrentConfig() {
   // Source selection checks expiry; display retains the last account-scoped
   // observation with its real age, including across reset/refresh gaps.
   return { ...filterUsageCacheForCodexScope(loadUsageCache(), currentCodexUsageScope()),
-    tokenPlan: tokenPlanUsage.snapshot() };
+    claude: claudeCache(), tokenPlan: tokenPlanUsage.snapshot() };
 }
 
 try {
@@ -3662,7 +3717,7 @@ require('./main/ipc/voice-input-handlers').registerVoiceInputIpc(ipcMain, {
     return found?.exists ? require('./core/voice-text').recentFromTranscript(found.path) : '';
   },
 });
-require('./main/ipc/prompt-polish-handlers').registerPromptPolishIpc(ipcMain, { getConfig: getHubConfig });
+require('./main/ipc/prompt-polish-handlers').registerPromptPolishIpc(ipcMain, { getConfig: getHubConfig, runCompanyAi });
 
 // --- 梦境系统（Dream Consolidation）+ 记忆面板 ---
 // 保留旧 IPC 兼容入口，但不再启动向原生规则写入的旧沉淀调度器。
@@ -4344,6 +4399,8 @@ async function runFinalShutdownCleanup() {
   capture('company-bridge', () => companyBridgeService?.close());
   capture('team-workspace', () => { teamWorkspace?.stop(); teamToolsView?.dispose(); });
   capture('company-assistant', () => companyAssistantService?.close());
+  capture('company-ai', () => companyAiTasks?.close());
+  capture('company-web-ai', () => companyWebAi?.close());
   capture('company-forum', () => { companyForumService?.close(); companyForumBrowser?.close(); });
   capture('hub-orchestration', () => global.__orchestrationService?.stop());
   capture('hub-phone', () => phoneService?.close());

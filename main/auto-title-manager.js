@@ -80,10 +80,14 @@ function createAutoTitleManager(deps) {
     const cfg = getHubConfig();
     const prompt = String(text || '').trim().slice(0, 1200);
     if (!prompt) return '';
-    if (!cfg.deepseekApiKey) return '';
+    if (!require('../core/company-ai-policy').companyOnly() && !cfg.deepseekApiKey) return '';
     const system = scope === 'meeting'
       ? '你是房间命名器。根据用户在 AI 群聊中的第一句话生成中文短标题，8到16个汉字或等长短语，不要引号，不要解释。'
       : '你是会话命名器。根据用户第一句话生成中文短标题，8到16个汉字或等长短语，不要引号，不要解释。';
+    if (require('../core/company-ai-policy').companyOnly()) {
+      const answer = await deps.runCompanyAi({system, text:prompt, label:'会话标题'});
+      return String(answer.text || '').replace(/["'“”‘’\r\n]/g, '').trim().slice(0, 30);
+    }
     // 2026-10-13 起用 V4.1 Flash 的官方新名 deepseek-flash。它默认开思考，40 个 token 会被推理吃掉、
     // 标题变空；旧名 deepseek-chat 是不开思考的同一模型，所以这里显式关掉思考，行为与原来一致。
     const { status, body } = await postJsonForAutoTitle('https://api.deepseek.com/chat/completions', {
@@ -106,6 +110,7 @@ function createAutoTitleManager(deps) {
   // 不需要任何 Key（2026-10-08 公司真机验收后用户提出）。异步执行，实测 30–90 秒，先用兜底名占位。
   // 不留会话记录（--no-session-persistence）；不带 Hub/CodeTeam 的会话变量，两边的 hook 都会直接退出。
   function codeAgentTitleAvailable() {
+    if (require('../core/company-ai-policy').companyOnly()) return false;
     if (getHubConfig().deepseekApiKey) return false;
     try { return require('../core/codeagent-config').isCodeAgentInstalled(); } catch { return false; }
   }

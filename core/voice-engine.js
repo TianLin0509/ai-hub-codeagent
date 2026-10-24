@@ -12,6 +12,7 @@ const ENGINES = ['local', 'tokenplan', 'streaming'];
 
 // voice-input.json 的 engine 显式指定时照办；未指定时：本地已安装 → 本地；有套餐 Key → 套餐；否则按量流式。
 function resolveEngine(cfg, dataDir) {
+  if (require('./company-ai-policy').companyOnly()) return {engine:'local', planKey:'', localReady:localInstalled(localPaths(cfg))};
   const planKey = plan.tokenPlanKey(dataDir);
   const localReady = localInstalled(localPaths(cfg));
   const engine = ENGINES.includes(cfg?.engine) ? cfg.engine : (localReady ? 'local' : planKey ? 'tokenplan' : 'streaming');
@@ -45,6 +46,7 @@ async function screenSafely(pcm16k, vp, state, log) {
 // profile：云端用的词表（≤80 个，不含个人信息）；background：只给本地模型的背景文本（个人背景 + 全部热词 + 最近对话），缺省时由 profile 生成。
 // onConfident(vectors)：很确定是本人的小句声纹，交给声纹自动更新（见 voiceprint.adapt）。
 function segmentRecognizer({ engine, planKey, profile, background, local, source, usage = () => {}, log = console.warn, fetchImpl, vp = null, onConfident = () => {} }) {
+  if (require('./company-ai-policy').companyOnly()) { engine='local'; planKey=''; if (!local) throw new Error('请先安装并启动本地语音识别'); }
   const context = background ?? localContext(profile);
   const recognizeOne = async (pcm16k, signal) => {
     if (engine === 'local' && local) {
@@ -75,6 +77,7 @@ function segmentRecognizer({ engine, planKey, profile, background, local, source
 
 // 手机整段录音：先做声纹筛查（他人小句静音、全是他人的段落去掉），再本地整批送显卡或各段并发走 Token Plan。
 async function transcribeRecording(pcm16k, { engine, planKey, profile, background, local, source = 'phone', usage = () => {}, log = console.warn, fetchImpl, vp = null }) {
+  if (require('./company-ai-policy').companyOnly()) { engine='local'; planKey=''; if (!local) throw new Error('请先安装并启动本地语音识别'); }
   let parts = plan.speechSegments(pcm16k);
   if (!parts.length) return { text: '', via: {} };
   const sec = parts.reduce((s, p) => s + p.length, 0) / 32000;

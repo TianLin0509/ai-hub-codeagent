@@ -10,7 +10,9 @@ function attachPromptPolish({ input, rail, before, ipcRenderer, getTarget, isAct
     const el = doc.createElement('button'); el.type = 'button'; el.className = className;
     el.title = label; el.setAttribute('aria-label', label); return el;
   };
-  const button = makeButton('整理 Prompt · DeepSeek Flash', 'prompt-polish-button'); button.innerHTML = ICON;
+  const company = require('../core/company-ai-policy').companyOnly();
+  const buttonLabel = company ? '整理 Prompt · CodeAgent' : '整理 Prompt · DeepSeek Flash';
+  const button = makeButton(buttonLabel, 'prompt-polish-button'); button.innerHTML = ICON;
   const undo = makeButton('撤销整理', 'prompt-polish-undo'); undo.textContent = '撤销'; undo.hidden = true;
   const status = doc.createElement('span'); status.className = 'prompt-polish-status'; status.setAttribute('role', 'status'); status.hidden = true;
   tools.append(status, undo, button); rail.insertBefore(tools, before);
@@ -31,7 +33,7 @@ function attachPromptPolish({ input, rail, before, ipcRenderer, getTarget, isAct
     input.focus();
   };
   const idle = () => {
-    button.innerHTML = ICON; button.title = '整理 Prompt · DeepSeek Flash';
+    button.innerHTML = ICON; button.title = buttonLabel;
     button.setAttribute('aria-label', button.title); button.setAttribute('aria-busy', 'false');
   };
   button.addEventListener('click', async event => {
@@ -49,7 +51,7 @@ function attachPromptPolish({ input, rail, before, ipcRenderer, getTarget, isAct
     const current = { id: globalThis.crypto.randomUUID(), target, text, revision };
     request = current;
     button.textContent = '取消'; button.title = '取消整理'; button.setAttribute('aria-label', '取消整理'); button.setAttribute('aria-busy', 'true');
-    setStatus('整理中…');
+    setStatus(company ? 'CodeAgent 整理中，可在会话列表查看进度…' : '整理中…');
     try {
       const result = await ipcRenderer.invoke('prompt:polish', { id: current.id, text });
       if (request !== current || disposed) return;

@@ -107,6 +107,7 @@ function termsOf(profile = {}) {
 }
 
 async function recognize(pcm16k, { apiKey, profile, fetchImpl = fetch, signal, timeoutMs = 60000 }) {
+  require('./company-ai-policy').assertExternalAiAllowed();
   const terms = termsOf(profile), context = String(profile?.context || '').trim();
   const body = { model: MODEL,
     input: { messages: [

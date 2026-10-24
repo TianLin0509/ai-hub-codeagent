@@ -148,6 +148,8 @@ function registerSessionIpc(ipcMain, deps) {
       kind = 'powershell';
       opts = {};
     }
+    require('../../core/company-ai-policy').assertKind(kind || 'powershell');
+    if (require('../../core/company-ai-policy').companyOnly() && require('../../core/chatgpt-web-models').isChatgptWebModel(opts.model)) throw new Error('公司版只使用 CodeAgent');
     if (kind === 'chatgpt') {
       if (!require('../../core/chatgpt-web-models').isChatgptWebModel(opts.model)) throw new Error('请选择可用的 ChatGPT 模型');
       kind = 'codex';
@@ -1056,6 +1058,7 @@ function registerSessionIpc(ipcMain, deps) {
       ...(sessionModelId(old) ? { model: sessionModelId(old) } : {}),
       ...(old.effort ? { effort: old.effort } : {}),
       ...(old.codexProfile ? { codexProfile: old.codexProfile } : {}),
+      ...(old.claudeProfile ? {claudeProfile:old.claudeProfile,claudeConfigDir:old.claudeConfigDir} : {}),
       ...(old.mcpProfile ? { mcpProfile: old.mcpProfile } : {}),
       ...(old.fastMode === false ? { fastMode: false } : {}),
       ...(old.codexSpeedTier ? { codexSpeedTier: old.codexSpeedTier } : {}),

@@ -105,6 +105,9 @@ function collapseDormantNativeDuplicates(sessionMap) {
       for (const field of [
         'codexSessionsRoot',
         'codexProfile',
+        'claudeProfile',
+        'claudeProfileLabel',
+        'claudeConfigDir',
         'codexProfileLabel',
         'mcpProfile',
         'codexSpeedTier',

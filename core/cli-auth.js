@@ -31,16 +31,19 @@ function cliAuthStatus({ env = process.env, config = {}, now = Date.now() } = {}
       state: auth?.__unreadable ? 'unreadable' : require('./codex-auth-validation').invalidApiCredential(auth) ? 'invalid' : tokens && (tokens.refresh_token || tokens.access_token) ? 'authorized' : auth?.OPENAI_API_KEY ? 'api_key' : 'missing',
     });
   }
-  const claudeDir = env.CLAUDE_CONFIG_DIR || path.join(home, '.claude');
+  const cp = require('./claude-subscription-profiles');
+  for (const p of cp.normalizeProfiles(config.claudeSubscriptionProfiles,home)) {
+  const claudeDir = cp.resolveProfile(config,p.id,env,home).home;
   const claudeFile = readJson(path.join(claudeDir, '.credentials.json'));
   const creds = claudeFile?.claudeAiOauth;
-  const claudeMeta = readJson(path.join(home, '.claude.json'));
+  const claudeEmail = cp.accountLabel(claudeDir);
   const refreshUntil = Number(creds?.refreshTokenExpiresAt) || 0;
   out.push({
-    id: 'claude', kind: 'claude', name: 'Claude Code', site: 'claude', account: claudeMeta?.oauthAccount?.emailAddress || '',
+    id: cp.connectionId(p.id), kind: 'claude', profileId:p.id, label:p.label, isDefault:p.id===(config.claudeSubscriptionProfile||'default'), name: 'Claude Code', site: 'claude', account: claudeEmail,
     state: claudeFile?.__unreadable ? 'unreadable' : !creds ? 'missing' : creds.refreshToken && (!refreshUntil || refreshUntil > now) ? 'authorized' : 'expired',
     ...(refreshUntil ? { expiresAt: refreshUntil } : {}),
   });
+  }
   out.push({
     id: 'gemini', kind: 'gemini', name: 'Antigravity CLI', site: 'google', account: '',
     // agy owns its credential storage. Old Gemini OAuth is not login evidence.

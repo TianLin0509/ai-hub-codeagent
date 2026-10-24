@@ -12,7 +12,7 @@ const TEAM_TOOLS = [
 const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const when = value => { if (!value) return '时间未知'; const d = new Date(value); return Number.isNaN(d.getTime()) ? String(value) : d.toLocaleString('zh-CN', { hour12: false }); };
 
-function createTeamPage({ document, window, ipcRenderer, closeOtherPanels = () => {}, showMessage }) {
+function createTeamPage({ document, window, ipcRenderer, closeOtherPanels = () => {}, showMessage, authorize }) {
   let page, content, data, tab = 'today', busy = '', error = '', notice = '', resolution = null;
   let webId = null, webStatus = '', webEpoch = 0, loadEpoch = 0, observer;
   let editingCommitment = null;
@@ -209,6 +209,10 @@ function createTeamPage({ document, window, ipcRenderer, closeOtherPanels = () =
     else if (op === 'commitment.done' || op === 'commitment.reopen') await mutate('commitment.update', { id, status: op === 'commitment.done' ? 'done' : 'open' });
   }
   function open() {
+    if (authorize) return authorize().then(allowed => { if (allowed) show(); }).catch(error => showMessage(error.message));
+    show();
+  }
+  function show() {
     build(); closeOtherPanels(); verifyingIdentity = true; page.hidden = false;
     document.body.classList.add('team-page-open'); document.getElementById('btn-team')?.classList.add('active');
     window.setShellNavActive?.('team'); place(); render(); if (!busy) void load();

@@ -27,7 +27,9 @@ class LaunchAuth {
       if (config.codexBackend === 'api' || require('./chatgpt-web-models').isChatgptWebModel(opts.model)) return null;
       return 'codex-' + (opts.launchProfile || config.codexSubscriptionProfile || 'default');
     }
-    if (base === 'claude') return config.claudeBackend === 'api' ? null : 'claude';
+    if (base === 'claude') return config.claudeBackend === 'api' ? null
+      : require('./claude-subscription-profiles').connectionId(require('./claude-subscription-profiles').profileForSession(
+        {...opts, ...(opts.launchProfile ? {claudeProfile:opts.launchProfile} : {})}, config).id);
     return ({gemini:'gemini-cli', kimi:'kimi'})[base] || null;
   }
   // The account a connection id points at right now: id, home directory and credential.
@@ -62,7 +64,7 @@ class LaunchAuth {
   }
   async recover(kind, opts, failure) {
     if (!isLoginFailure(failure)) return;
-    const id=this.connection(kind,{...opts,launchProfile:opts?.codexProfile});
+    const id=this.connection(kind,{...opts,launchProfile:opts?.claudeProfile || opts?.codexProfile});
     if (!id) return;
     try { this.accounts.markLoginRequired?.(id); } catch {}
     if (Date.now()-(this.recoveryAt.get(id)||0)<60000) return;

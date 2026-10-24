@@ -82,6 +82,9 @@
   let claudeModelCatalog = null;
   const codexCatalogInFlight = new Map();
   let codexAccounts = [];
+  let claudeAccounts = [];
+  let claudeAccountId = 'default';
+  let claudeBackend = 'subscription';
   let codexAccountId = '';
   // CodeAgent 号池（core/codeagent-pool.js）：号池里有可用的号时才显示「用量账号」，普通同事看到的和以前一样。
   const CODEAGENT_ACCOUNT_KEY = 'hub.codeagent.account';
@@ -251,6 +254,9 @@
         codexAccounts=(config.codexSubscriptionProfiles || []).map(p=>({...p,email:config.codexProfileIdentities?.[p.id] || ''}));
         codexAccountId=config.codexSubscriptionProfile || '';
         codexBackend=config.codexBackend;
+        claudeAccounts=(config.claudeSubscriptionProfiles || []).map(p=>({...p,email:config.claudeProfileIdentities?.[p.id] || ''}));
+        claudeAccountId=config.claudeSubscriptionProfile || 'default';
+        claudeBackend=config.claudeBackend || 'subscription';
         accountReadError='';
       }
       if (config) {
@@ -338,6 +344,7 @@
       opts.codexProfile = tuning.codexProfile;
     }
     if (DEEPSEEK_ROUTE_KINDS.has(kind)) opts.deepseekRoute = tuning.deepseekRoute;
+    if (kind === 'claude' && claudeBackend !== 'api') opts.claudeProfile = selection.claudeProfile || claudeAccountId;
     return opts;
   }
   const RECENT_LIMIT = 8;
@@ -1036,23 +1043,26 @@
     const accountField=document.getElementById('new-session-account-field');
     const accountSelect=document.getElementById('new-session-account');
     const accountNote=document.getElementById('new-session-account-note');
-    const showAccount=selectedKind === 'codex' && codexBackend !== 'api';
+    const isClaudeAccount=selectedKind === 'claude';
+    const accounts=isClaudeAccount ? claudeAccounts : codexAccounts;
+    const selectedAccount=isClaudeAccount ? claudeAccountId : codexAccountId;
+    const showAccount=selectedKind === 'codex' && codexBackend !== 'api' || isClaudeAccount && claudeBackend !== 'api';
     if (accountField) accountField.hidden=!showAccount;
     if (accountNote) {
       accountNote.hidden=!showAccount;
       accountNote.textContent=accountReadError || (accountSaving ? '正在切换用量账号…' : accountNotice)
-        || '与账号页同步，切换后用于新建、恢复和重启会话。';
+        || (isClaudeAccount ? '新建会话使用所选账号；已有会话恢复、重启仍用原账号。首次使用请到账号页完成此账号授权。' : '与账号页同步，切换后用于新建、恢复和重启会话。');
     }
     if (accountSelect) {
-      const signature=JSON.stringify(codexAccounts);
+      const signature=JSON.stringify(accounts);
       if (accountSelect.dataset.accounts !== signature) {
         // The hand-typed label has been wrong before; lead with the account the profile is
         // actually logged into and keep the label as the secondary hint.
-        accountSelect.innerHTML=codexAccounts.map(p=>`<option value="${escapeHtml(p.id)}">${escapeHtml(p.email ? `${p.email}（${p.label || p.id}）` : `${p.label || p.id} · 账号未确认`)}</option>`).join('');
+        accountSelect.innerHTML=accounts.map(p=>`<option value="${escapeHtml(p.id)}">${escapeHtml(p.email ? `${p.email}（${p.label || p.id}）` : `${p.label || p.id} · 账号未确认`)}</option>`).join('');
         accountSelect.dataset.accounts=signature;
       }
-      accountSelect.value=pendingAccountId || codexAccountId;
-      accountSelect.disabled=accountSaving || submitting || !codexAccounts.length || !!accountReadError;
+      accountSelect.value=pendingAccountId || selectedAccount;
+      accountSelect.disabled=accountSaving || submitting || !accounts.length || !!accountReadError;
     }
     paintCodeagentAccount();
     const label = document.getElementById('new-session-tuning-label');
@@ -1650,12 +1660,14 @@
     document.getElementById('new-session-account')?.addEventListener('change', async event => {
       if (accountSaving) return;
       const profileId=event.target.value;
+      const accountKind=selectedKind;
       accountSaving=true;pendingAccountId=profileId;configReadRevision++;accountNotice='';setError('');paint();
       try {
-        if (!codexAccounts.some(p => p.id === profileId)) throw new Error('所选账号不可用，请重新选择');
-        const result=await ipcRenderer.invoke('codex:set-global-account',{profileId,scope:'launch'});
+        if (!(accountKind === 'claude' ? claudeAccounts : codexAccounts).some(p => p.id === profileId)) throw new Error('所选账号不可用，请重新选择');
+        const result=await ipcRenderer.invoke(accountKind === 'claude' ? 'claude:set-launch-account' : 'codex:set-global-account',{profileId,scope:'launch'});
         if (!result?.ok) throw new Error(result?.error || '切换用量账号失败');
-        codexAccountId=result.profileId;
+        if (accountKind === 'claude') claudeAccountId=result.profileId;
+        else codexAccountId=result.profileId;
         accountNotice='已与账号页同步；已打开的会话保持原账号。';
       } catch(error) { setError(error.message); }
       finally {
@@ -1663,8 +1675,10 @@
           // The broadcast can arrive while this selector is saving. Read back
           // the canonical value, including another selector's later change.
           await loadHubDefaultModels({refreshAccount:true});
-          codexTuningCatalog=null;
-          await loadCodexTuningCatalog({force:true});
+          if (accountKind === 'codex') {
+            codexTuningCatalog=null;
+            await loadCodexTuningCatalog({force:true});
+          }
         } catch(error) { setError(error.message); }
         accountSaving=false;pendingAccountId='';paint();
       }
@@ -1673,6 +1687,9 @@
       // A second selector can finish while this one is still loading models.
       // Never discard that newer account notification.
       void loadHubDefaultModels({refreshAccount:true}).then(()=>loadCodexTuningCatalog()).then(paint).catch(error=>setError(error.message));
+    });
+    ipcRenderer.on('claude-launch-account-changed',()=>{
+      void loadHubDefaultModels({refreshAccount:true}).then(paint).catch(error=>setError(error.message));
     });
     // 号池或个人账号登录完成、模型权限获取完：启动中心开着且选的是 CodeAgent 时重新取账号状态和模型（2026-10-19 审核）
     ipcRenderer.on('codeagent-pool:changed', (_event, change) => {

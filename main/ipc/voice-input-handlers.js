@@ -9,6 +9,7 @@ const { getLocalAsr, getSpeakerWorker } = require('../../core/local-asr/manager'
 const voiceprint = require('../../core/voiceprint');
 const { LiveVoice } = require('../../core/voice-live');
 const voiceText = require('../../core/voice-text');
+const {companyOnly} = require('../../core/company-ai-policy');
 // 冷启动接力用的实时识别模型：3.1 流式（免费额度 100 万 token，已开「用完自动停止」）
 const REALTIME_MODEL = 'qwen-audio-3.1-asr-flash-streaming';
 
@@ -32,10 +33,10 @@ function registerVoiceInputIpc(ipcMain, { safeStorage, app, createStream = optio
   function view(project) {
     const c = read();
     const { engine, planKey, localReady } = voiceEngine.resolveEngine(c, dataDir);
-    const meteredKey = !!(c.encryptedKey || process.env.DASHSCOPE_API_KEY);
+    const meteredKey = !companyOnly() && !!(c.encryptedKey || process.env.DASHSCOPE_API_KEY);
     const local = localReady ? getLocal(c) : null;
     return { region: c.region, workspace: c.workspace || '', engine, planReady: !!planKey, meteredKeySet: meteredKey,
-      localInstalled: localReady, localState: local?.state || 'off', model: ENGINE_LABEL[engine],
+      localInstalled: localReady, localState: local?.state || 'off', model: companyOnly() ? '本地 Qwen3-ASR（公司版仅本地识别）' : ENGINE_LABEL[engine], companyLocalOnly:companyOnly(),
       voiceprint: { ...voiceprint.status(dataDir), available: !!getSpeaker(c), appliesTo: engine === 'streaming' ? 'none' : 'all' },
       keySet: engine === 'local' ? localReady : engine === 'tokenplan' ? !!planKey : meteredKey, envKey: !c.encryptedKey && !!process.env.DASHSCOPE_API_KEY,
       profile: c.profiles?.[profileKey(project)] || { terms: '', context: '' }, global: c.global || { terms: '', personal: '' },
@@ -47,6 +48,7 @@ function registerVoiceInputIpc(ipcMain, { safeStorage, app, createStream = optio
     const c = read();
     c.region = patch.region; c.workspace = String(patch.workspace || '').trim(); endpoint(c);
     if (patch.engine !== undefined) {
+      if (companyOnly() && patch.engine !== 'local') throw new Error('公司版只支持本地语音识别');
       if (!voiceEngine.ENGINES.includes(patch.engine)) throw new Error('识别方式无效');
       c.engine = patch.engine;
     }
@@ -131,7 +133,7 @@ function registerVoiceInputIpc(ipcMain, { safeStorage, app, createStream = optio
       // 冷启动期间用实时 API 逐字出字：需要按量识别的百炼 Key（没有就由 Token Plan 接力）
       let meteredKey = process.env.DASHSCOPE_API_KEY || '';
       if (c.encryptedKey) { try { meteredKey = safeStorage.decryptString(Buffer.from(c.encryptedKey, 'base64')); } catch { meteredKey = ''; } }
-      const openApi = apiEvent => meteredKey ? createStream({ config: c, apiKey: meteredKey, sampleRate: 16000, profile, model: REALTIME_MODEL, onEvent: apiEvent }) : null;
+      const openApi = apiEvent => !companyOnly() && meteredKey ? createStream({ config: c, apiKey: meteredKey, sampleRate: 16000, profile, model: REALTIME_MODEL, onEvent: apiEvent }) : null;
       stream = createLive({ sampleRate: request.sampleRate, local, recognizeSegment, context: background, openApi, vp, usage, onEvent });
     } else {
       stream = (engine === 'streaming' ? createStream : createRecorded)({ config: c, apiKey, sampleRate: request.sampleRate, profile, recognizeSegment, onEvent });

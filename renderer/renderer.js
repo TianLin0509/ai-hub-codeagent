@@ -873,6 +873,9 @@ const modelUi = createModelUiController({
   escapeHtml,
   refreshModelCatalog: (kind, session) => window.WorkspaceController.loadModelCatalog(kind, {
     codexProfile: session && session.codexProfile,
+    claudeProfile: session && session.claudeProfile,
+    claudeProfileLabel: session && session.claudeProfileLabel,
+    claudeConfigDir: session && session.claudeConfigDir,
   }),
   getTerminalScreenText: sessionId => terminalActivityMonitor.extractLiveScreenLines(sessionId).join('\n'),
   openCommandScreen: sessionId => require('./command-screen').openCommandScreen(ipcRenderer, sessionId),
@@ -4476,6 +4479,7 @@ async function switchSessionScene(sessionId, sceneId, inputBox, { fresh }) {
     ...(s.currentModel?.id ? { model: s.currentModel.id } : {}),
     ...(s.effort ? { effort: s.effort } : {}),
     ...(s.codexProfile ? { codexProfile: s.codexProfile } : {}),
+    ...(s.claudeProfile ? {claudeProfile:s.claudeProfile,claudeConfigDir:s.claudeConfigDir} : {}),
     ...(typeof s.fastMode === 'boolean' ? { fastMode: s.fastMode } : {}),
     ...(s.codexSpeedTier ? { codexSpeedTier: s.codexSpeedTier } : {}),
     ...(s.deepseekRoute ? { deepseekRoute: s.deepseekRoute } : {}),
@@ -7389,6 +7393,9 @@ const memoryPanel = createMemoryPanel({
       title: s.title,
       codexSessionsRoot: s.codexSessionsRoot || null,
       codexProfile: s.codexProfile || null,
+      claudeProfile: s.claudeProfile || null,
+      claudeProfileLabel: s.claudeProfileLabel || null,
+      claudeConfigDir: s.claudeConfigDir || null,
       meetingId: s.meetingId || null,
     } : null;
   },
@@ -8766,6 +8773,7 @@ if (require('../core/company-forum/gate').companyForumEnabled()) {
 if (require('../core/team-workspace/catalog').teamEnabled()) {
   const teamPage = require('./team-page').createTeamPage({
     document, window, ipcRenderer,
+    authorize: async () => { const result = await ipcRenderer.invoke('team:access'); return result?.ok && result.unlocked; },
     closeOtherPanels: () => {
       window.hubWorkspaces?.close(); memoryPanel.close(); capabilityPanel.close(); accountCenterPanel.close();
       for (const key of ['__cloudHide', '__assistantHide', '__companyAssistantHide', '__companyForumHide', '__wirelessHide', '__writingHide', '__rulesHide', '__xresearchHide', '__studyHide', '__ranHide']) window[key]?.();
@@ -8774,6 +8782,9 @@ if (require('../core/team-workspace/catalog').teamEnabled()) {
   });
   window.__teamHide = () => teamPage.close();
   document.getElementById('btn-team')?.addEventListener('click', () => teamPage.open());
+  require('./team-access').createTeamAccess({ document, window, ipcRenderer,
+    onUnlocked: () => teamPage.open(), onLocked: () => teamPage.close(), showMessage: message => showToast(message),
+  });
 } else document.getElementById('btn-team')?.remove();
 const openConfigModal = configModal.open;
 const setCodexProfileForm = configModal.setCodexProfileForm;
@@ -8962,7 +8973,7 @@ ipcRenderer.on('session-created', async (_e, { session }) => {
     return;
   }
   // 公司助理的简报和团队分析会在后台创建会话；成员页输入与团队导航保持原位。
-  if (session.purpose === 'company-assistant') {
+  if (session.purpose === 'company-assistant' || session.purpose === 'company-ai') {
     if (wasDormant && activeSessionId === session.id && !document.body.classList.contains('team-page-open')) await selectSession(session.id, { forceScrollBottom: pendingResume?.forceScrollBottom === true });
     scheduleSessionListRender();
     return;
@@ -9340,6 +9351,7 @@ ipcRenderer.on('session-updated', (_e, { session }) => {
   if (session.codexSessionsRoot) local.codexSessionsRoot = session.codexSessionsRoot;
   if (session.codexAllowMtimeFallback) local.codexAllowMtimeFallback = true;
   if (session.codexProfile) local.codexProfile = session.codexProfile;
+  if (session.claudeProfile) {local.claudeProfile=session.claudeProfile;local.claudeProfileLabel=session.claudeProfileLabel;local.claudeConfigDir=session.claudeConfigDir;}
   if (session.codexProfileLabel) local.codexProfileLabel = session.codexProfileLabel;
   if (session.mcpProfile) local.mcpProfile = session.mcpProfile;
   if (typeof session.fastMode === 'boolean') local.fastMode = session.fastMode;
@@ -9509,6 +9521,9 @@ function persistWorkscene(flush = false) {
         codexSessionsRoot: s.codexSessionsRoot || null,
         codexAllowMtimeFallback: !!s.codexAllowMtimeFallback,
         codexProfile: s.codexProfile || null,
+        claudeProfile: s.claudeProfile || null,
+        claudeProfileLabel: s.claudeProfileLabel || null,
+        claudeConfigDir: s.claudeConfigDir || null,
         codexProfileLabel: s.codexProfileLabel || null,
         deepseekRoute: s.deepseekRoute || null,
         mcpProfile: s.mcpProfile || null,
@@ -9883,6 +9898,9 @@ sessionImmersive = require('./session-immersive').createSessionImmersiveControll
         codexSessionsRoot: meta.codexSessionsRoot || null,
         codexAllowMtimeFallback: !!meta.codexAllowMtimeFallback,
         codexProfile: meta.codexProfile || null,
+        claudeProfile: meta.claudeProfile || null,
+        claudeProfileLabel: meta.claudeProfileLabel || null,
+        claudeConfigDir: meta.claudeConfigDir || null,
         codexProfileLabel: meta.codexProfileLabel || null,
         mcpProfile: meta.mcpProfile || null,
         fastMode: typeof meta.fastMode === 'boolean' ? meta.fastMode : null,

@@ -46,7 +46,12 @@ class AccountCenter {
     const c=this.getConfig();
     const profiles=c.codexSubscriptionProfiles?.length?c.codexSubscriptionProfiles:[{id:'default',label:'主账号',home:''}];
     const native=(id,name,provider,home,uses)=>({id,name,provider,home:path.resolve(require('./codex-usage-scope').expandHomePath(home,this.homeDir)),type:'native',uses,action:'login',configProvider:provider});
-    const rows=[native('claude','Claude Code','claude',this.env.CLAUDE_CONFIG_DIR || path.join(this.homeDir,'.claude'),['Claude 会话','开发群聊']),
+    const claudeProfiles = require('./claude-subscription-profiles');
+    const rows=[...claudeProfiles.normalizeProfiles(c.claudeSubscriptionProfiles, this.homeDir).map(p => {
+      const profile = claudeProfiles.resolveProfile(c, p.id, this.env, this.homeDir);
+      return {...native(claudeProfiles.connectionId(p.id),'Claude Code · '+p.label,'claude',profile.home,['Claude 会话','开发群聊']),
+        profileId:p.id,profileLabel:p.label,claudeDefaultHome:!profile.configDir,isDefault:p.id===(c.claudeSubscriptionProfile || 'default'),accountLabel:claudeProfiles.accountLabel(profile.home)};
+    }),
       ...profiles.filter(p=>/^[\w-]{1,64}$/.test(p.id)).map(p=>{const row=native('codex-'+p.id,'Codex · '+p.label,'codex',p.home || path.join(this.homeDir,'.codex'),['Codex 会话','开发群聊']);return {...row,profileLabel:p.label,browserIdentity:p.browserIdentity,isDefault:p.id===(c.codexSubscriptionProfile || 'default'),accountLabel:codexAccountLabel(row.home)};}),
       native('gemini-cli','Antigravity CLI','gemini',path.join(this.homeDir,'.gemini','antigravity-cli'),['Antigravity 会话']),
       native('kimi','Kimi Code','kimi',this.env.KIMI_CODE_HOME || path.join(this.homeDir,'.kimi-code'),['Kimi 会话']),

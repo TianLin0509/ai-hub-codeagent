@@ -2,7 +2,7 @@
 
 const { createPromptPolisher } = require('../../core/prompt-polish');
 
-function registerPromptPolishIpc(ipcMain, { getConfig, polish = createPromptPolisher({ getConfig }) }) {
+function registerPromptPolishIpc(ipcMain, { getConfig, runCompanyAi, polish = createPromptPolisher({ getConfig, runCompanyAi }) }) {
   const pending = new Map();
   const watched = new WeakSet();
   ipcMain.handle('prompt:polish', async ({ sender }, { id, text } = {}) => {

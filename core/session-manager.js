@@ -449,7 +449,7 @@ function buildClaudePtyLaunch(id, kind, opts, cwd, env, cv) {
 // 个人号读到它（优先级高于账号自己的 settings.json，--model 也压不过）就报「模型不存在」，再把 deepseek 回写进 ~/.cac。
 // 公司真机 Q-1020-01：不带时个人号在该目录 2/2 报错；带上后 1/1 正常用 GLM，项目级与账号配置都不再被回写，号 1 照常用 DeepSeek。
 // 用户自己开的会话不加，可能依赖项目级配置。
-function codeAgentReadOnly(opts) { return !!opts && ['company-bridge', 'company-assistant', 'company-forum'].includes(opts.purpose); }
+function codeAgentReadOnly(opts) { return !!opts && ['company-bridge', 'company-assistant', 'company-forum', 'company-ai'].includes(opts.purpose); }
 // AI特战队通道里家里指定的模型（2026-10-18，core/codeagent-model-route.js）：只认通道会话（purpose=company-bridge），
 // 靠号的配置目录 settings.json 定模型（号池同步配置时写；个人账号只在默认就是它时才用），开起来后再在 /model 菜单里选中它（2026-10-20）。
 function codeAgentRouteModel(opts) {
@@ -1414,6 +1414,7 @@ class SessionManager extends EventEmitter {
   }
 
   createSession(kind = 'powershell', opts = {}) {
+    require('./company-ai-policy').assertKind(kind);
     const id = opts.id || uuid();
     if (opts._openLeaseNonce) {
       if (this.sessions.has(id) || this.openLeases?.get(id)?.nonce!==opts._openLeaseNonce) throw new Error('会话打开预约已失效');
@@ -1638,6 +1639,8 @@ class SessionManager extends EventEmitter {
     else title = `PowerShell ${++this.psCounter}`;
 
     const sessionEnv = { ...process.env };
+    delete sessionEnv.CLAUDE_HUB_CLAUDE_PROFILE;
+    delete sessionEnv.CLAUDE_HUB_CLAUDE_SCOPE;
     // 公司联动的会话通行证（HUB_BRIDGE_*）只由 Hub 按会话注入（opts.extraEnv，见 _withExtraMcp）：
     // Hub 自己的进程环境里若带着（例如从某个会话里启动了测试 Hub），不能原样传给每个新会话，否则新会话会顶着别人的身份（2026-10-20）。
     for (const key of Object.keys(sessionEnv)) if (/^HUB_BRIDGE_/i.test(key)) delete sessionEnv[key];
@@ -1846,6 +1849,17 @@ class SessionManager extends EventEmitter {
     // Merge extra env vars (used by TeamSessionManager for MCP config etc.)
     if (opts.extraEnv) {
       Object.assign(sessionEnv, opts.extraEnv);
+    }
+
+    let claudeProfile = null;
+    if (isClaude && getConfig().claudeBackend !== 'api') {
+      claudeProfile = require('./claude-subscription-profiles').profileForSession(opts, getConfig());
+      if (claudeProfile.configDir) sessionEnv.CLAUDE_CONFIG_DIR = claudeProfile.home;
+      else delete sessionEnv.CLAUDE_CONFIG_DIR;
+      sessionEnv.CLAUDE_HUB_CLAUDE_PROFILE = claudeProfile.id;
+      sessionEnv.CLAUDE_HUB_CLAUDE_SCOPE = require('./claude-subscription-profiles').usageScope(getConfig(),claudeProfile.id);
+      require('./claude-subscription-profiles').applyNetworkEnv(sessionEnv,getConfig());
+      opts = {...opts, claudeProfile:claudeProfile.id, claudeConfigDir:claudeProfile.home};
     }
 
     const shellArgs = isAgent ? ['-NoProfile', '-NoLogo'] : [];
@@ -2293,6 +2307,7 @@ class SessionManager extends EventEmitter {
       ...(isDeepSeekClaude ? { deepseekRoute: deepseekClaudeLaunch.requestedRoute,
         deepseekActiveRoute: deepseekClaudeLaunch.route } : {}),
       ...(isCodexRuntime && codexProfile ? { codexProfile: codexProfile.id, codexProfileLabel: codexProfile.label } : {}),
+      ...(claudeProfile ? {claudeProfile:claudeProfile.id,claudeProfileLabel:claudeProfile.label,claudeConfigDir:claudeProfile.home,claudeUsageScope:sessionEnv.CLAUDE_HUB_CLAUDE_SCOPE} : {}),
       ...(isCodexRuntime ? { mcpProfile: effectiveCodexMcpProfile } : {}),
       // 速度通道必须连同 inherit 一起落盘，否则显式选择"跟随全局"的会话在
       // resume/relaunch 后会被 Codex 新默认 Fast 覆盖。
@@ -3935,6 +3950,7 @@ try {
       ...(info.codexAllowMtimeFallback ? { codexAllowMtimeFallback: true } : {}),
       ...(info.codexProfile !== undefined ? { codexProfile: info.codexProfile } : {}),
       ...(info.codexProfileLabel !== undefined ? { codexProfileLabel: info.codexProfileLabel } : {}),
+      ...(info.claudeProfile !== undefined ? {claudeProfile:info.claudeProfile,claudeProfileLabel:info.claudeProfileLabel,claudeConfigDir:info.claudeConfigDir,claudeUsageScope:info.claudeUsageScope} : {}),
       ...(info.deepseekRoute ? { deepseekRoute: info.deepseekRoute } : {}),
       ...(info.deepseekActiveRoute ? { deepseekActiveRoute: info.deepseekActiveRoute } : {}),
       ...(info.mcpProfile !== undefined ? { mcpProfile: info.mcpProfile } : {}),

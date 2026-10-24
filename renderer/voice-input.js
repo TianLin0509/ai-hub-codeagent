@@ -129,12 +129,20 @@ async function showSettings(target) {
     region.value = config.region; workspace.value = config.workspace; terms.value = config.profile.terms; context.value = config.profile.context;
     globalTerms.value = config.global?.terms || ''; personal.value = config.global?.personal || '';
     engine.value = config.engine; describe();
+    if (config.companyLocalOnly) {
+      for (const option of [...engine.options]) if (option.value !== 'local') option.remove();
+      engine.options[0].textContent = '本地识别 · 公司版仅在本机处理录音';
+      engine.disabled = true;
+      note.textContent = '录音只在本机识别。模型装载期间先保存音频，准备好后补齐文字；失败时保留已识别内容并提示检查本地环境。';
+      key.disabled = true; region.disabled = true; workspace.disabled = true;
+    }
     model.textContent = `识别模型：${config.model} · 术语所属：${target.project || '通用项目'}`;
     const plan = config.planReady ? '已找到 Token Plan 套餐 Key。' : '未找到 Token Plan 套餐 Key（在 Hub 的 Token Plan 配置里设置）。';
     const metered = config.meteredKeySet ? (config.envKey ? '按量识别使用环境变量中的密钥。' : '按量识别密钥已保存（系统加密）。') : '按量识别尚未配置密钥。';
     const localState = { off: '未启动', starting: '运行环境启动中', env: '运行环境就绪（未占显存）', loading: '模型装载中', ready: '模型已在显卡', failed: '启动失败' }[config.localState] || config.localState;
     const local = config.localInstalled ? `本地识别：${localState}。` : '本地识别未安装。';
     status.textContent = `${local}${plan}${metered}`;
+    if (config.companyLocalOnly) status.textContent = `${local}公司版不调用云端识别；本地启动失败时请检查本地环境。`;
     showVoiceprint(config.voiceprint || { available: false });
     const prefs = config.prefs || {};
     voiceSend.checked = prefs.voiceSend !== false; autoStop.value = String(prefs.autoStopSec || 0);
@@ -259,7 +267,7 @@ function attachVoiceInput({ input, rail, getStatusHost, getTarget, isActive }) {
       r.engine = config.engine; r.prefs = config.prefs || {};
       if (!config.keySet) {
         finishUI(r);
-        setStatus({ local: '本地识别未安装，可在语音设置里改用 Token Plan。', tokenplan: '未找到 Token Plan 套餐 Key，可在语音设置里改用按量识别。' }[config.engine] || '请先在语音设置中填写百炼 API Key。');
+        setStatus(config.companyLocalOnly ? '请先在语音设置中安装本地识别环境，公司版只支持本地识别。' : ({ local: '本地识别未安装，可在语音设置里改用 Token Plan。', tokenplan: '未找到 Token Plan 套餐 Key，可在语音设置里改用按量识别。' }[config.engine] || '请先在语音设置中填写百炼 API Key。'));
         await showSettings(target); return;
       }
       r.stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true }, video: false });

@@ -48,6 +48,8 @@ function createAccountUsageController({
   if (typeof escapeHtml !== 'function') throw new Error('escapeHtml is required');
 
   const accountUsage = { usage5h: null, usage7d: null };
+  let claudeScope = '';
+  let claudeSelectionRevision = 0;
   // The Codex subscription accounts not in use right now: read when the popover opens.
   let otherCodex = [];
   const otherCodexState = { inFlight: false };
@@ -126,6 +128,11 @@ function createAccountUsageController({
 
   function recordStatusUsage(payload) {
     if (!payload) return;
+    if (claudeScope && payload.claudeScope && payload.claudeScope !== claudeScope) return;
+    if (claudeScope && !payload.claudeScope && !claudeScope.startsWith('default:')) return;
+    // Only the selected-account cache or a selection broadcast can establish
+    // the account. A background session must not win the startup race.
+    if (!claudeScope && payload.claudeScope) return;
     if (payload.usage5h || payload.usage7d) {
       const observedAt = payload.observedAt ?? nowFn();
       if (observedAt < _claudeUsageLastSeen) return;
@@ -195,6 +202,8 @@ function createAccountUsageController({
 
   function applyUsageCache(cached) {
     if (!cached) cached = {};
+    if (!claudeScope && cached.claude?.claudeScope) claudeScope=cached.claude.claudeScope;
+    if (cached.claude?.claudeScope && cached.claude.claudeScope !== claudeScope) cached={...cached,claude:null};
     if (cached.antigravity) { agentUsage.antigravity = cached.antigravity; agentUsageLastSeen.antigravity = cached.antigravity.observedAt || cached.antigravity.ts || 0; }
     if (cached.claude && (cached.claude.usage5h || cached.claude.usage7d)) {
       accountUsage.usage5h = cached.claude.usage5h;
@@ -244,6 +253,7 @@ function createAccountUsageController({
   }
 
   async function refreshProviderNow(provider) {
+    const selectionRevision = claudeSelectionRevision;
     if (!Object.prototype.hasOwnProperty.call(providerRefreshStates, provider)) throw new Error('不支持的刷新提供方');
     const state = providerRefreshStates[provider];
     if (!state) throw new Error('不支持的刷新提供方');
@@ -252,6 +262,7 @@ function createAccountUsageController({
     render();
     try {
       const result = await ipcRenderer.invoke('refresh-usage-now', provider);
+      if (provider === 'claude' && selectionRevision !== claudeSelectionRevision) return null;
       const status = result?.providerResults?.[provider];
       if (!status) throw new Error('刷新未返回提供方结果');
       state.result = status;
@@ -263,12 +274,14 @@ function createAccountUsageController({
       if (status.ok && !status.degraded && value && observedAt >= lastSeen) applyUsageCache({ [provider]: value });
       return result;
     } catch (error) {
+      if (provider === 'claude' && selectionRevision !== claudeSelectionRevision) return null;
       state.error = error?.message || '刷新失败';
       throw error;
-    } finally { state.inFlight = false; render(); }
+    } finally { if (provider !== 'claude' || selectionRevision === claudeSelectionRevision) state.inFlight = false; render(); }
   }
 
   function refreshUsageNow(provider) {
+    const selectionRevision = claudeSelectionRevision;
     if (provider !== undefined) return refreshProviderNow(provider);
     if (Object.values(providerRefreshStates).some(state => state.inFlight)) return Promise.resolve(null);
     if (usageRefreshState.inFlight) return Promise.resolve(null);
@@ -277,6 +290,7 @@ function createAccountUsageController({
     render();
     return Promise.resolve().then(() => ipcRenderer.invoke('refresh-usage-now'))
       .then((result) => {
+        if (selectionRevision !== claudeSelectionRevision) return null;
         void loadOtherCodex(true);
         usageRefreshState.providerResults = result && result.providerResults || null;
         usageRefreshState.error = ['claude', 'codex', 'deepseek'].flatMap(provider => {
@@ -295,6 +309,7 @@ function createAccountUsageController({
         return result;
       })
       .catch((err) => {
+        if (selectionRevision !== claudeSelectionRevision) return null;
         usageRefreshState.error = err && err.message ? err.message : '刷新失败';
         throw err;
       })
@@ -552,6 +567,18 @@ function createAccountUsageController({
     if (pct >= 70) return 'warn';
     return 'ok';
   }
+
+  ipcRenderer.on?.('claude-launch-account-changed', (_event, selection) => {
+    claudeSelectionRevision++;
+    claudeScope=selection.claudeScope || '';
+    accountUsage.usage5h=null;accountUsage.usage7d=null;_claudeUsageLastSeen=0;
+    globalUsageSamples.length=0;
+    providerRefreshStates.claude.error=null;providerRefreshStates.claude.result=null;
+    providerRefreshStates.claude.inFlight=false;
+    usageRefreshState.providerResults=null;usageRefreshState.error=null;
+    render();
+    Promise.resolve(ipcRenderer.invoke('get-usage-cache')).then(applyUsageCache).catch(()=>{});
+  });
 
   function getSnapshot() {
     return {

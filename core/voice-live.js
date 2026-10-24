@@ -37,6 +37,7 @@ class LiveVoice {
   get ended() { return ['done', 'error', 'cancelled'].includes(this.state); }
 
   startApi(openApi) {
+    if (require('./company-ai-policy').companyOnly()) return;
     let stream = null;
     try { stream = openApi(event => this.onApiEvent(event)); } catch (error) { this.log('[voice] 实时识别未能开启：', error.message); }
     if (!stream) return;

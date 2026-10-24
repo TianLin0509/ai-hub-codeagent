@@ -13,7 +13,7 @@
 // CodeAgent 是否按 Claude Code 的约定执行 PreToolUse 的退出码 2 拒绝，待公司真机确认；兜底见 core/choice-menu-screen.js（通道轮次按屏幕识别卡在选择菜单）。
 const { createHash } = require('node:crypto');
 
-const AUTO_PURPOSES = Object.freeze(['company-bridge', 'company-assistant', 'company-forum']);
+const AUTO_PURPOSES = Object.freeze(['company-bridge', 'company-assistant', 'company-forum', 'company-ai']);
 const isAutoDispatchPurpose = purpose => AUTO_PURPOSES.includes(String(purpose || ''));
 
 const RULE_LABEL = '自动派活规则';
@@ -28,6 +28,7 @@ const RULE_VERSION = createHash('sha256').update(NO_CHOICE_RULE, 'utf8').digest(
 
 // 系统提示里追加的一段：只有这三类会话有。
 function autoRuleFor(purpose) {
+  if (purpose === 'company-ai') return {label:RULE_LABEL, text:'这是无人值守的独立文字任务。直接按指定格式给出结果；材料有歧义时保留原有不确定性。', version:'company-ai-1'};
   return isAutoDispatchPurpose(purpose) ? { label: RULE_LABEL, text: NO_CHOICE_RULE, version: RULE_VERSION } : null;
 }
 
@@ -65,7 +66,7 @@ function applySessionEnv(sessionEnv, purpose, config = gateConfig()) {
   for (const key of [ENV_FLAG, ENV_REASON, ENV_TOOLS]) delete sessionEnv[key];
   if (!config.enabled || !isAutoDispatchPurpose(purpose)) return false;
   sessionEnv[ENV_FLAG] = '1';
-  sessionEnv[ENV_REASON] = DENY_REASON;
+  sessionEnv[ENV_REASON] = purpose === 'company-ai' ? '这是无人值守的文字任务，请保留材料原有的不确定性并按指定格式直接输出结果。' : DENY_REASON;
   sessionEnv[ENV_TOOLS] = config.tools.join(',');
   return true;
 }

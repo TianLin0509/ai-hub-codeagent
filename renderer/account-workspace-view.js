@@ -40,9 +40,13 @@ function toolsNote(entry, now = Date.now()) {
 const toolsHtmlLine = (note, esc) => note ? `<small class="ac-tools" title="使用这个账号的网页工具及其最近一次结果">${esc(note)}</small>` : '';
 const matches = (values, query) => !query || values.join(' ').toLocaleLowerCase().includes(query.trim().toLocaleLowerCase());
 function codexQuotaHtml(state, esc) {
-  const rows=(state.clis || []).filter(c=>c.kind==='codex');
-  if (!rows.length) return '';
-  return `<article class="ac-company ac-codex-quota" aria-label="Codex 用量账号"><header><h2>Codex 用量账号</h2></header><p class="ac-tool-help">切换后，新建、恢复和重启会话使用所选账号额度。已打开的会话继续使用原账号。</p>${rows.map(c=>`<div class="ac-account"><div class="ac-account-title"><strong>${esc(c.label || c.profileId)}</strong><span class="ac-account-name">${esc(c.account || '尚未授权')}</span>${c.isDefault?'<span class="ac-default">后续使用</span>':''}</div><div class="ac-row-actions"><button class="ac-open" data-ac="codex-quota" data-profile="${esc(c.profileId)}" ${c.isDefault?'disabled aria-pressed="true"':'aria-pressed="false"'}>${c.isDefault?'当前用量账号':'使用此账号额度'}</button></div></div>`).join('')}</article>`;
+  return ['codex','claude'].map(kind => {
+    const rows=(state.clis || []).filter(c=>c.kind===kind);
+    if (!rows.length) return '';
+    const name=kind==='claude'?'Claude':'Codex';
+    const help=kind==='claude'?'新建会话使用所选账号；已有会话恢复、重启仍用原账号。':'切换后，新建、恢复和重启会话使用所选账号额度。已打开的会话继续使用原账号。';
+    return `<article class="ac-company ac-codex-quota" aria-label="${name} 用量账号"><header><h2>${name} 用量账号</h2></header><p class="ac-tool-help">${help}</p>${rows.map(c=>`<div class="ac-account"><div class="ac-account-title"><strong>${esc(c.label || c.profileId)}</strong><span class="ac-account-name">${esc(c.account || '尚未授权')}</span>${c.isDefault?'<span class="ac-default">后续使用</span>':''}</div><div class="ac-row-actions"><button class="ac-open" data-ac="${kind}-quota" data-profile="${esc(c.profileId)}" ${c.isDefault?'disabled aria-pressed="true"':'aria-pressed="false"'}>${c.isDefault?'当前用量账号':'使用此账号额度'}</button></div></div>`).join('')}</article>`;
+  }).join('');
 }
 function usageHtml(value, esc, tools = '', detail = '') {
   return `<div class="ac-usage ${value.tone}" title="${esc(value.title || '')}"><span>${esc(value.text)}</span>${value.note ? `<small>${esc(value.note)}</small>` : ''}${toolsHtmlLine(tools, esc)}${detail}</div>`;

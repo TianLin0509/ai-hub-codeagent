@@ -76,6 +76,7 @@ function main() {
   const cost = data.cost || {};
   const payload = JSON.stringify({
     sessionId,
+    claudeScope: process.env.CLAUDE_HUB_CLAUDE_SCOPE || null,
     token,
     contextPct: ctxPct,
     contextUsed: ctxUsed,
@@ -107,6 +108,8 @@ function main() {
   req.end();
 
   cache[key] = {
+    claudeScope: process.env.CLAUDE_HUB_CLAUDE_SCOPE || null,
+    claudeProfile: process.env.CLAUDE_HUB_CLAUDE_PROFILE || null,
     ts: Date.now(),
     model: modelId,
     cwd,

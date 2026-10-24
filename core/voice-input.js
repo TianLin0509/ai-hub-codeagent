@@ -38,6 +38,7 @@ function runTask(id, sampleRate, profile, model = MODEL) {
 class VoiceStream {
   // model：默认 3.0 流式；实时接力用 3.1 流式（免费额度更多、价格更低）。
   constructor({ config, apiKey, sampleRate, profile, onEvent, socketFactory, timeoutMs = 15000, model = MODEL }) {
+    require('./company-ai-policy').assertExternalAiAllowed();
     if (!Number.isInteger(sampleRate) || sampleRate < 8000 || sampleRate > 96000) throw new Error('麦克风采样率不受支持');
     if (!apiKey || /[\r\n]/.test(apiKey)) throw new Error('请先配置百炼语音 API Key');
     this.id = randomUUID();

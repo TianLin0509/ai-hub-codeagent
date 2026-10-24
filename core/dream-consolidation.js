@@ -277,6 +277,7 @@ function callCliLlm(provider, prompt, timeoutMs) {
 
 // 统一的 LLM 调用入口。deepseek-api 走 HTTP；其余走本机 CLI 订阅（headless）。
 async function callLlm({ provider, model, deepseekApiKey, system, user, timeoutMs = 90000 }) {
+  require('./company-ai-policy').assertExternalAiAllowed();
   if (provider === 'deepseek-api') {
     if (!deepseekApiKey) throw new Error('DeepSeek API Key 未配置（consolidation 需要它，或改用 claude-cli 等订阅通道）');
     const resolvedModel = model || DREAM_DEEPSEEK_MODEL;
@@ -523,6 +524,7 @@ function applyEntries(entries, ctx) {
 // 主流程
 
 async function runConsolidation(opts) {
+  if (require('./company-ai-policy').companyOnly()) throw new Error('公司版请使用记忆面板的“造梦”，由 CodeAgent 整理独立记忆库');
   const {
     homeDir = process.env.CLAUDE_HUB_HOME_DIR || os.homedir(),
     workspaceRoot,

@@ -148,6 +148,8 @@ function getConfig() {
     acp: rawConfig.acp || {},
     proxy: getConfigValue('proxy', 'CLAUDE_PROXY', 'proxy.http', DEFAULTS.proxy),
     claudeBackend: getConfigValue('claudeBackend', 'HUB_CLAUDE_BACKEND', 'providers.claude.backend', DEFAULTS.claude_backend),
+    claudeSubscriptionProfile: getConfigValue('claudeSubscriptionProfile', 'HUB_CLAUDE_PROFILE', 'providers.claude.subscription_profile', 'default'),
+    claudeSubscriptionProfiles: require('./claude-subscription-profiles').normalizeProfiles(rawConfig.providers?.claude?.subscription_profiles),
     claudeApiKey: getConfigValue('claudeApiKey', 'HUB_CLAUDE_API_KEY', 'providers.claude.api_key', ''),
     claudeApiBaseUrl: normalizeBaseUrl(getConfigValue('claudeApiBaseUrl', 'HUB_CLAUDE_API_BASE_URL', 'providers.claude.base_url', DEFAULTS.claude_api_base_url)),
     claudeApiModel: getConfigValue('claudeApiModel', 'HUB_CLAUDE_API_MODEL', 'providers.claude.model', DEFAULTS.claude_api_model),

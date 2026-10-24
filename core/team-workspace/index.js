@@ -13,7 +13,8 @@ const clean = (value, max = 2000) => String(value ?? '').replace(/[\x00-\x08\x0b
 const fresh = () => ({ version: 1, settings: { autoRefresh: false, intervalHours: 24, scope: 'all' }, members: [], evidence: [], analyses: [], commitments: [], weeklyDrafts: [], lastRefresh: null });
 
 class TeamWorkspace {
-  constructor({ dataDir, getAssistant, onChanged = () => {}, now = Date.now }) {
+  constructor({ dataDir, getAssistant, onChanged = () => {}, now = Date.now, assertAccess = () => {} }) {
+    this.assertAccess = assertAccess;
     this.dir = path.join(dataDir, 'team-workspace');
     this.getAssistant = getAssistant;
     this.onChanged = onChanged;
@@ -32,6 +33,7 @@ class TeamWorkspace {
     return { assistant, owner, reason: owner ? '' : assistant ? '请先在公司助理中确认 WeLink 登录；登录未核实时不展示历史团队资料。' : '团队关注需要此电脑的公司助理和 WeLink 登录。' };
   }
   requireOwner(expected) {
+    this.assertAccess();
     const value = this.identity();
     if (!value.owner) throw new Error(value.reason);
     if (expected && value.owner !== expected) throw new Error('操作期间 WeLink 账号已改变，请重新操作。');
@@ -58,11 +60,13 @@ class TeamWorkspace {
     this.onChanged();
   }
   state() {
+    this.assertAccess();
     const { owner, reason } = this.identity();
     if (!owner) return { ...fresh(), available: false, owner: null, reason, busy: false };
     return clone({ ...this.load(owner), available: true, reason: '', busy: this.busy && this.busyOwner === owner });
   }
   start() {
+    this.assertAccess();
     if (this.timer) return;
     this.closed = false;
     this.timer = setInterval(() => { void this.tick().catch(() => {}); }, 30000);
@@ -70,6 +74,7 @@ class TeamWorkspace {
   }
   stop() { this.closed = true; clearInterval(this.timer); this.timer = null; this.resolutions.clear(); }
   async tick() {
+    this.assertAccess();
     const { owner } = this.identity();
     if (!owner || this.busy || this.closed) return;
     await this.execute({ op: 'analysis.sync', expectedOwner: owner });

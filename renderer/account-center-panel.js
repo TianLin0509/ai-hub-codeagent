@@ -144,15 +144,15 @@ function createAccountCenterPanel({ document, ipcRenderer, escapeHtml: esc, conf
     } catch (e) { if (ticket === epoch) error = e.message; }
     finally { busy = ''; if (ticket === epoch) renderStatus(); }
   }
-  async function switchCodexQuota(profileId) {
+  async function switchCodexQuota(profileId, kind='codex') {
     if (busy) return;
     busy='codex-quota';error='';notice='正在切换后续会话的用量账号…';renderStatus();
     const ticket=epoch;
     try {
-      const result=await ipcRenderer.invoke('codex:set-global-account',{profileId,scope:'launch'});
+      const result=await ipcRenderer.invoke(kind==='claude'?'claude:set-launch-account':'codex:set-global-account',{profileId,scope:'launch'});
       if (!result?.ok) throw Error(result?.error || '用量账号切换失败');
       if (ticket!==epoch) return;
-      notice='已切换后续会话的用量账号。已打开的会话保持原账号，新建、恢复和重启使用新账号。';
+      notice=kind==='claude'?'已切换新建会话的账号，已有会话恢复和重启仍用原账号。':'已切换后续会话的用量账号。已打开的会话保持原账号，新建、恢复和重启使用新账号。';
       await refresh();
     } catch (e) {if(ticket===epoch)error=e.message;}
     finally {busy='';if(ticket===epoch)renderStatus();}
@@ -195,6 +195,7 @@ function createAccountCenterPanel({ document, ipcRenderer, escapeHtml: esc, conf
     else if (a === 'add' || a === 'preferred') void action('preference', { ...args, add: a === 'add' });
     else if (a === 'authorize') void authorize(b.dataset.id);
     else if (a === 'codex-quota') void switchCodexQuota(b.dataset.profile);
+    else if (a === 'claude-quota') void switchCodexQuota(b.dataset.profile,'claude');
     else if (a === 'config') void configure(b.dataset.id);
     else if (a === 'tools') void action('tools');
     else if (a === 'external') void action('external', { service: b.dataset.service, action: b.dataset.operation });

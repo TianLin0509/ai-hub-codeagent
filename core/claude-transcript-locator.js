@@ -24,6 +24,13 @@ function codeAgentProjectsRoot(homeDir = defaultHomeDir()) {
 
 function claudeProjectRoots(homeDir = defaultHomeDir()) {
   const roots = CLAUDE_PROJECT_ROOT_DIRS.map(dir => path.join(homeDir, dir, 'projects'));
+  const cp = require('./claude-subscription-profiles');
+  const ownHome = path.resolve(homeDir) === path.resolve(defaultHomeDir());
+  const config = ownHome ? require('./hub-config').getConfig() : {};
+  const env = ownHome ? process.env : {USERPROFILE:homeDir,HOME:homeDir};
+  for (const p of cp.normalizeProfiles(config.claudeSubscriptionProfiles, homeDir)) {
+    try {const dir=path.join(cp.resolveProfile(config,p.id,env,homeDir).home,'projects');if(!roots.includes(dir) && fs.existsSync(dir))roots.push(dir);}catch {}
+  }
   const root = codeAgentProjectsRoot(homeDir);
   if (root && !roots.some(item => path.resolve(item).toLowerCase() === path.resolve(root).toLowerCase())) roots.push(root);
   return roots;
