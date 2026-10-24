@@ -251,4 +251,31 @@ function registerGroupchatSupplementIpc(ipcMain, deps) {
   });
 }
 
-module.exports = { registerGroupchatSupplementIpc, _test: { wrapImmediate, createSpecificPromptObserver } };
+// 负责人给正在工作的成员追加指示（2026-10-23）：和插话走同一条闭环提交，只是不记成用户的发言。
+// notSent = 确定没写进去，可以退回排队；其余拿不到确认的按「可能已送达」处理，不自动重发。
+function createRunningInjector({ sessionManager, transcriptTap, groupChatWatcher }) {
+  const observeSpecificPrompt = createSpecificPromptObserver(sessionManager, transcriptTap);
+  let seq = 0;
+  return async (sid, prompt) => {
+    const session = sessionManager.getSession(sid);
+    if (!session || session.status === 'dormant') return { accepted: false, notSent: true, reason: '成员会话未打开' };
+    const kind = session.transcriptKind || session.kind;
+    if (!kind) return { accepted: false, notSent: true, reason: '成员会话类型未知' };
+    const id = `lead-inject-${sid}-${Date.now()}-${++seq}`;
+    const observed = isPtyAgentSession(session) ? observeSpecificPrompt(sid, id, prompt, () => {}) : null;
+    try {
+      const result = await groupChatWatcher.sendToPty(sid, prompt, kind, { requireReady: false, clientSubmissionId: id,
+        ...(observed ? { submissionReceipt: observed.receipt } : {}) });
+      if (result?.notSent) { observed?.cleanup(); return { accepted: false, notSent: true, reason: result.message || result.error || result.sendStatus || '未发送' }; }
+      const accepted = observed ? observed.receipt.started === true : !!result?.ok && result.sendStatus !== 'stuck';
+      const reason = result?.ok && result.sendStatus === 'ok' ? '终端已接收，尚未收到它开始处理的回执' : (result?.reason || result?.sendStatus || '未确认送达');
+      return { accepted, uncertain: !accepted, reason: accepted ? '' : reason };
+    } catch (error) {
+      if (error?.notSent) { observed?.cleanup(); return { accepted: false, notSent: true, reason: error.message }; }
+      const accepted = observed?.receipt.started === true;
+      return { accepted, uncertain: !accepted, reason: accepted ? '' : error.message };
+    }
+  };
+}
+
+module.exports = { registerGroupchatSupplementIpc, createRunningInjector, _test: { wrapImmediate, createSpecificPromptObserver } };

@@ -300,9 +300,13 @@ function claudePermissionModeArg(opts = {}) {
 function claudeNativeAddDirs(requested) {
   const dirs = Array.isArray(requested) ? requested.filter(Boolean).map(String) : [];
   const transcriptDir = require('./data-dir').getHubTranscriptDir();
-  try { fs.mkdirSync(transcriptDir, { recursive: true }); } catch {}
+  // 负责人群的项目档案（2026-10-23）同在工作目录之外，负责人与成员都要读。
+  const briefDir = path.join(require('./data-dir').getHubDataDir(), 'orchestration', 'project-briefs');
   const seen = new Set(dirs.map(dir => path.resolve(dir).toLowerCase()));
-  if (!seen.has(path.resolve(transcriptDir).toLowerCase())) dirs.push(transcriptDir);
+  for (const dir of [transcriptDir, briefDir]) {
+    try { fs.mkdirSync(dir, { recursive: true }); } catch {}
+    if (!seen.has(path.resolve(dir).toLowerCase())) { dirs.push(dir); seen.add(path.resolve(dir).toLowerCase()); }
+  }
   return dirs;
 }
 

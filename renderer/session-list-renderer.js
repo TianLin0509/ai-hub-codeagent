@@ -895,7 +895,7 @@ sessionListEl.addEventListener('keydown', event => {
         + '<span class="sl-group-logos" data-state="' + dotCls + '" aria-label="群聊 · ' + STATUS_LABELS[dotCls] + '">'
         + (logos || `<svg class="sl-kind sl-group-icon" data-state="${dotCls}" role="img" aria-label="群聊" viewBox="0 0 24 24"><path d="M9 11a3 3 0 1 0 0-6 3 3 0 0 0 0 6ZM3 20v-2a4 4 0 0 1 4-4h4a4 4 0 0 1 4 4v2M16 5a3 3 0 0 1 0 6m1 3a4 4 0 0 1 4 4v2"/></svg>`) + '</span>'
         + '<span class="sl-title">' + _warningHtml(warning) + escapeHtml(s.title)
-        + (meeting.orchestration?.enabled === true ? '<span class="sl-orch-tag" title="AI 编排模式">编排</span>' : '') + '</span>'
+        + (meeting.orchestration?.enabled === true ? '<span class="sl-orch-tag" title="负责人模式：用户只和负责人对话">负责人</span>' : '') + '</span>'
         + timeHtml(s, hasUnread ? Math.max(1, unreadMembers.size) : 0) + '</div>';
       div.addEventListener('contextmenu', event => {
         event.preventDefault();

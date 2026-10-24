@@ -21,12 +21,13 @@ function key(meeting, message) {
   return JSON.stringify([meeting.id, message.sid, message.sourceMessage || message.turnNum || message.id, act]);
 }
 // All new answers are readable immediately. Stored choices are explicit actions.
+// 例外：负责人群的成员卡默认折叠成一行（defaults.minimized）；2026-10-06 改默认展开时误丢了这条，2026-10-23 恢复。
 function preference(id, defaults = null) {
   if (!preferences.has(id)) {
     const stored=read('gc-journal:'+id, null);
     preferences.set(id, stored && typeof stored === 'object'
       ? {expanded:stored.expanded===true,minimized:stored.minimized===true}
-      : {expanded:true,minimized:false});
+      : {expanded:true,minimized:!!(defaults && defaults.minimized)});
   }
   return preferences.get(id);
 }

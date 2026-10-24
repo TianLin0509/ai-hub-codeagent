@@ -1,5 +1,5 @@
 'use strict';
-// AI 编排模式（2026-10-04）：群里的编排员是一个真实 CLI 会话，通过 hub_orchestrator MCP 工具
+// AI 编排模式（2026-10-04；2026-10-23 编排员改称「负责人」，定位为懂技术的项目负责人）：群里的负责人是一个真实 CLI 会话，通过 hub_orchestrator MCP 工具
 // 组队、启动交付工作流、单独提问、处理故障、汇报。用户只用自然语言和编排员对话，何时停下来问由编排员判断；
 // Hub 只执行几道硬规矩（额度、反复故障、无进展、结项证据），并把工作流结果、成员回答排队后在编排员空闲时投递给它。
 // 底层复用：交付工作流引擎（delivery-engine）、群聊派发（dispatcher）、成员创建（addMeetingSubInternal）。
@@ -12,6 +12,7 @@ const Ledger = require('../../core/orchestration/ledger');
 const Store = require('../../core/orchestration/store');
 const Prompt = require('../../core/orchestration/prompt');
 const BudgetIntent = require('../../core/orchestration/budget-intent');
+const Brief = require('../../core/orchestration/brief');
 const Settings = require('../../core/workflow-settings');
 const Delivery = require('../../core/delivery-workflow');
 const profiles = require('../../core/hub-assistant/profiles');
@@ -19,12 +20,21 @@ const { AssistantBridge } = require('../../core/hub-assistant/bridge');
 
 const PURPOSE = 'hub-orchestrator';
 const MCP_NAME = 'hub_orchestrator';
-const TOOL_NAMES = ['orch_status', 'orch_propose_plan', 'orch_start_workflow', 'orch_control_workflow', 'orch_ask_member', 'orch_restart_member', 'orch_grant_budget', 'orch_report', 'orch_send_message', 'orch_request_peer', 'orch_decide_peer'];
+const TOOL_NAMES = ['orch_status', 'orch_propose_plan', 'orch_start_workflow', 'orch_control_workflow', 'orch_ask_member', 'orch_restart_member', 'orch_grant_budget', 'orch_report', 'orch_send_message', 'orch_request_peer', 'orch_decide_peer', 'orch_allow_peer'];
 // CodeAgent 与 Claude 同走 --mcp-config（2026-10-14 公司版加入）；工具按 Hub 会话号认人，不依赖 --session-id。
 const MEMBER_KINDS = ['claude', 'codex', 'codeagent'];
 const TICK_MS = 3000;
 const SAVE_TIME_EVERY_MS = 30000;
 const QUIET_AFTER_USER_MS = 5000;
+// 几乎同时到达的唤醒（几位成员先后交付、成员叫醒）合成一次送达；只合并挨着的，不等全员。
+const NOTICE_MERGE_MS = 8000;
+const SUMMARY_CHARS = 1200;
+// 交付通知里附上成员回答开头的摘要，负责人先看摘要再决定要不要读全文、抽查。
+function answerSummary(content) {
+  const text = String(content || '').replace(/\r\n/g, '\n').trim();
+  if (!text) return '';
+  return text.length > SUMMARY_CHARS ? text.slice(0, SUMMARY_CHARS) + '…（摘要截断，全文见回答文件）' : text;
+}
 
 function enabled(meeting) { return !!(meeting && meeting.groupChat && meeting.orchestration && meeting.orchestration.enabled === true); }
 const terminalRun = run => !run || ['done', 'cancelled'].includes(run.status);
@@ -38,6 +48,8 @@ function createOrchestrationService(deps) {
     // 工具进程用 Hub 自己的程序当 Node 跑（同群聊投研工具）：安装版的脚本在 app.asar 里，单独的 node 读不了，
     // 公司电脑也不一定装了 Node（2026-10-14 公司版编排员工具一启动就断开）。
     nodeExecutable = process.versions.electron ? process.execPath : 'node',
+    // 负责人 interrupt=true 时把指示追加进成员正在进行的回合；返回 { accepted, reason }。
+    injectPrompt = null, noticeMergeMs = NOTICE_MERGE_MS,
   } = deps;
   const runAsNode = !!process.versions.electron && nodeExecutable === process.execPath ? { ELECTRON_RUN_AS_NODE: '1' } : {};
   const ledgers = new Map();
@@ -54,6 +66,7 @@ function createOrchestrationService(deps) {
   const credentials = new Map();
   const channel = createChannel({ ledgerFor, members, persist, notify,
     dispatch: (id, args) => { ensureConnections(id); return dispatcher().dispatchGroupChatTurn(id, args); },
+    inject: typeof injectPrompt === 'function' ? (id, target, text) => injectPrompt(target.sid, text, { meetingId: id, memberId: target.memberId }) : null,
     ensureReady: (id, memberId) => ensureMemberReady(meeting(id), memberId),
     busy: sid => sessionManager.isAgentTurnActive(sid), now, isFrozen: () => frozen, logger });
 
@@ -208,10 +221,10 @@ function createOrchestrationService(deps) {
   }
 
   // ---- 通知 ----
-  function notify(meetingId, key, text) {
+  function notify(meetingId, key, text, { quiet = false } = {}) {
     const ledger = ledgerFor(meetingId);
     if (!ledger) return false;
-    const added = Ledger.enqueue(ledger, key || `${now()}:${text}`, text, now());
+    const added = Ledger.enqueue(ledger, key || `${now()}:${text}`, text, now(), { quiet });
     if (added) { persist(meetingId, ledger); setImmediate(() => deliver(meetingId)); }
     return added;
   }
@@ -221,8 +234,12 @@ function createOrchestrationService(deps) {
     const orch = orchestratorOf(meetingId);
     if (!ledger || !orch || ledger.status === 'ended') return false;
     ensureConnections(meetingId);
-    if (!Ledger.pendingNotices(ledger).length || orchestratorBusy(meetingId)) return false;
+    // 只有需要叫醒的通知才唤醒负责人；留言、抄送随下一次唤醒一起送。
+    const waking = Ledger.wakeNotices(ledger);
+    if (!waking.length || orchestratorBusy(meetingId)) return false;
     if (now() - (lastUserAt.get(meetingId) || 0) < QUIET_AFTER_USER_MS) return false;
+    // 合并窗口未满时由周期巡检（每 3 秒）再投递。
+    if (noticeMergeMs > 0 && now() - Math.min(...waking.map(n => n.at || 0)) < noticeMergeMs) return false;
     try{await ensureMemberReady(meeting(meetingId), orch.memberId);}
     catch(error){logger.warn?.('[orchestration] cannot wake orchestrator:',error.message);return false;}
     const session = sessionManager.getSession(orch.sessionId);
@@ -341,7 +358,8 @@ function createOrchestrationService(deps) {
       ledger.answerReceipts[identity] = hash; changed = true;
       if ((answer.answer.at || answer.updatedAt || 0) < ledger.starAdoptedAt) continue;
       const key = `member-answer:${identity}:${hash}`;
-      if (Ledger.enqueue(ledger, key, `${author.name} 的正式回答已交付：${answerPath || answer.content || '请查看群聊记录'}`, now())) changed = true;
+      const summary = answerSummary(answer.content);
+      if (Ledger.enqueue(ledger, key, `${author.name}（${author.memberId}）的正式回答已交付${answerPath ? '，全文：' + answerPath : ''}${summary ? '\n摘要：\n' + summary :'（无正文，请查看群聊记录）'}`, now())) changed = true;
     }
     for (const ask of ledger.asks.filter(a => a.status === 'pending')) {
       const dispatchMsg = orch.state.messages.find(m => m.dispatch && m.dispatch.runId === ask.id);
@@ -452,7 +470,22 @@ function createOrchestrationService(deps) {
       asks: ledger.asks.slice(-8), lastReport: ledger.reports.at(-1) || null,
       ledgerFile: Store.files(dataDir(), meetingId).md,
       canDispatch: Ledger.canDispatch(ledger),
-      communication: channel.state(meetingId),
+      communication: communicationView(meetingId),
+      projectBrief: Brief.ensureBrief(dataDir(), m),
+    };
+  }
+  // 状态里只带最近的通信，旧消息只留计数，避免每次查状态都读回整段历史。
+  function communicationView(meetingId) {
+    const c = channel.state(meetingId);
+    const clip = t => { const v = String(t || ''); return v.length > 300 ? v.slice(0, 300) + '…' : v; };
+    const open = c.messages.filter(x => ['queued', 'sending', 'failed'].includes(x.state));
+    const recent = c.messages.slice(-10).filter(x => !open.includes(x));
+    return {
+      totalMessages: c.messages.length,
+      open: open.map(x => ({ ...x, text: clip(x.text) })),
+      recent: recent.map(x => ({ ...x, text: clip(x.text) })),
+      pendingRequests: c.requests.filter(r => r.status === 'pending'),
+      grants: c.grants,
     };
   }
   function draftFor(meetingId, args, memberList) {
@@ -658,7 +691,8 @@ function createOrchestrationService(deps) {
     if (request.name === 'orch_send_message') { requireDispatch(ledger); return channel.send(m.id, caller, args); }
     if (request.name === 'orch_request_peer') { requireDispatch(ledger); return channel.request(m.id, caller, args); }
     if (request.name === 'orch_decide_peer') { requireDispatch(ledger); return channel.decide(m.id, caller, args); }
-    if (!caller.orchestrator && request.name !== 'orch_status') throw Error('此工具由编排员使用；成员可发送消息或申请交流');
+    if (request.name === 'orch_allow_peer') { requireDispatch(ledger); return channel.allow(m.id, caller, args); }
+    if (!caller.orchestrator && request.name !== 'orch_status') throw Error('此工具由负责人（编排员）使用；成员可发送消息或申请交流');
     switch (request.name) {
       case 'orch_status': return statusResult(m.id);
       case 'orch_propose_plan': {

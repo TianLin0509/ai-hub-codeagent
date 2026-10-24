@@ -423,7 +423,7 @@
   line-height: 1.5;
 }
 
-/* AI 编排模式开关（2026-10-04）：场景下一行；打开后成员 1 卡变编排员。 */
+/* AI 编排模式开关（2026-10-04）：场景下一行；打开后成员 1 卡变负责人。 */
 .mcm-orch-row {
   display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px;
   margin: 0 0 12px; padding: 8px 10px;

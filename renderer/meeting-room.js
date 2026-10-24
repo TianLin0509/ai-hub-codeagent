@@ -2472,10 +2472,10 @@ if (typeof document !== 'undefined') (function () {
         : '本轮未提取到内容。点「同步」从 transcript 重新提取。';
       body = `<div class="mr-gc-md mr-gc-empty-placeholder">${escapeHtml(ph)}</div>`;
     } else if (isUser && isDispatchCard(message) && OrchUI.dispatchLabel(message)) {
-      // 编排群：Hub 给编排员的通知、编排员派给成员的问题，默认折叠，点开看原文。
+      // 编排群：Hub 给负责人的通知、负责人派给成员的问题，默认折叠，点开看原文。
       const notice = message.dispatch.kind === 'orch-notice';
       const firstLine = String(contentStr || '').split(/\r?\n/).map(s => s.trim()).find(s => s && s !== '【Hub 通知】') || '';
-      body = `<details class="mr-gc-dispatch-details mr-orch-dispatch"><summary>${escapeHtml(notice ? 'Hub 通知编排员：' : '编排员派给 ' + (message.dispatch.toLabels || []).join('、') + '：')}${escapeHtml(firstLine.replace(/^-\s*/, '').slice(0, 90))}</summary><div class="mr-gc-md conversation-user-text">${escapeHtml(contentStr || '')}</div></details>`;
+      body = `<details class="mr-gc-dispatch-details mr-orch-dispatch"><summary>${escapeHtml(notice ? 'Hub 通知负责人：' : '负责人派给 ' + (message.dispatch.toLabels || []).join('、') + '：')}${escapeHtml(firstLine.replace(/^-\s*/, '').slice(0, 90))}</summary><div class="mr-gc-md conversation-user-text">${escapeHtml(contentStr || '')}</div></details>`;
     } else if (isUser && isDispatchCard(message) && message.dispatch?.kind==='delivery') {
       body=require('./delivery-dispatch-view').render(message,escapeHtml);
     } else if (isUser && isDispatchCard(message)) {
@@ -2702,7 +2702,7 @@ if (typeof document !== 'undefined') (function () {
 
     const emptyHtml = (!messageHtml && !pendingHtml) ? `
       <div class="mr-gc-empty">
-        <div class="mr-gc-empty-title">${OrchUI.onlyOrchestrator(meeting) ? '还没有你和编排员的消息' : '还没有群聊消息'}</div>
+        <div class="mr-gc-empty-title">${OrchUI.onlyOrchestrator(meeting) ? '还没有你和负责人的消息' : '还没有群聊消息'}</div>
         <div class="mr-gc-empty-sub">${OrchUI.onlyOrchestrator(meeting) ? '切换到“全员信息”可查看队员消息。' : '直接提问会发给当前勾选成员；输入 @m1、@m2 或 @all 可以指定发言成员。'}</div>
       </div>
     ` : '';
@@ -6342,7 +6342,7 @@ if (typeof document !== 'undefined') (function () {
       return `<button class="mr-header-btn mr-view-btn ${collapsed ? '' : 'active'}" id="mr-btn-group-members" title="${collapsed ? '展开群成员栏' : '收起群成员栏'}">群成员 ${gcSlots.length}</button>`;
     })() : '';
     const gcMessageScopeHtml = OrchUI.enabled(meeting)
-      ? `<button type="button" class="mr-header-btn${OrchUI.onlyOrchestrator(meeting) ? ' active' : ''}" id="mr-btn-message-scope" aria-pressed="${OrchUI.onlyOrchestrator(meeting)}" title="${OrchUI.onlyOrchestrator(meeting) ? '当前只显示你和编排员的消息，点击查看全员信息' : '点击只看你和编排员的消息'}">${OrchUI.onlyOrchestrator(meeting) ? '只看编排' : '全员信息'}</button>` : '';
+      ? `<button type="button" class="mr-header-btn${OrchUI.onlyOrchestrator(meeting) ? ' active' : ''}" id="mr-btn-message-scope" aria-pressed="${OrchUI.onlyOrchestrator(meeting)}" title="${OrchUI.onlyOrchestrator(meeting) ? '当前只显示你和负责人的消息，点击查看全员信息' : '点击只看你和负责人的消息'}">${OrchUI.onlyOrchestrator(meeting) ? '只看负责人' : '全员信息'}</button>` : '';
 
     el.innerHTML = `
       <div class="mr-header-left">
@@ -7162,7 +7162,7 @@ if (typeof document !== 'undefined') (function () {
       inputBox.dataset.placeholder = '讨论阶段：先把需求聊清楚（不改代码）；想收口就点上方「收敛」，定了就点「开工」';
     }
     if(Delivery.enabled(meeting))inputBox.dataset.placeholder='输入任务，Hub 按工作流安排各步骤成员推进；运行中可补充要求，暂停后点上方「继续」';
-    if(OrchUI.active(meeting))inputBox.dataset.placeholder='发给编排员：说目标、改要求或问进展（@成员 可直接点名）';
+    if(OrchUI.active(meeting))inputBox.dataset.placeholder='发给负责人：说目标、改要求或问进展（@成员 可直接点名）';
     // 灰态：readonly + class 切换
     if (isFreeZeroSelected) {
       inputBox.setAttribute('readonly', '');
@@ -7284,10 +7284,10 @@ if (typeof document !== 'undefined') (function () {
     // 而不是往输入框里塞文本再模拟点击。
     // 开发群聊处于讨论阶段时，循环配置虽然在，也只走普通群聊 —— 这是「先讨论再开工」的全部机制。
     function _dispatchMeetingInput(m, finalText, recipientSids=Recipients.selectedSids(m)) {
-      // AI 编排模式：默认只发给编排员；@成员 时直接发给被点名的成员并抄送编排员。
+      // AI 编排模式：默认只发给负责人；@成员 时直接发给被点名的成员并抄送负责人。
       if (OrchUI.active(m)) {
         const route = OrchUI.resolveRecipients(m, finalText, sid => (typeof sessions !== 'undefined' && sessions.get(sid)?.title) || '');
-        if (!route.sids.length) { _restoreQuestionAndPreserveDraft(m.id, finalText); _showGcEscapeNotice('编排员会话不可用，消息未发送', 'error'); return; }
+        if (!route.sids.length) { _restoreQuestionAndPreserveDraft(m.id, finalText); _showGcEscapeNotice('负责人会话不可用，消息未发送', 'error'); return; }
         void OrchUI.noteUserMessage(m, finalText, route.direct);
         handleMeetingSend(finalText, m, { recipientSids: route.sids });
         return;

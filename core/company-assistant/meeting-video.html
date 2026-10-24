@@ -1,0 +1,13 @@
+<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; media-src 'self' file: blob:; script-src 'unsafe-inline';"></head><body><video muted></video><script>
+window.extractMeetingFrame = async ({url, seconds, crop, maxWidth}) => {
+  const video=document.querySelector('video'); video.muted=true;
+  const wait=(name,action)=>new Promise((resolve,reject)=>{const timer=setTimeout(()=>done(new Error('视频解码超时')),15000);const ok=()=>done();const bad=()=>done(new Error('视频无法解码'));function done(e){clearTimeout(timer);video.removeEventListener(name,ok);video.removeEventListener('error',bad);e?reject(e):resolve();}video.addEventListener(name,ok,{once:true});video.addEventListener('error',bad,{once:true});action();});
+  await wait('loadeddata',()=>{video.src=url;video.load();});
+  if(seconds>0.001) await wait('seeked',()=>{video.currentTime=seconds;});
+  const c=crop||{x:0,y:0,w:1,h:1}, w=video.videoWidth*c.w,h=video.videoHeight*c.h;
+  if(!w||!h)throw new Error('录制画面为空');
+  const scale=Math.min(1,maxWidth/w,1080/h),canvas=document.createElement('canvas');canvas.width=Math.max(1,Math.round(w*scale));canvas.height=Math.max(1,Math.round(h*scale));
+  canvas.getContext('2d').drawImage(video,video.videoWidth*c.x,video.videoHeight*c.y,w,h,0,0,canvas.width,canvas.height);
+  const result={data:canvas.toDataURL('image/jpeg',0.88).split(',')[1],width:canvas.width,height:canvas.height,seconds:video.currentTime};video.removeAttribute('src');video.load();return result;
+};
+</script></body></html>

@@ -301,14 +301,16 @@ function grant(ledger, { rounds = 0, minutes = 0 } = {}, now = Date.now()) {
 function resume(ledger, now = Date.now()) { return grant(ledger, {}, now); }
 
 // ---- 通知队列（不丢不重：queued → sending → sent；重启时 sending 标为可能已送达）----
-function enqueue(ledger, key, body, now = Date.now()) {
+// quiet：只随下一次唤醒一起送达，不单独叫醒负责人（成员留言、交流抄送等）。
+function enqueue(ledger, key, body, now = Date.now(), { quiet = false } = {}) {
   const k = String(key || '');
   if (k && ledger.seen.includes(k)) return false;
   if (k) { ledger.seen.push(k); if (ledger.seen.length > MAX_SEEN) ledger.seen.splice(0, ledger.seen.length - MAX_SEEN); }
-  ledger.notices.push({ id: newId('n'), key: k, text: text(body, 2000), at: now, state: 'queued', attempts: 0 });
+  ledger.notices.push({ id: newId('n'), key: k, text: text(body, 2000), at: now, state: 'queued', attempts: 0, ...(quiet ? { quiet: true } : {}) });
   return true;
 }
 function pendingNotices(ledger) { return ledger.notices.filter(n => n.state === 'queued' || n.state === 'uncertain'); }
+function wakeNotices(ledger) { return pendingNotices(ledger).filter(n => !n.quiet); }
 function markSending(ledger, ids, now = Date.now()) {
   for (const n of ledger.notices) if (ids.includes(n.id)) { n.state = 'sending'; n.attempts += 1; n.sentAt = now; }
 }
@@ -418,6 +420,6 @@ module.exports = {
   DEFAULT_SETTINGS, PRESETS, PRESET_LABELS, SEGMENT_LABELS, HALT_LABELS, MIN_ROUNDS,
   FAILURE_LIMIT, normalizeSettings, create, migrate, event, proposePlan, canDispatch, startSegment, activeSegment,
   segmentMinRounds, budgetCheck, hasReview, parseDecision, countRounds, reviewVerdict, applyRun, tick, overBudget, halt, grant, resume,
-  enqueue, pendingNotices, markSending, markSent, markRetry, recoverAfterRestart, noteWake, noteUserMessage,
+  enqueue, pendingNotices, wakeNotices, markSending, markSent, markRetry, recoverAfterRestart, noteWake, noteUserMessage,
   finalGate, addReport, progressRows, view, markdownTable, renderMarkdown, newId,
 };

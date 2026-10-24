@@ -106,7 +106,7 @@ const { registerDesktopOrganizerIpc } = require('./main/ipc/desktop-organizer-ha
 const { registerAutoSuspendIpc } = require('./main/ipc/auto-suspend-handlers.js');
 const { registerGroupchatQueryIpc } = require('./main/ipc/groupchat-query-handlers.js');
 const { registerGroupchatRecoveryIpc } = require('./main/ipc/groupchat-recovery-handlers.js');
-const { registerGroupchatSupplementIpc } = require('./main/ipc/groupchat-supplement-handlers.js');
+const { registerGroupchatSupplementIpc, createRunningInjector } = require('./main/ipc/groupchat-supplement-handlers.js');
 const { registerGroupchatTurnIpc } = require('./main/ipc/groupchat-turn-handlers.js');
 const { createResumeSessionHandler, registerResumeSessionIpc } = require('./main/ipc/resume-session-handlers.js');
 const { createGroupChatDispatcher } = require('./main/groupchat/dispatcher.js');
@@ -2566,6 +2566,10 @@ try {
     ensureMemberReady: (meeting, memberId) => global.__loopEngine?.ensureMemberReady(meeting, memberId),
     // 编排员处理成员故障：重启该成员的 CLI 会话（接着原会话历史）。
     restartSession: id => sessionOperations.restartSession(id),
+    // 负责人 interrupt=true：把指示追加进成员正在进行的回合（与群聊插话同一提交闭环）。
+    injectPrompt: createRunningInjector({
+      sessionManager, transcriptTap, groupChatWatcher: groupChatDispatcher.getGroupChatWatcher(),
+    }),
     getDefaults: kind => require('./core/session-creation-defaults').creationDefaults(kind, getHubConfig()),
   });
   require('./main/ipc/orchestration-handlers').registerOrchestrationIpc(ipcMain, () => global.__orchestrationService);

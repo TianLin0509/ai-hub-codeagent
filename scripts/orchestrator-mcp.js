@@ -1,5 +1,5 @@
 'use strict';
-// AI 编排员的 MCP 工具（JSON-RPC over stdio）。身份来自 Hub 写入的环境变量，
+// AI 负责人（原编排员）与成员的 MCP 工具（JSON-RPC over stdio）。身份来自 Hub 写入的环境变量，
 // 每次调用把参数转交 Hub，由 Hub 校验身份并执行；这里不执行任何命令。
 const readline = require('node:readline');
 const fs = require('node:fs');
@@ -7,11 +7,12 @@ const schema = (properties, required = []) => ({ type: 'object', properties, req
 const string = { type: 'string' };
 const presets = { type: 'string', enum: ['development', 'filework', 'research', 'roundtable', 'custom'] };
 const tools = [
-  { name: 'orch_send_message', description: '向本群成员发送消息或任务；忙时排队。编排员可与所有成员双向交流，工作成员默认联系编排员，获批后可相互交流（自动抄送编排员）。', inputSchema: schema({ to: string, message: string }, ['to','message']) },
-  { name: 'orch_request_peer', description: '工作成员向编排员申请与另一位工作成员交流，说明原因，等待批准后用 orch_send_message 联系。', inputSchema: schema({ memberId: string, reason: string }, ['memberId','reason']) },
-  { name: 'orch_decide_peer', description: '编排员批准或拒绝成员间交流申请；批准后双方可互发消息并抄送编排员。', inputSchema: schema({ requestId: string, approve: { type: 'boolean' }, reason: string }, ['requestId','approve']) },
+  { name: 'orch_send_message', description: '向本群成员发送消息或任务。负责人可联系所有成员：对方空闲时立即开始；对方正在工作时默认排队到空闲，interrupt=true 则直接追加到它当前的工作里（用于改变它当前做法的指示）。成员默认联系负责人：wake=true（默认）立刻叫醒负责人，只用于卡住需拍板、发现与方案冲突的事实、完成里程碑；其余用 wake=false 留言，负责人下次醒来一起看。成员间获批后可相互交流（自动抄送负责人，抄送不叫醒）。', inputSchema: schema({ to: string, message: string, wake: { type: 'boolean' }, interrupt: { type: 'boolean' } }, ['to','message']) },
+  { name: 'orch_request_peer', description: '工作成员向负责人申请与另一位工作成员交流，说明原因，等待批准后用 orch_send_message 联系。', inputSchema: schema({ memberId: string, reason: string }, ['memberId','reason']) },
+  { name: 'orch_decide_peer', description: '负责人批准或拒绝成员间交流申请；批准后双方可互发消息并抄送负责人。', inputSchema: schema({ requestId: string, approve: { type: 'boolean' }, reason: string }, ['requestId','approve']) },
+  { name: 'orch_allow_peer', description: '负责人主动开放或收回两位成员之间的直接交流（例如安排辩论、开发与审核对接），无需成员先申请。双方会收到通知；交流消息抄送负责人。', inputSchema: schema({ memberA: string, memberB: string, allow: { type: 'boolean' }, reason: string }, ['memberA','memberB','allow']) },
   { name: 'orch_status', annotations: { readOnlyHint: true },
-    description: '读取本群计划账本：状态、额度、计划、已有成员（含会话状态）、进度与交付证据。currentRun 含派工回执、失败步骤和 recovery（能否原地续跑与可用手段）。每次被唤醒先调用。',
+    description: '读取本群计划账本：状态、额度、计划、已有成员（含会话状态）、进度与交付证据。currentRun 含派工回执、失败步骤和 recovery（能否原地续跑与可用手段）；communication 只列最近的通信。需要核对全局状态时调用。',
     inputSchema: schema({}) },
   { name: 'orch_propose_plan',
     description: '记录或更新方案规划与分工，提交即生效。summary 写自然语言目标、方案和完成标准；team 指定已有成员角色。segments 是可选的固定工作流；普通任务直接使用 orch_send_message。轮次、时长与停止条件由用户自然语言说明。',

@@ -1,4 +1,5 @@
 'use strict';
+const { MeetingRecorder } = require('./meeting-recorder');
 function wav(samples, rate) {
   const b = Buffer.alloc(44 + samples.length * 2); b.write('RIFF'); b.writeUInt32LE(b.length - 8, 4); b.write('WAVEfmt ', 8); b.writeUInt32LE(16, 16); b.writeUInt16LE(1, 20); b.writeUInt16LE(1, 22); b.writeUInt32LE(rate, 24); b.writeUInt32LE(rate * 2, 28); b.writeUInt16LE(2, 32); b.writeUInt16LE(16, 34); b.write('data', 36); b.writeUInt32LE(samples.length * 2, 40);
   for (let i = 0; i < samples.length; i++) b.writeInt16LE(Math.round(Math.max(-1, Math.min(1, samples[i])) * 32767), 44 + i * 2);
@@ -10,13 +11,15 @@ class MeetingCapture {
   constructor({ document, window, save, status }) { this.d = document; this.w = window; this.save = save; this.status = status; this.streams = []; this.nodes = []; this.queue = []; this.levels = {}; }
   async open(sourceId, audio) {
     try {
-      const stream = await this.w.navigator.mediaDevices.getUserMedia({ audio: audio.system ? { mandatory: { chromeMediaSource: 'desktop' } } : false, video: { mandatory: { chromeMediaSource: 'desktop', chromeMediaSourceId: sourceId, maxFrameRate: 5 } } });
+      const stream = await this.w.navigator.mediaDevices.getUserMedia({ audio: audio.system ? { mandatory: { chromeMediaSource: 'desktop' } } : false, video: { mandatory: { chromeMediaSource: 'desktop', chromeMediaSourceId: sourceId, maxFrameRate: 15 } } });
       this.streams.push(stream);
       if (audio.system && !stream.getAudioTracks().length) throw new Error('未获取系统声音，请换为整个屏幕或关闭系统声音后重试');
       this.video = this.d.createElement('video'); this.video.muted = true; this.video.srcObject = stream; await this.video.play();
-      for (const t of stream.getVideoTracks()) t.onended = () => { this.paused = true; this.disconnected = true; this.status('共享画面已断开，请结束会议并重新选择窗口'); };
+      for (const t of stream.getVideoTracks()) t.onended = () => { this.disconnected = true; void this.pause('共享画面断开').catch(e => this.status(e.message)); this.status('共享画面已断开，请结束会议并重新选择窗口'); };
       if (audio.system) this.audio(stream, 'system');
       if (audio.mic) { const mic = await this.w.navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true }, video: false }); this.streams.push(mic); this.audio(mic, 'mic'); }
+      this.recorder = new MeetingRecorder({ window: this.w, streams: this.streams, elapsed: () => this.elapsed(), save: this.save, onError: message => { void this.pause('录屏保存异常').catch(() => {}); this.status(message + '；已保存文件保留，请重试保存后继续。'); } });
+      await this.recorder.open();
     } catch (e) { await this.dispose(); throw e; }
   }
   audio(stream, track) {
@@ -30,19 +33,21 @@ class MeetingCapture {
       if (n.length >= ctx.sampleRate * 15) this.flush(n);
     };
     src.connect(proc); proc.connect(mute); mute.connect(ctx.destination);
-    stream.getAudioTracks().forEach(t => { t.onended = () => this.status((track === 'mic' ? '麦克风' : '系统声音') + '已断开，其他采集继续，请结束后重新选择设备'); });
+    stream.getAudioTracks().forEach(t => { t.onended = () => { this.disconnected = true; void this.pause((track === 'mic' ? '麦克风' : '系统声音') + '断开').catch(e => this.status(e.message)); this.status('声音来源已断开，已暂停采集，请结束并重新选择设备'); }; });
   }
   elapsed() { return Math.max(0, Math.round(this.w.performance.now() - this.started)); }
-  start(crop) { this.crop = crop; this.started = this.w.performance.now(); this.running = true; this.paused = false; this.timer = setInterval(() => { if (!this.paused) { void this.frame(); this.enqueue({ kind: 'heartbeat', at: this.elapsed() }); } }, 1000); void this.frame(true); }
-  enqueue(item) { this.queue.push(item); if (this.queue.length > 30) { this.paused = true; this.status('保存积压，已暂停采集；点击重试保存后继续。尚未写入的片段保留在内存中。'); } void this.drain(); }
+  start(crop) { this.crop = crop; this.started = this.w.performance.now(); this.running = true; this.paused = false; this.recorder?.start(); this.timer = setInterval(() => { if (!this.paused) { void this.frame().catch(e => this.status(e.message)); this.enqueue({ kind: 'heartbeat', at: this.elapsed() }); } }, 1000); void this.frame(true).catch(e => this.status(e.message)); }
+  enqueue(item) { this.queue.push(item); if (this.queue.length > 30) { this.suspendForError('材料保存积压'); this.status('保存积压，已暂停采集；点击重试保存后继续。尚未写入的片段保留在内存中。'); } void this.drain(); }
+  suspendForError(reason) { if (this.paused) return; this.paused = true; this.openGap(reason); this.pausing = this.recorder?.pause(); void this.pausing?.catch(() => {}); }
+  openGap(reason) { if(this.gapAt==null){this.gapAt=this.elapsed();this.gapReason=reason;this.enqueue({kind:'recording-gap-open',at:this.gapAt,reason});} }
   async drain() {
     if (this.saving || this.saveError) return;
     this.saving = true;
     try { while (this.queue.length) { await this.save(this.queue[0]); this.queue.shift(); } }
-    catch (e) { this.saveError = e.message; this.paused = true; this.status('材料保存失败，已暂停：' + e.message + '。请重试保存，暂勿关闭 Hub。'); }
+    catch (e) { this.saveError = e.message; this.suspendForError('材料保存失败'); this.status('材料保存失败，已暂停：' + e.message + '。请重试保存，暂勿关闭 Hub。'); }
     finally { this.saving = false; }
   }
-  async retry() { this.saveError = ''; await this.drain(); }
+  async retry() { await this.pausing?.catch(()=>{}); this.saveError = ''; await this.drain(); await this.recorder?.retry(); if(this.paused)await this.flushAll(); }
   flush(n) {
     if (!n.length) return;
     const samples = new Float32Array(n.length); let i = 0; for (const b of n.samples) { samples.set(b, i); i += b.length; }
@@ -64,9 +69,9 @@ class MeetingCapture {
     } finally { this.drawing = false; }
   }
   async flushAll() { for (const n of this.nodes) this.flush(n); while (this.saving) await new Promise(r => setTimeout(r, 30)); await this.drain(); if (this.queue.length) throw new Error('还有材料未保存，请重试保存'); }
-  async pause() { this.paused = true; await this.flushAll(); }
-  resume() { if (this.disconnected) throw new Error('共享画面已断开，请结束会议后重新选择窗口'); if (this.queue.length) throw new Error('请先重试保存'); this.paused = false; }
-  async stop() { this.paused = true; clearInterval(this.timer); await this.flushAll(); this.running = false; await this.dispose(); }
-  async dispose() { clearInterval(this.timer); for (const s of this.streams) s.getTracks().forEach(t => t.stop()); for (const n of this.nodes) { n.proc.disconnect(); n.src.disconnect(); await n.ctx.close(); } this.nodes = []; this.streams = []; if (this.video) this.video.srcObject = null; }
+  async pause(reason = '用户暂停') { this.paused = true; this.openGap(reason); this.pausing=this.recorder?.pause(); await this.pausing; await this.flushAll(); }
+  resume() { if (this.disconnected) throw new Error('共享来源已断开，请结束会议后重新选择'); if (this.queue.length || this.recorder?.queue.length) throw new Error('请先重试保存'); if (this.gapAt != null) { this.enqueue({ kind: 'recording-gap', at: this.gapAt, end: this.elapsed(), reason: this.gapReason }); this.gapAt = null; } this.recorder?.start(); this.paused = false; }
+  async stop() { this.paused = true; clearInterval(this.timer); await this.recorder?.pause(); if (this.gapAt != null) { this.enqueue({ kind: 'recording-gap', at: this.gapAt, end: this.elapsed(), reason: this.gapReason }); this.gapAt = null; } await this.flushAll(); this.running = false; await this.dispose(); }
+  async dispose() { clearInterval(this.timer); try { await this.recorder?.close(); } finally { for (const s of this.streams) s.getTracks().forEach(t => { t.onended = null; t.stop(); }); for (const n of this.nodes) { n.proc.disconnect(); n.src.disconnect(); await n.ctx.close(); } this.nodes = []; this.streams = []; if (this.video) this.video.srcObject = null; } }
 }
 module.exports = { MeetingCapture, wav, distance, changed };

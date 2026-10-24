@@ -1,7 +1,7 @@
 'use strict';
 // AI 编排模式的界面（2026-10-04）。复用群聊现有位置：输入框上方状态条、展开区（计划账本）、
 // 回答卡片的标签。状态只读主进程推送的账本视图，操作都走 orchestration:* 接口。
-// 2026-10-06：确认计划、恢复、追加额度都改为在输入框对编排员说；界面只留旁观信息与急停。
+// 2026-10-06：确认计划、恢复、追加额度都改为在输入框对负责人说；界面只留旁观信息与急停。
 const { ipcRenderer } = require('electron');
 const { isDispatchCard } = require('./dispatch-card');
 
@@ -12,7 +12,7 @@ const loading = new Set();
 let onChange = () => {};
 
 const STATUS_LABELS = {
-  planning: '等编排员提交计划', running: '编排中', halted: '已暂停 · 等你回话',
+  planning: '等负责人提交计划', running: '编排中', halted: '已暂停 · 等你回话',
   finished: '已结项', ended: '编排已结束（普通群聊）',
 };
 
@@ -77,7 +77,7 @@ function memberIdForSid(meeting, sid) {
   return index >= 0 ? (meeting.slotSpecs?.[index]?.memberId || `m${index + 1}`) : '';
 }
 
-// 收件人：默认只发给编排员；@成员 时直接发给被点名的成员（并抄送编排员）。
+// 收件人：默认只发给负责人；@成员 时直接发给被点名的成员（并抄送负责人）。
 function resolveRecipients(meeting, text, titleOf = () => '') {
   const orchSid = orchestratorSid(meeting);
   const mentions = [...String(text || '').matchAll(/@([A-Za-z0-9_\-一-鿿]+)/g)].map(m => m[1].toLowerCase());
@@ -124,7 +124,7 @@ function budgetRatio(v) {
   if (v.settings?.coordination === 'star') return 0;
   return Math.min(1, Math.max(v.budget.roundsUsed / Math.max(1, v.budget.roundCap), v.budget.minutesUsed / Math.max(1, v.budget.minutesCap)));
 }
-// 只留旁观与急停：账本、暂停（编排中）、结束编排；结束后可恢复编排（切回只和编排员对话）。
+// 只留旁观与急停：账本、暂停（编排中）、结束编排；结束后可恢复编排（切回只和负责人对话）。
 function stripButtons(v) {
   const b = (action, label, extra = '') => `<button type="button" data-orch-action="${action}"${extra}>${label}</button>`;
   const ledgerBtn = `<button type="button" data-orch-ledger aria-expanded="${v && expanded.has(v.meetingId)}">${v && expanded.has(v.meetingId) ? '收起账本' : '计划账本'}</button>`;
@@ -149,11 +149,11 @@ function ledgerPanel(v, escapeHtml) {
       <td>${s.rounds}</td></tr>`).join('')
     : '<tr><td colspan="5" class="mr-orch-muted">还没有工作段</td></tr>';
   const plan = v.plan ? `<div class="mr-orch-plan"><strong>计划 v${v.plan.version}</strong>
-      <div class="mr-orch-plan-text">${escapeHtml(v.plan.summary)}</div>${v.plan.budget ? `<div class="mr-orch-muted">计划额度：${escapeHtml(v.plan.budget.roundCap)} 轮 · ${escapeHtml(v.plan.budget.timeCapMin)} 分钟</div>` : ''}${budgetCheckLine(v, escapeHtml)}</div>` : '<div class="mr-orch-muted">编排员还没有提交计划。</div>';
+      <div class="mr-orch-plan-text">${escapeHtml(v.plan.summary)}</div>${v.plan.budget ? `<div class="mr-orch-muted">计划额度：${escapeHtml(v.plan.budget.roundCap)} 轮 · ${escapeHtml(v.plan.budget.timeCapMin)} 分钟</div>` : ''}${budgetCheckLine(v, escapeHtml)}</div>` : '<div class="mr-orch-muted">负责人还没有提交计划。</div>';
   const report = v.lastReport ? `<div class="mr-orch-report"><strong>最近汇报</strong>（${escapeHtml(v.lastReport.kind)}）<div class="mr-orch-plan-text">${escapeHtml(v.lastReport.summary)}</div></div>` : '';
   return `<div class="mr-orch-ledger" id="mr-orch-ledger">
-    <div class="mr-orch-ledger-title"><strong>计划账本</strong><span class="mr-orch-muted">由 Hub 按工作流结果更新，编排员不能直接把状态改成「通过」</span><code class="mr-orch-ledger-file" title="${escapeHtml(v.ledgerFile || '')}">orchestration/ledger.md</code></div>
-    ${v.settings?.coordination === 'star' ? '<div class="mr-orch-muted">星型协作：编排员负责规划与分工；目标、时间和停止条件按你的自然语言要求执行。</div>' : ''}
+    <div class="mr-orch-ledger-title"><strong>计划账本</strong><span class="mr-orch-muted">由 Hub 按工作流结果更新，负责人不能直接把状态改成「通过」</span><code class="mr-orch-ledger-file" title="${escapeHtml(v.ledgerFile || '')}">orchestration/ledger.md</code></div>
+    ${v.settings?.coordination === 'star' ? '<div class="mr-orch-muted">星型协作：负责人负责规划与分工；目标、时间和停止条件按你的自然语言要求执行。</div>' : ''}
     ${plan}
     <table class="mr-orch-table"><thead><tr><th>工作段</th><th>负责人</th><th>状态</th><th>审核结论</th><th>已用轮次</th></tr></thead><tbody>${rows}</tbody></table>
     ${report}
@@ -172,7 +172,7 @@ function renderStrip(row, meeting, { escapeHtml, onError = () => {} } = {}) {
       <div class="mr-orch-main">
         <strong class="mr-orch-label">编排 · ${escapeHtml(label)}</strong>
         ${v && status !== 'ended' ? `<span class="mr-orch-budget" title="${v.settings?.coordination === 'star' ? '目标、分工、时间与停止条件按用户自然语言要求执行' : BUDGET_HINT}">${v.settings?.coordination === 'star' ? '' : `<span class="mr-orch-bar"><i style="width:${Math.round(ratio * 100)}%"></i></span>`}${escapeHtml(budgetText(v))}</span>` : ''}
-        <span class="mr-orch-muted">${escapeHtml(runText)}${status !== 'ended' && orchSid ? (halted ? ' · 在输入框回复编排员即可继续' : ' · 发送给编排员（@成员 可直接点名）') : ''}</span>
+        <span class="mr-orch-muted">${escapeHtml(runText)}${status !== 'ended' && orchSid ? (halted ? ' · 在输入框回复负责人即可继续' : ' · 发送给负责人（@成员 可直接点名）') : ''}</span>
       </div>
       <div class="mr-orch-actions">${stripButtons(v)}</div>
     </section>${v && expanded.has(meeting.id) ? ledgerPanel(v, escapeHtml) : ''}`;
@@ -191,7 +191,7 @@ async function handleAction(meeting, action, { onError = () => {} } = {}) {
 function roleBadge(meeting, message, escapeHtml) {
   if (!enabled(meeting) || !message || message.role !== 'assistant') return '';
   const memberId = message.memberId || memberIdForSid(meeting, message.sid);
-  if (memberId && memberId === orchestratorMemberId(meeting)) return '<span class="mr-gc-to-badge mr-orch-badge-lead">编排员</span>';
+  if (memberId && memberId === orchestratorMemberId(meeting)) return '<span class="mr-gc-to-badge mr-orch-badge-lead">负责人</span>';
   const role = views.get(meeting.id)?.roles?.[memberId]?.role;
   return role ? `<span class="mr-gc-to-badge mr-orch-badge">${escapeHtml(role)}</span>` : '';
 }
@@ -199,23 +199,25 @@ function isOrchestratorMessage(meeting, message) {
   const memberId = message?.memberId || memberIdForSid(meeting, message?.sid);
   return !!memberId && memberId === orchestratorMemberId(meeting);
 }
-// 成员卡片默认折叠成一行（编排员的卡片照常展开）。
+// 成员卡片默认折叠成一行（负责人的卡片照常展开）。
 function defaultMinimized(meeting, message) {
   return active(meeting) && message?.role === 'assistant' && !isOrchestratorMessage(meeting, message);
 }
 function peek(meeting, message, escapeHtml) {
   if (!defaultMinimized(meeting, message)) return '';
-  const first = String(message.content || '').replace(/^#+\s*/gm, '').split(/\r?\n/).map(s => s.trim()).find(Boolean) || '';
+  // 成员回答开头是摘要（结论在前）；跳过单独一行的「摘要」小标题，折叠行直接显示结论。
+  const first = String(message.content || '').replace(/^#+\s*/gm, '').split(/\r?\n/).map(s => s.trim())
+    .find(s => s && !/^(摘要|总结|summary)[:：]?$/i.test(s)) || '';
   return first ? `<span class="mr-orch-peek" title="${escapeHtml(first)}">${escapeHtml(first.slice(0, 80))}</span>` : '';
 }
 function dispatchLabel(message) {
   const kind = message?.dispatch?.kind;
-  if (kind === 'orch-notice') return 'Hub → 编排员';
-  if (kind === 'orchestration') return '编排员派发';
+  if (kind === 'orch-notice') return 'Hub → 负责人';
+  if (kind === 'orchestration') return '负责人派发';
   return null;
 }
 function headerTag(meeting) {
-  return enabled(meeting) ? '<span class="mr-gc-to-badge mr-orch-badge-lead mr-orch-title-tag" title="AI 编排模式：用户只和编排员对话">编排</span>' : '';
+  return enabled(meeting) ? '<span class="mr-gc-to-badge mr-orch-badge-lead mr-orch-title-tag" title="负责人模式：用户只和负责人对话">负责人</span>' : '';
 }
 
 module.exports = {

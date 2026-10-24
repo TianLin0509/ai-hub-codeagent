@@ -48,9 +48,9 @@ let _projectLibraryLoading = null;
 let _projectLibraryOpen = false;
 let _creating = false;
 let _presentation = { embedded: false, onCreated: null };
-// AI 编排模式：成员 1 当编排员，用户预先选定工作成员，编排员安排其分工与参与阶段。
+// AI 编排模式：成员 1 当负责人，用户预先选定工作成员，负责人安排其分工与参与阶段。
 let _orchestrationOn = false;
-// 编排员靠 MCP 工具指挥成员：Claude 家族用 --mcp-config，Codex 用 config 覆盖。CodeAgent 同 Claude（2026-10-14 公司版加入）。
+// 负责人靠 MCP 工具指挥成员：Claude 家族用 --mcp-config，Codex 用 config 覆盖。CodeAgent 同 Claude（2026-10-14 公司版加入）。
 const ORCHESTRATOR_KINDS = GROUP_MEMBER_KINDS;
 
 function _paintWorkspace(workspace) {
@@ -318,7 +318,7 @@ function _slotHtml(i, spec, isGroup) {
   const avatarAlt = KIND_LABELS[def.kind] || def.kind;
   const orchLead = isGroup && _orchestrationOn && i === 0;
   const label = !isGroup ? `Slot ${i + 1} · ${SLOT_NAMES[i]}`
-    : orchLead ? '成员 1 · 编排员'
+    : orchLead ? '成员 1 · 负责人'
     : _orchestrationOn ? `成员 ${i + 1} · 工作成员` : `成员 ${i + 1}`;
   const removeBtn = isGroup && i >= 1 && (_orchestrationOn || _currentMode !== 'dev' || _groupSlots.length > 2)
     ? `<button type="button" class="mcm-remove-member" data-remove-member="${i}" title="移除此成员">×</button>`
@@ -498,10 +498,10 @@ function _ensureModal() {
         </div>
         <div class="mcm-scene-hint" id="mcm-scene-hint" style="display:none; font-size:12px; color:#888; margin:-6px 0 12px; line-height:1.6;"></div>
         <div class="mcm-orch-row" id="mcm-orch-row"${ORCHESTRATOR_KINDS.some(require('../core/distribution').kindAllowed) ? '' : ' style="display:none"'}>
-          <label class="mcm-orch-switch"><input type="checkbox" id="mcm-orch-toggle" role="switch"><span class="mcm-orch-track" aria-hidden="true"></span><strong>编排员</strong></label>
-          <span class="mcm-orch-hint" id="mcm-orch-hint">打开后成员 1 当编排员：它负责方案规划、分工和汇总；所有成员可与它交流，成员间可申请交流。目标与停止条件直接用自然语言说明。</span>
+          <label class="mcm-orch-switch"><input type="checkbox" id="mcm-orch-toggle" role="switch"><span class="mcm-orch-track" aria-hidden="true"></span><strong>负责人</strong></label>
+          <span class="mcm-orch-hint" id="mcm-orch-hint">打开后成员 1 当负责人：你只和它对话，它像懂技术的领导一样拆解任务、给成员分工、审查交付并核实关键证据；具体实现交给成员。目标与停止条件直接用自然语言说明。</span>
           <div class="mcm-orch-options" id="mcm-orch-options" hidden>
-            <span class="mcm-orch-note">模型由你选择；目标、分工、时间与停止条件直接在群聊中描述。成员默认与编排员交流，互相交流可向编排员申请。</span>
+            <span class="mcm-orch-note">模型由你选择；目标、分工、时间与停止条件直接在群聊中描述。成员有事可随时叫醒负责人；成员之间的交流由负责人安排。</span>
           </div>
         </div>
         <div class="mcm-member-caption">
@@ -534,13 +534,13 @@ function _setOrchestration(on) {
   if (caption) {
     if (!caption.dataset.plainText) caption.dataset.plainText = caption.textContent;
     caption.textContent = _orchestrationOn
-      ? '成员 1 为编排员和方案规划者，其余为工作成员。任意模型均可；目标、分工和停止条件用自然语言说明。'
+      ? '成员 1 为负责人（懂项目、定方案、审查验收），其余为工作成员。任意模型均可；目标、分工和停止条件用自然语言说明。'
       : caption.dataset.plainText;
   }
   const hint = _modalEl.querySelector('#mcm-orch-hint');
   if (hint) hint.textContent = _orchestrationOn
-    ? '已开启：成员 1 当编排员。它负责规划、派活与汇总，使用你选好的成员和模型，按自然语言目标推进；成员间交流由它审批。'
-    : '打开后成员 1 当编排员：它负责方案规划、分工和汇总；所有成员可与它交流，成员间可申请交流。目标与停止条件直接用自然语言说明。';
+    ? '已开启：成员 1 当负责人。它亲自定方案、分工、审查与核实，具体实现交给你选好的成员；成员间交流由它安排。'
+    : '打开后成员 1 当负责人：你只和它对话，它像懂技术的领导一样拆解任务、给成员分工、审查交付并核实关键证据；具体实现交给成员。目标与停止条件直接用自然语言说明。';
   _renderSlots();
 }
 
@@ -643,7 +643,7 @@ async function _onCreate() {
     const sceneInput = _modalEl.querySelector('input[name="mcm-scene"]:checked');
     const scene = sceneInput ? sceneInput.value : 'general';
     const orchestration = _orchestrationPayload();
-    if (orchestration && slots.length < 2) throw new Error('编排群至少需要编排员和一位工作成员；请先选择成员');
+    if (orchestration && slots.length < 2) throw new Error('编排群至少需要负责人和一位工作成员；请先选择成员');
     if (!orchestration && scene === 'dev' && slots.length < 2) throw new Error('开发群聊至少需要两位成员；单人开发请使用普通会话的“一键开工”。');
     // createMeeting 的 scene 实际取自 mode（过 MEETING_MODES 白名单），scene 字段只是透传
     const mode = (scene === 'research' || scene === 'dev') ? scene : 'general';
@@ -690,7 +690,7 @@ async function _onCreate() {
         if (_projectLibraryError) throw _projectLibraryError;
       }
     }
-    // 编排群的工作流由编排员按计划配置，建群时不预置。
+    // 编排群的工作流由负责人按计划配置，建群时不预置。
     const serialWorkflow = orchestration ? null : _buildDefaultDevWorkflow(scene, slots, { atWorkRoot, projects: devProjects });
     createBtn.textContent = '正在创建成员会话...';
     const meeting = await ipcRenderer.invoke('create-meeting', {
